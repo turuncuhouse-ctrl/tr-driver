@@ -39,6 +39,7 @@ services:
       MAX_CONCURRENT_CHUNKS: "2"
       SESSION_TTL: 24h
       SHARE_TOKEN_BYTES: "24"
+      LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:-PDtEkEVeAOcC76XWw8sjZbZDHlkS0Gl0S6x/s7whWe0=}
       GOCACHE: /gocache
     volumes:
       - /mnt/1tb_disk/necipdrive:/app

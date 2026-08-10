@@ -10,6 +10,7 @@ internal/desktop/ui/dist/
 server.exe
 test-done.txt
 secrets/
+**/private.key
 *.b64
 .DS_Store
 Thumbs.db
