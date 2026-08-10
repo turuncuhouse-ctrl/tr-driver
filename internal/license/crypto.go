@@ -78,6 +78,13 @@ func privateKey() (ed25519.PrivateKey, error) {
 
 func decodeKey(raw string) ([]byte, error) {
 	raw = strings.TrimSpace(raw)
+	// Prefer hex when the string is clearly hex (env often uses 64-char hex for 32-byte keys).
+	// Otherwise base64.StdEncoding can "succeed" on hex text with the wrong length.
+	if looksLikeHex(raw) {
+		if b, err := hex.DecodeString(raw); err == nil {
+			return b, nil
+		}
+	}
 	if b, err := base64.StdEncoding.DecodeString(raw); err == nil {
 		return b, nil
 	}
@@ -88,6 +95,21 @@ func decodeKey(raw string) ([]byte, error) {
 		return b, nil
 	}
 	return nil, errors.New("key must be base64 or hex")
+}
+
+func looksLikeHex(s string) bool {
+	if len(s) < 2 || len(s)%2 != 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func Sign(p Payload) (string, error) {
