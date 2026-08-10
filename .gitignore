@@ -1,0 +1,15 @@
+data/
+web/node_modules/
+web/dist/
+internal/desktop/ui/node_modules/
+internal/desktop/ui/npm-*.log
+internal/desktop/ui/dist/
+/dist/
+.env
+*.exe
+server.exe
+test-done.txt
+secrets/
+*.b64
+.DS_Store
+Thumbs.db

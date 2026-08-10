@@ -1,0 +1,10 @@
+{
+  "latestVersion": "0.4.0",
+  "downloadURL": "https://github.com/YOUR_ORG/tr-driver/releases/latest",
+  "releaseNotes": "TR Driver 0.4.0 — lisans, güvenlik sertleştirme, rebrand",
+  "publishedAt": "2026-08-10T00:00:00Z",
+  "channels": {
+    "stable": "0.4.0",
+    "beta": "0.4.0"
+  }
+}

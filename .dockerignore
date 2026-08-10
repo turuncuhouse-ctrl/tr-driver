@@ -1,0 +1,11 @@
+.git
+.gitignore
+data
+.env
+**/.env
+web/node_modules
+web/dist
+*.md
+.cursor
+agent-transcripts
+**/*_test.go

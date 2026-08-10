@@ -1,0 +1,14 @@
+{$DOMAIN:cloud.example.com} {
+	reverse_proxy app:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+
+	request_body {
+		max_size 512MB
+	}
+}
