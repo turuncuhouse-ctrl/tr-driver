@@ -18,16 +18,16 @@ import (
 const DefaultPublicKeyHex = "8de0c7c531b9b6983b4177ea8e9ca0f1afa7add693329323087a36de4a2633e0"
 
 // DefaultPrivateSeedHex is ONLY for local/dev signing when LICENSE_ALLOW_DEV_SIGNING=1.
-// Never use for production sales.
 const DefaultPrivateSeedHex = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919655bcc226d7ad573"
 
 type Payload struct {
-	Tier     string `json:"tier"`
-	MaxUsers int    `json:"maxUsers"`
-	Exp      int64  `json:"exp"` // unix seconds; 0 = no expiry
-	Iat      int64  `json:"iat"`
-	Customer string `json:"customer,omitempty"`
-	Note     string `json:"note,omitempty"`
+	Tier       string `json:"tier"`
+	MaxUsers   int    `json:"maxUsers"`
+	Exp        int64  `json:"exp"` // unix seconds; 0 = no expiry
+	Iat        int64  `json:"iat"`
+	Customer   string `json:"customer,omitempty"`
+	Note       string `json:"note,omitempty"`
+	InstanceID string `json:"instanceId,omitempty"` // required for production activations
 }
 
 func publicKey() (ed25519.PublicKey, error) {
@@ -64,7 +64,7 @@ func privateKey() (ed25519.PrivateKey, error) {
 		}
 	}
 	if os.Getenv("LICENSE_ALLOW_DEV_SIGNING") != "1" {
-		return nil, errors.New("LICENSE_PRIVATE_KEY required (or LICENSE_ALLOW_DEV_SIGNING=1 for RFC test key)")
+		return nil, errors.New("LICENSE_PRIVATE_KEY required (or LICENSE_ALLOW_DEV_SIGNING=1 for local test keys)")
 	}
 	seed, err := hex.DecodeString(DefaultPrivateSeedHex)
 	if err != nil {
@@ -109,6 +109,32 @@ func Sign(p Payload) (string, error) {
 	return "TRD1." + base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
+// SignFromRequest builds a license bound to the customer request's instance id.
+func SignFromRequest(req *RequestPayload, tier string, years int, customer, note string) (string, error) {
+	if req == nil {
+		return "", errors.New("request required")
+	}
+	if tier == "" {
+		tier = req.Tier
+	}
+	maxUsers, ok := MaxUsersForTier(tier)
+	if !ok {
+		return "", fmt.Errorf("unknown tier %q", tier)
+	}
+	p := Payload{
+		Tier:       tier,
+		MaxUsers:   maxUsers,
+		Customer:   customer,
+		Note:       note,
+		InstanceID: req.InstanceID,
+		Iat:        time.Now().Unix(),
+	}
+	if years > 0 {
+		p.Exp = time.Now().AddDate(years, 0, 0).Unix()
+	}
+	return Sign(p)
+}
+
 func Verify(key string) (*Payload, error) {
 	key = strings.TrimSpace(key)
 	parts := strings.Split(key, ".")
@@ -145,4 +171,11 @@ func Verify(key string) (*Payload, error) {
 
 func IsUsingDefaultPublicKey() bool {
 	return strings.TrimSpace(os.Getenv("LICENSE_PUBLIC_KEY")) == ""
+}
+
+func CanSignLocally() bool {
+	if strings.TrimSpace(os.Getenv("LICENSE_PRIVATE_KEY")) != "" {
+		return true
+	}
+	return os.Getenv("LICENSE_ALLOW_DEV_SIGNING") == "1"
 }

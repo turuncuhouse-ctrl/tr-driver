@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 — Lisans talep/yanıt + kurulum kılavuzları
+
+### Added
+- Instance-bound license flow: customer `TRDR1` request → vendor `TRD1` response
+- Admin: talep kodu üret / etkinleştir; `LICENSE_VENDOR_MODE` ile satıcı yanıt paneli
+- `docs/INSTALL_DOCKER.md`, `docs/INSTALL_VPS.md`; lisans satışı dokümanı güncellendi
+- CLI: `trdriver-licensegen -request TRDR1...`
+
 ## 0.4.0 — TR Driver, lisans, güvenlik
 
 ### Added

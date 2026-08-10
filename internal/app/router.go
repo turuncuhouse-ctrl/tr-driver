@@ -60,6 +60,8 @@ func NewRouter(
 		}
 		licenseHandler.AdminStatus(w, r)
 	}))))
+	mux.Handle("/api/admin/license/request", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.CreateRequest))))
+	mux.Handle("/api/admin/license/issue", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.Issue))))
 	mux.Handle("/api/auth/register", http.HandlerFunc(authHandler.Register))
 	mux.Handle("/api/auth/login", http.HandlerFunc(authHandler.Login))
 	mux.Handle("/api/auth/device-login", http.HandlerFunc(authHandler.DeviceLogin))

@@ -41,7 +41,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	}
 
 	accessSvc := access.New(db)
-	licenseService := license.NewService(db, cfg.AllowRegistration)
+	licenseService := license.NewService(db, cfg.AllowRegistration, cfg.LicenseVendorMode)
 	authService := auth.NewService(db, cfg, licenseService)
 	adminService := admin.NewService(db)
 	fileService := files.NewService(db, fileStorage, cfg, accessSvc)

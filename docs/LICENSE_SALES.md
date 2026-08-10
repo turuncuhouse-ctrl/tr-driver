@@ -1,44 +1,59 @@
-# TR Driver — lisans satışı (üretim anahtarları)
+# TR Driver lisans satışı ve kırılmaya karşı model
 
-Satış öncesi **kendi** Ed25519 çiftinizi üretin. Repodaki varsayılan anahtar yalnızca geliştirme içindir.
+## Akış (talep → yanıt)
 
-## 1) Anahtar üret (tek sefer)
+```
+Müşteri Admin                         Siz (satıcı)
+─────────────                         ────────────
+1) Paket seç
+2) "Talep kodu üret"  ──TRDR1...──►  3) Admin (VENDOR) veya CLI
+                                      4) Yanıt TRD1... üret
+5) TRD1 yapıştır ◄──────────────────  5) Müşteriye ilet
+6) Etkinleştir (instance bağlanır)
+```
 
-Bilgisayarınızda:
+- Talep (`TRDR1`) kurulumun **instanceId**’sini taşır.
+- Yanıt (`TRD1`) Ed25519 ile imzalanır ve **aynı instanceId**’ye kilitlenir.
+- Başka sunucuya aynı anahtar yapıştırılmaz.
+
+## Satıcı kurulumu (sizin VPS)
+
+```
+LICENSE_VENDOR_MODE=true
+LICENSE_PRIVATE_KEY=<seed-b64>   # asla GitHub’a koyma
+LICENSE_PUBLIC_KEY=<pub-b64>     # müşteri sunucularında da aynı public
+```
+
+Admin’de “Satıcı: yanıt lisansı üret” görünür.
+
+CLI:
 
 ```powershell
-cd C:\Users\necip\Documents\necipdrive
-go run ./scripts/gen_license_keypair.go
+$env:LICENSE_PRIVATE_KEY="..."
+go run ./cmd/trdriver-licensegen -request "TRDR1...." -years 1 -customer "Firma A"
 ```
 
-Çıktı:
-
-- `LICENSE_PUBLIC_KEY` → müşteri sunucularına / kendi VPS’inize (doğrulama)
-- `LICENSE_PRIVATE_KEY` → **sadece sizin güvenli yeriniz** (satış makinesi / parola yöneticisi). Asla git’e koymayın.
-
-## 2) Sunucuya public key
-
-Portainer / compose env:
+## Müşteri sunucusu
 
 ```
-LICENSE_PUBLIC_KEY=<PUBLIC_B64>
+LICENSE_PUBLIC_KEY=<aynı-public-b64>
+# PRIVATE key YOK — imza atamaz, sadece doğrular
 ```
 
-Kod içindeki default public key’i de aynı değere güncelleyebilirsiniz (`internal/license/crypto.go`) ki env unutulsa bile sizin anahtarınız çalışsın.
+## Kırılma / korsana karşı gerçekçi sınır
 
-## 3) Müşteriye anahtar sat
+Açık kaynak yazılımda lisans **mutlak** kırılamaz yapılamaz (kaynak patch’lenebilir). Yaptıklarımız:
 
-```powershell
-$env:LICENSE_PRIVATE_KEY="<PRIVATE_SEED_B64>"
-go run ./cmd/trdriver-licensegen -tier small -years 1 -customer "Musteri Adi"
-```
+| Önlem | Etki |
+|-------|------|
+| Private key sadece sizde | Sahte anahtar üretmek zor (anahtar sızmazsa) |
+| Instance bağlama | Başka kurulumda aynı key geçersiz |
+| Talep checksum + süre | Eski/değiştirilmiş talep reddi |
+| Device token ≠ admin | Sync token ile lisans üretilemez |
+| Destek / güncelleme koşulu | Kırık kopyaya destek yok (sözleşme) |
 
-Tier: `personal` (1) · `small` (10) · `medium` (50) · `unlimited` (∞)
+**Yayın mesajı:** MIT kod + ticari koltuk lisansı. Kırılmış kurulum destek/güncelleme almaz.
 
-Fiyatlar (yıllık): 99 / 499 / 1499 / 2999 TL.
+## Ödeme
 
-Müşteri Admin → Lisans alanına `TRD1....` yapıştırır.
-
-## 4) Ödeme
-
-Şimdilik manuel: Havale/EFT veya iyzico linki → siz anahtar üretip e-posta ile gönderin. Otomatik ödeme gateway ayrı iş.
+Manuel (havale) → talep kodu → siz yanıt üretirsiniz. Otomatik ödeme sonra eklenebilir.

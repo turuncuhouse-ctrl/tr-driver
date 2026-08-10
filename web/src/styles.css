@@ -371,10 +371,24 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .admin-settings { padding: 19px 20px; display: flex; justify-content: space-between; gap: 20px; border: 1px solid #e2e6ee; border-radius: 17px; background: #fff; }
 .admin-settings h2 { margin: 0 0 4px; font-size: 20px; }
 .admin-settings p { margin: 0; color: #9099aa; font-size: 13px; }
-.admin-settings-form { display: flex; align-items: end; gap: 10px; }
-.admin-settings-form label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; color: #667086; }
-.admin-settings-form input { width: 120px; height: 40px; padding: 0 12px; border: 1px solid #dce1ea; border-radius: 10px; }
+.admin-settings-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.admin-settings-form label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; color: #667086; min-width: 180px; flex: 1 1 220px; }
+.admin-settings-form input,
+.admin-settings-form select,
+.admin-settings-form textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #dce1ea;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 500;
+  color: #1a2333;
+}
+.admin-settings-form textarea { min-height: 88px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 .admin-settings-form button { height: 40px; padding: 0 16px; border: 0; border-radius: 10px; color: #fff; background: #4f6df5; font-weight: 700; }
+.admin-settings-form button:disabled { opacity: 0.6; cursor: not-allowed; }
+.admin-settings code { font-size: 12px; word-break: break-all; }
 .admin-users { overflow: hidden; border: 1px solid #e2e6ee; border-radius: 17px; background: #fff; }
 .admin-users-head { padding: 19px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e9ecf2; }
 .admin-users-head h2 { margin: 0 0 3px; font-size: 20px; }

@@ -258,10 +258,12 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 			license_key text not null default '',
 			key_fingerprint text not null default '',
 			customer text not null default '',
+			instance_id text not null default '',
 			activated_at timestamptz not null default now(),
 			expires_at timestamptz,
 			updated_at timestamptz not null default now()
 		)`,
+		`alter table instance_license add column if not exists instance_id text not null default ''`,
 	}
 
 	for _, stmt := range ddl {

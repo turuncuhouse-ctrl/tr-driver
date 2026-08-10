@@ -72,10 +72,21 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     userCount: number;
     seatsRemaining: number;
     customer?: string;
+    instanceId?: string;
     usingDefaultKey?: boolean;
+    vendorMode?: boolean;
+    canIssueLicenses?: boolean;
     catalog?: { code: string; name: string; maxUsers: number; priceTlYear: number; description: string }[];
   } | null>(null);
   const [activating, setActivating] = useState(false);
+  const [requestTier, setRequestTier] = useState("small");
+  const [requestCode, setRequestCode] = useState("");
+  const [creatingRequest, setCreatingRequest] = useState(false);
+  const [vendorRequest, setVendorRequest] = useState("");
+  const [vendorTier, setVendorTier] = useState("");
+  const [vendorCustomer, setVendorCustomer] = useState("");
+  const [issuedKey, setIssuedKey] = useState("");
+  const [issuing, setIssuing] = useState(false);
 
   const visibleUsers = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("tr-TR");
@@ -141,6 +152,48 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
       { userId: user.id, quotaBytes: Math.round(gigabytes * 1024 ** 3) },
       "Kullanıcı kotası güncellendi."
     );
+  }
+
+  async function createLicenseRequest() {
+    setCreatingRequest(true);
+    try {
+      const res = await request<{ requestCode: string }>("/api/admin/license/request", {
+        method: "POST",
+        body: JSON.stringify({ tier: requestTier })
+      });
+      setRequestCode(res.requestCode);
+      onMessage("Talep kodu oluşturuldu — satıcıya gönderin.");
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : "Talep oluşturulamadı");
+    } finally {
+      setCreatingRequest(false);
+    }
+  }
+
+  async function issueFromRequest() {
+    const code = vendorRequest.trim();
+    if (!code) {
+      onMessage("Müşteri talep kodunu girin.");
+      return;
+    }
+    setIssuing(true);
+    try {
+      const res = await request<{ licenseKey: string }>("/api/admin/license/issue", {
+        method: "POST",
+        body: JSON.stringify({
+          requestCode: code,
+          tier: vendorTier || undefined,
+          years: 1,
+          customer: vendorCustomer
+        })
+      });
+      setIssuedKey(res.licenseKey);
+      onMessage("Yanıt lisansı üretildi — müşteriye iletin.");
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : "Lisans üretilemedi");
+    } finally {
+      setIssuing(false);
+    }
   }
 
   async function activateLicense() {
@@ -212,8 +265,11 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
             {license?.maxUsers === 0 ? "∞" : (license?.maxUsers ?? 1)}
             {license?.customer ? ` · ${license.customer}` : ""}
           </p>
+          {license?.instanceId && (
+            <p><small>Kurulum kimliği: <code>{license.instanceId}</code></small></p>
+          )}
           {license?.usingDefaultKey && (
-            <p className="notice error">Varsayılan geliştirme imza anahtarı kullanılıyor — satış öncesi kendi Ed25519 anahtarlarınızı tanımlayın.</p>
+            <p className="notice error">Varsayılan geliştirme imza anahtarı kullanılıyor — satış için kendi anahtarlarınızı kullanın.</p>
           )}
           {!!license?.catalog?.length && (
             <ul>
@@ -222,10 +278,34 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
               ))}
             </ul>
           )}
+          <p><strong>1)</strong> Paket seç → talep kodu üret → satıcıya gönder.</p>
+          <p><strong>2)</strong> Satıcının verdiği <code>TRD1...</code> yanıtını aşağıya yapıştır → etkinleştir.</p>
         </div>
         <div className="admin-settings-form">
           <label>
-            Lisans anahtarı
+            Talep paketi
+            <select value={requestTier} onChange={(e) => setRequestTier(e.target.value)}>
+              {(license?.catalog || [
+                { code: "personal", name: "1 Kullanıcı" },
+                { code: "small", name: "1–10" },
+                { code: "medium", name: "11–50" },
+                { code: "unlimited", name: "50+" }
+              ]).map((t) => (
+                <option key={t.code} value={t.code}>{t.name}</option>
+              ))}
+            </select>
+          </label>
+          <button disabled={creatingRequest} onClick={() => void createLicenseRequest()}>
+            {creatingRequest ? "Üretiliyor…" : "Talep kodu üret"}
+          </button>
+          {requestCode && (
+            <label>
+              Satıcıya gönderilecek talep kodu
+              <textarea readOnly rows={4} value={requestCode} onFocus={(e) => e.currentTarget.select()} />
+            </label>
+          )}
+          <label>
+            Satıcıdan gelen lisans anahtarı
             <input value={licenseKey} onChange={(e) => setLicenseKey(e.target.value)} placeholder="TRD1...." />
           </label>
           <button disabled={activating} onClick={() => void activateLicense()}>
@@ -233,6 +313,46 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
           </button>
         </div>
       </section>
+
+      {license?.vendorMode && (
+        <section className="admin-settings">
+          <div>
+            <h2>Satıcı: yanıt lisansı üret</h2>
+            <p>LICENSE_VENDOR_MODE açık. Müşterinin <code>TRDR1...</code> talebini yapıştırın; instance’a bağlı <code>TRD1...</code> üretin.</p>
+            {!license.canIssueLicenses && (
+              <p className="notice error">LICENSE_PRIVATE_KEY tanımlı değil — bu sunucuda imza atılamaz.</p>
+            )}
+          </div>
+          <div className="admin-settings-form">
+            <label>
+              Müşteri talep kodu
+              <textarea rows={4} value={vendorRequest} onChange={(e) => setVendorRequest(e.target.value)} placeholder="TRDR1...." />
+            </label>
+            <label>
+              Paket (boş = talepteki)
+              <select value={vendorTier} onChange={(e) => setVendorTier(e.target.value)}>
+                <option value="">Talepteki paket</option>
+                {(license.catalog || []).map((t) => (
+                  <option key={t.code} value={t.code}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Müşteri adı
+              <input value={vendorCustomer} onChange={(e) => setVendorCustomer(e.target.value)} />
+            </label>
+            <button disabled={issuing || !license.canIssueLicenses} onClick={() => void issueFromRequest()}>
+              {issuing ? "Üretiliyor…" : "Yanıt lisansı üret"}
+            </button>
+            {issuedKey && (
+              <label>
+                Müşteriye gönder
+                <textarea readOnly rows={3} value={issuedKey} onFocus={(e) => e.currentTarget.select()} />
+              </label>
+            )}
+          </div>
+        </section>
+      )}
 
       <div className="stats-grid">
         <article><span>Toplam kullanıcı</span><strong>{summary?.userCount ?? 0}</strong><small>{summary?.adminCount ?? 0} yönetici</small></article>

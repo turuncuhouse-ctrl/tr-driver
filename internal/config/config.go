@@ -30,6 +30,7 @@ type Config struct {
 	AllowRegistration   bool
 	UpdateManifestURL   string
 	UpdateChannel       string
+	LicenseVendorMode   bool
 }
 
 func Load() (Config, error) {
@@ -55,6 +56,7 @@ func Load() (Config, error) {
 		AllowRegistration:   getEnvBool("ALLOW_REGISTRATION", true),
 		UpdateManifestURL:   getEnv("UPDATE_MANIFEST_URL", ""),
 		UpdateChannel:       getEnv("UPDATE_CHANNEL", "stable"),
+		LicenseVendorMode:   getEnvBool("LICENSE_VENDOR_MODE", false),
 	}
 
 	if cfg.DatabaseURL == "" {

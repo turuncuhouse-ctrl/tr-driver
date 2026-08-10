@@ -5,6 +5,9 @@ import (
 	"errors"
 	"time"
 
+	"necipdrive/internal/version"
+
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,39 +20,69 @@ type Status struct {
 	ActivatedAt       *time.Time `json:"activatedAt,omitempty"`
 	ExpiresAt         *time.Time `json:"expiresAt,omitempty"`
 	Customer          string     `json:"customer,omitempty"`
+	InstanceID        string     `json:"instanceId"`
 	UsingDefaultKey   bool       `json:"usingDefaultKey"`
 	CanRegisterPublic bool       `json:"canRegisterPublic"`
+	VendorMode        bool       `json:"vendorMode"`
+	CanIssueLicenses  bool       `json:"canIssueLicenses"`
 	Catalog           []TierInfo `json:"catalog"`
 }
 
 type Service struct {
-	db                 *pgxpool.Pool
-	allowRegistration  bool
+	db                *pgxpool.Pool
+	allowRegistration bool
+	vendorMode        bool
 }
 
-func NewService(db *pgxpool.Pool, allowRegistration bool) *Service {
-	return &Service{db: db, allowRegistration: allowRegistration}
+func NewService(db *pgxpool.Pool, allowRegistration, vendorMode bool) *Service {
+	return &Service{db: db, allowRegistration: allowRegistration, vendorMode: vendorMode}
+}
+
+func (s *Service) EnsureInstanceID(ctx context.Context) (string, error) {
+	var id string
+	err := s.db.QueryRow(ctx, `select value from app_settings where key = 'instance_id'`).Scan(&id)
+	if err == nil && id != "" {
+		return id, nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	id = uuid.NewString()
+	_, err = s.db.Exec(ctx, `
+		insert into app_settings (key, value, updated_at) values ('instance_id', $1, now())
+		on conflict (key) do update set value = excluded.value, updated_at = now()`, id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (s *Service) Status(ctx context.Context) (*Status, error) {
+	instanceID, err := s.EnsureInstanceID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var userCount int
 	if err := s.db.QueryRow(ctx, `select count(*) from users`).Scan(&userCount); err != nil {
 		return nil, err
 	}
 	st := &Status{
-		Tier:            TierUnlicensed,
-		MaxUsers:        UnlicensedMaxUsers,
-		UserCount:       userCount,
-		UsingDefaultKey: IsUsingDefaultPublicKey(),
-		Catalog:         Catalog(),
+		Tier:             TierUnlicensed,
+		MaxUsers:         UnlicensedMaxUsers,
+		UserCount:        userCount,
+		InstanceID:       instanceID,
+		UsingDefaultKey:  IsUsingDefaultPublicKey(),
+		VendorMode:       s.vendorMode,
+		CanIssueLicenses: s.vendorMode && CanSignLocally(),
+		Catalog:          Catalog(),
 	}
-	var tier, customer, keyFingerprint string
+	var tier, customer string
 	var maxUsers int
 	var activatedAt time.Time
 	var expiresAt *time.Time
-	err := s.db.QueryRow(ctx, `
-		select tier, max_users, activated_at, expires_at, coalesce(customer,''), coalesce(key_fingerprint,'')
-		from instance_license where id = 1`).Scan(&tier, &maxUsers, &activatedAt, &expiresAt, &customer, &keyFingerprint)
+	err = s.db.QueryRow(ctx, `
+		select tier, max_users, activated_at, expires_at, coalesce(customer,'')
+		from instance_license where id = 1`).Scan(&tier, &maxUsers, &activatedAt, &expiresAt, &customer)
 	if err == nil {
 		if expiresAt != nil && time.Now().After(*expiresAt) {
 			// treat as unlicensed
@@ -106,10 +139,48 @@ func (s *Service) RegistrationAllowed(ctx context.Context) error {
 	return s.EnsureCanAddUser(ctx)
 }
 
+func (s *Service) CreateRequest(ctx context.Context, tier string) (string, *RequestPayload, error) {
+	if _, ok := MaxUsersForTier(tier); !ok {
+		return "", nil, errors.New("unknown tier")
+	}
+	st, err := s.Status(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	max, _ := MaxUsersForTier(tier)
+	req := RequestPayload{
+		InstanceID: st.InstanceID,
+		Tier:       tier,
+		MaxUsers:   max,
+		UserCount:  st.UserCount,
+		Product:    version.ProductName,
+		Version:    version.Version,
+		CreatedAt:  time.Now().Unix(),
+	}
+	code, err := EncodeRequest(req)
+	if err != nil {
+		return "", nil, err
+	}
+	_, _ = s.db.Exec(ctx, `
+		insert into app_settings (key, value, updated_at) values ('last_license_request', $1, now())
+		on conflict (key) do update set value = excluded.value, updated_at = now()`, code)
+	return code, &req, nil
+}
+
 func (s *Service) Activate(ctx context.Context, key string) (*Status, error) {
 	payload, err := Verify(key)
 	if err != nil {
 		return nil, err
+	}
+	instanceID, err := s.EnsureInstanceID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if payload.InstanceID == "" {
+		return nil, errors.New("license is not bound to an instance; request a new key from vendor using your demand code")
+	}
+	if payload.InstanceID != instanceID {
+		return nil, errors.New("license issued for a different TR Driver instance")
 	}
 	maxUsers := payload.MaxUsers
 	if max, ok := MaxUsersForTier(payload.Tier); ok {
@@ -126,22 +197,41 @@ func (s *Service) Activate(ctx context.Context, key string) (*Status, error) {
 	}
 	fp := keyFingerprint(key)
 	_, err = s.db.Exec(ctx, `
-		insert into instance_license (id, tier, max_users, license_key, key_fingerprint, customer, activated_at, expires_at, updated_at)
-		values (1, $1, $2, $3, $4, $5, now(), $6, now())
+		insert into instance_license (id, tier, max_users, license_key, key_fingerprint, customer, instance_id, activated_at, expires_at, updated_at)
+		values (1, $1, $2, $3, $4, $5, $6, now(), $7, now())
 		on conflict (id) do update set
 			tier = excluded.tier,
 			max_users = excluded.max_users,
 			license_key = excluded.license_key,
 			key_fingerprint = excluded.key_fingerprint,
 			customer = excluded.customer,
+			instance_id = excluded.instance_id,
 			activated_at = now(),
 			expires_at = excluded.expires_at,
 			updated_at = now()`,
-		payload.Tier, maxUsers, key, fp, payload.Customer, expires)
+		payload.Tier, maxUsers, key, fp, payload.Customer, payload.InstanceID, expires)
 	if err != nil {
 		return nil, err
 	}
 	return s.Status(ctx)
+}
+
+func (s *Service) IssueFromRequest(ctx context.Context, requestCode, tier string, years int, customer, note string) (string, *RequestPayload, error) {
+	if !s.vendorMode {
+		return "", nil, errors.New("vendor mode disabled")
+	}
+	if !CanSignLocally() {
+		return "", nil, errors.New("LICENSE_PRIVATE_KEY not configured on vendor server")
+	}
+	req, err := ParseRequest(requestCode)
+	if err != nil {
+		return "", nil, err
+	}
+	key, err := SignFromRequest(req, tier, years, customer, note)
+	if err != nil {
+		return "", nil, err
+	}
+	return key, req, nil
 }
 
 func keyFingerprint(key string) string {

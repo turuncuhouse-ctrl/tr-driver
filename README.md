@@ -81,9 +81,11 @@ Bakınız [`SECURITY.md`](SECURITY.md). Son denetimde düzeltilen kritik maddele
 
 GitHub: https://github.com/turuncuhouse-ctrl/tr-driver
 
-Deploy / lisans satışı:
-- [`docs/DEPLOY_VPS.md`](docs/DEPLOY_VPS.md)
-- [`docs/LICENSE_SALES.md`](docs/LICENSE_SALES.md)
+Deploy / kurulum / lisans:
+- [`docs/INSTALL_DOCKER.md`](docs/INSTALL_DOCKER.md) — Docker + Portainer
+- [`docs/INSTALL_VPS.md`](docs/INSTALL_VPS.md) — Docker’sız VPS
+- [`docs/DEPLOY_VPS.md`](docs/DEPLOY_VPS.md) — secret rotate
+- [`docs/LICENSE_SALES.md`](docs/LICENSE_SALES.md) — talep/yanıt lisans
 - [`docs/GITHUB.md`](docs/GITHUB.md)
 
 ## Lisans (yazılım)
