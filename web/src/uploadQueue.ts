@@ -37,6 +37,14 @@ export type PersistedBatch = {
   }>;
 };
 
+export type FileProgress = {
+  relativePath: string;
+  fileName: string;
+  expectedSize: number;
+  receivedBytes: number;
+  status: "pending" | "uploading" | "complete" | "error";
+};
+
 export type QueueProgress = {
   batchId: string | null;
   totalBytes: number;
@@ -45,6 +53,8 @@ export type QueueProgress = {
   status: "idle" | "uploading" | "paused" | "waiting" | "error" | "done";
   message: string;
   percent: number;
+  files: FileProgress[];
+  hasLiveFiles: boolean;
 };
 
 type RequestFn = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -161,10 +171,13 @@ function toQueued(file: File, relativePath: string): QueuedFile {
 export class UploadQueue {
   private paused = false;
   private aborted = false;
+  private running = false;
   private files: QueuedFile[] = [];
   private parentId: string | null = null;
   private chunkBytes = 8 * 1024 * 1024;
   private maxBatchBytes = 10 * 1024 * 1024 * 1024;
+  private batchSnapshot: PersistedBatch | null = null;
+  private fileProgress: FileProgress[] = [];
   private csrf: () => string;
   private request: RequestFn;
   private onProgress: (progress: QueueProgress) => void;
@@ -187,146 +200,321 @@ export class UploadQueue {
     if (limits.maxBatchBytes && limits.maxBatchBytes > 0) this.maxBatchBytes = limits.maxBatchBytes;
   }
 
-  pause() { this.paused = true; this.emit({ status: "paused", message: "Yükleme duraklatıldı." }); }
-  resume() { this.paused = false; }
+  isRunning() {
+    return this.running && !this.aborted;
+  }
+
+  hasLiveFiles() {
+    return this.files.length > 0;
+  }
+
+  pause() {
+    this.paused = true;
+    this.emit({ status: "paused", message: "Yükleme duraklatıldı." });
+  }
+
+  resume() {
+    this.paused = false;
+    if (this.running) {
+      this.emit({ status: "uploading", message: "Yüklemeye devam ediliyor…" });
+    }
+  }
+
   async cancel(batchId?: string | null) {
     this.aborted = true;
-    if (batchId) {
-      await this.request(`/api/uploads/batches/${batchId}`, { method: "DELETE" }).catch(() => undefined);
-      await deletePersistedBatch(batchId).catch(() => undefined);
+    this.paused = false;
+    const id = batchId || this.batchSnapshot?.id;
+    if (id) {
+      await this.request(`/api/uploads/batches/${id}`, { method: "DELETE" }).catch(() => undefined);
+      await deletePersistedBatch(id).catch(() => undefined);
     }
-    this.emit({ status: "idle", message: "Yükleme iptal edildi.", batchId: null, sentBytes: 0, totalBytes: 0, percent: 0, currentFile: "" });
+    this.running = false;
+    this.files = [];
+    this.batchSnapshot = null;
+    this.fileProgress = [];
+    this.emit({
+      status: "idle",
+      message: "Yükleme iptal edildi.",
+      batchId: null,
+      sentBytes: 0,
+      totalBytes: 0,
+      percent: 0,
+      currentFile: "",
+      files: [],
+      hasLiveFiles: false
+    });
   }
 
   async start(files: QueuedFile[], parentId: string | null) {
+    if (this.running) {
+      throw new Error("Zaten bir yükleme devam ediyor. Bitmesini bekleyin veya iptal edin.");
+    }
     this.aborted = false;
     this.paused = false;
+    this.running = true;
     this.files = files;
     this.parentId = parentId;
     const totalBytes = files.reduce((sum, file) => sum + file.expectedSize, 0);
-    if (!files.length) throw new Error("Yüklenecek dosya yok.");
+    if (!files.length) {
+      this.running = false;
+      throw new Error("Yüklenecek dosya yok.");
+    }
     if (totalBytes > this.maxBatchBytes) {
+      this.running = false;
+      this.files = [];
       throw new Error(`Seçilen dosyalar ${formatBytes(this.maxBatchBytes)} sınırını aşıyor.`);
     }
 
-    this.emit({ status: "uploading", message: "Yükleme hazırlanıyor…", totalBytes, sentBytes: 0, percent: 0, currentFile: "", batchId: null });
-    const batch = await this.request<{
-      id: string;
-      totalBytes: number;
-      files: UploadSessionState[];
-    }>("/api/uploads/batches", {
-      method: "POST",
-      body: JSON.stringify({
-        parentId: parentId || "",
-        files: files.map((file) => ({
-          relativePath: file.relativePath,
-          fileName: file.fileName,
-          mimeType: file.mimeType,
-          expectedSize: file.expectedSize,
-          lastModifiedMs: file.lastModifiedMs,
-          ...(file.targetEntryId ? { targetEntryId: file.targetEntryId } : {})
-        }))
-      })
+    this.fileProgress = files.map((file) => ({
+      relativePath: file.relativePath,
+      fileName: file.fileName,
+      expectedSize: file.expectedSize,
+      receivedBytes: 0,
+      status: "pending" as const
+    }));
+
+    this.emit({
+      status: "uploading",
+      message: "Yükleme hazırlanıyor…",
+      totalBytes,
+      sentBytes: 0,
+      percent: 0,
+      currentFile: "",
+      batchId: null
     });
 
-    const fileMap = new Map(files.map((file) => [fingerprint(file), file]));
-    await savePersistedBatch({
-      id: batch.id,
-      parentId,
-      totalBytes: batch.totalBytes,
-      createdAt: Date.now(),
-      files: batch.files.map((item) => ({
-        id: item.id,
+    try {
+      const batch = await this.request<{
+        id: string;
+        totalBytes: number;
+        files: UploadSessionState[];
+      }>("/api/uploads/batches", {
+        method: "POST",
+        body: JSON.stringify({
+          parentId: parentId || "",
+          files: files.map((file) => ({
+            relativePath: file.relativePath,
+            fileName: file.fileName,
+            mimeType: file.mimeType,
+            expectedSize: file.expectedSize,
+            lastModifiedMs: file.lastModifiedMs,
+            ...(file.targetEntryId ? { targetEntryId: file.targetEntryId } : {})
+          }))
+        })
+      });
+
+      const fileMap = new Map(files.map((file) => [fingerprint(file), file]));
+      this.batchSnapshot = {
+        id: batch.id,
+        parentId,
+        totalBytes: batch.totalBytes,
+        createdAt: Date.now(),
+        files: batch.files.map((item) => ({
+          id: item.id,
+          relativePath: item.relativePath,
+          fileName: item.fileName,
+          expectedSize: item.expectedSize,
+          lastModifiedMs: item.lastModifiedMs,
+          receivedBytes: item.receivedBytes,
+          status: item.status
+        }))
+      };
+      await savePersistedBatch(this.batchSnapshot);
+
+      this.fileProgress = batch.files.map((item) => ({
         relativePath: item.relativePath,
         fileName: item.fileName,
         expectedSize: item.expectedSize,
-        lastModifiedMs: item.lastModifiedMs,
         receivedBytes: item.receivedBytes,
-        status: item.status
-      }))
-    });
+        status: item.receivedBytes >= item.expectedSize ? "complete" : "pending"
+      }));
 
-    let sentBytes = batch.files.reduce((sum, item) => sum + item.receivedBytes, 0);
-    for (const session of batch.files) {
-      if (this.aborted) return;
-      while (this.paused) {
-        this.emit({ status: "paused", message: "Yükleme duraklatıldı.", batchId: batch.id, totalBytes, sentBytes, percent: percent(sentBytes, totalBytes), currentFile: session.fileName });
-        await sleep(250);
+      let sentBytes = batch.files.reduce((sum, item) => sum + item.receivedBytes, 0);
+      for (const session of batch.files) {
         if (this.aborted) return;
-      }
-      const local = fileMap.get(`${session.relativePath}|${session.expectedSize}|${session.lastModifiedMs}`);
-      if (!local) throw new Error(`${session.relativePath} dosyası eşleştirilemedi.`);
-      await this.uploadFile(batch.id, session, local, (nextOffset) => {
-        const already = sentBytes - session.receivedBytes;
-        const live = already + nextOffset;
-        this.emit({
-          status: "uploading",
-          message: `${session.fileName} yükleniyor…`,
-          batchId: batch.id,
-          totalBytes,
-          sentBytes: live,
-          percent: percent(live, totalBytes),
-          currentFile: session.fileName
+        while (this.paused) {
+          this.emit({
+            status: "paused",
+            message: "Yükleme duraklatıldı.",
+            batchId: batch.id,
+            totalBytes,
+            sentBytes,
+            percent: percent(sentBytes, totalBytes),
+            currentFile: session.fileName
+          });
+          await sleep(250);
+          if (this.aborted) return;
+        }
+        const local = fileMap.get(`${session.relativePath}|${session.expectedSize}|${session.lastModifiedMs}`);
+        if (!local) throw new Error(`${session.relativePath} dosyası eşleştirilemedi.`);
+        this.setFileStatus(session.relativePath, "uploading", session.receivedBytes);
+        await this.uploadFile(batch.id, session, local, (nextOffset) => {
+          const already = sentBytes - session.receivedBytes;
+          const live = already + nextOffset;
+          this.setFileStatus(session.relativePath, "uploading", nextOffset);
+          this.emit({
+            status: "uploading",
+            message: `${session.fileName} yükleniyor…`,
+            batchId: batch.id,
+            totalBytes,
+            sentBytes: live,
+            percent: percent(live, totalBytes),
+            currentFile: session.fileName
+          });
         });
-      });
-      sentBytes += session.expectedSize - session.receivedBytes;
-      session.receivedBytes = session.expectedSize;
-    }
+        sentBytes += session.expectedSize - session.receivedBytes;
+        session.receivedBytes = session.expectedSize;
+        this.setFileStatus(session.relativePath, "complete", session.expectedSize);
+      }
 
-    await deletePersistedBatch(batch.id).catch(() => undefined);
-    this.emit({ status: "done", message: "Yükleme tamamlandı.", batchId: null, totalBytes, sentBytes: totalBytes, percent: 100, currentFile: "" });
-    await this.onComplete();
+      await deletePersistedBatch(batch.id).catch(() => undefined);
+      this.batchSnapshot = null;
+      this.emit({
+        status: "done",
+        message: "Yükleme tamamlandı.",
+        batchId: null,
+        totalBytes,
+        sentBytes: totalBytes,
+        percent: 100,
+        currentFile: ""
+      });
+      await this.onComplete();
+    } catch (error) {
+      if (!this.aborted) {
+        this.emit({
+          status: "error",
+          message: error instanceof Error ? error.message : "Yükleme başarısız",
+          batchId: this.batchSnapshot?.id || null
+        });
+      }
+      throw error;
+    } finally {
+      this.running = false;
+      // Keep File handles only while still needed for resume of incomplete batch.
+      if (!this.batchSnapshot || this.aborted) {
+        this.files = [];
+      }
+    }
   }
 
   async resumeWithFiles(batch: PersistedBatch, files: QueuedFile[]) {
+    if (this.running) {
+      throw new Error("Zaten bir yükleme devam ediyor.");
+    }
     this.aborted = false;
     this.paused = false;
+    this.running = true;
+    this.files = files;
+    this.parentId = batch.parentId;
+    this.batchSnapshot = { ...batch, files: batch.files.map((f) => ({ ...f })) };
+    this.fileProgress = batch.files.map((item) => ({
+      relativePath: item.relativePath,
+      fileName: item.fileName,
+      expectedSize: item.expectedSize,
+      receivedBytes: item.receivedBytes,
+      status: item.status === "complete" || item.receivedBytes >= item.expectedSize ? "complete" : "pending"
+    }));
+
     const map = new Map(files.map((file) => [fingerprint(file), file]));
     let sentBytes = batch.files.reduce((sum, file) => sum + file.receivedBytes, 0);
-    for (const session of batch.files) {
-      if (session.status === "complete") continue;
-      const local = map.get(`${session.relativePath}|${session.expectedSize}|${session.lastModifiedMs}`);
-      if (!local) {
-        this.emit({
-          status: "waiting",
-          message: "Devam için aynı klasör/dosyaları yeniden seçmen gerekiyor.",
-          batchId: batch.id,
-          totalBytes: batch.totalBytes,
-          sentBytes,
-          percent: percent(sentBytes, batch.totalBytes),
-          currentFile: session.fileName
+
+    try {
+      for (const session of this.batchSnapshot.files) {
+        if (session.status === "complete" || session.receivedBytes >= session.expectedSize) continue;
+        if (this.aborted) return;
+        while (this.paused) {
+          this.emit({
+            status: "paused",
+            message: "Yükleme duraklatıldı.",
+            batchId: batch.id,
+            totalBytes: batch.totalBytes,
+            sentBytes,
+            percent: percent(sentBytes, batch.totalBytes),
+            currentFile: session.fileName
+          });
+          await sleep(250);
+          if (this.aborted) return;
+        }
+        const local = map.get(`${session.relativePath}|${session.expectedSize}|${session.lastModifiedMs}`);
+        if (!local) {
+          this.emit({
+            status: "waiting",
+            message: "Devam için aynı klasör/dosyaları yeniden seçmen gerekiyor.",
+            batchId: batch.id,
+            totalBytes: batch.totalBytes,
+            sentBytes,
+            percent: percent(sentBytes, batch.totalBytes),
+            currentFile: session.fileName
+          });
+          throw new Error("Devam için aynı dosyaları yeniden seç.");
+        }
+        this.setFileStatus(session.relativePath, "uploading", session.receivedBytes);
+        await this.uploadFile(batch.id, {
+          id: session.id,
+          relativePath: session.relativePath,
+          fileName: session.fileName,
+          expectedSize: session.expectedSize,
+          receivedBytes: session.receivedBytes,
+          lastModifiedMs: session.lastModifiedMs,
+          status: session.status
+        }, local, (nextOffset) => {
+          const already = sentBytes - session.receivedBytes;
+          const live = already + nextOffset;
+          this.setFileStatus(session.relativePath, "uploading", nextOffset);
+          this.emit({
+            status: "uploading",
+            message: `${session.fileName} devam ediyor…`,
+            batchId: batch.id,
+            totalBytes: batch.totalBytes,
+            sentBytes: live,
+            percent: percent(live, batch.totalBytes),
+            currentFile: session.fileName
+          });
         });
-        throw new Error("Devam için aynı dosyaları yeniden seç.");
+        sentBytes += session.expectedSize - session.receivedBytes;
+        session.receivedBytes = session.expectedSize;
+        session.status = "complete";
+        this.setFileStatus(session.relativePath, "complete", session.expectedSize);
+        await savePersistedBatch(this.batchSnapshot);
       }
-      await this.uploadFile(batch.id, {
-        id: session.id,
-        relativePath: session.relativePath,
-        fileName: session.fileName,
-        expectedSize: session.expectedSize,
-        receivedBytes: session.receivedBytes,
-        lastModifiedMs: session.lastModifiedMs,
-        status: session.status
-      }, local, (nextOffset) => {
-        const already = sentBytes - session.receivedBytes;
-        const live = already + nextOffset;
-        this.emit({
-          status: "uploading",
-          message: `${session.fileName} devam ediyor…`,
-          batchId: batch.id,
-          totalBytes: batch.totalBytes,
-          sentBytes: live,
-          percent: percent(live, batch.totalBytes),
-          currentFile: session.fileName
-        });
+      await deletePersistedBatch(batch.id).catch(() => undefined);
+      this.batchSnapshot = null;
+      this.emit({
+        status: "done",
+        message: "Yükleme tamamlandı.",
+        batchId: null,
+        totalBytes: batch.totalBytes,
+        sentBytes: batch.totalBytes,
+        percent: 100,
+        currentFile: ""
       });
-      sentBytes += session.expectedSize - session.receivedBytes;
-      session.receivedBytes = session.expectedSize;
-      session.status = "complete";
-      await savePersistedBatch(batch);
+      await this.onComplete();
+    } catch (error) {
+      if (!this.aborted) {
+        this.emit({
+          status: "error",
+          message: error instanceof Error ? error.message : "Yükleme başarısız",
+          batchId: batch.id
+        });
+      }
+      throw error;
+    } finally {
+      this.running = false;
+      if (!this.batchSnapshot || this.aborted) {
+        this.files = [];
+      }
     }
-    await deletePersistedBatch(batch.id).catch(() => undefined);
-    this.emit({ status: "done", message: "Yükleme tamamlandı.", batchId: null, totalBytes: batch.totalBytes, sentBytes: batch.totalBytes, percent: 100, currentFile: "" });
-    await this.onComplete();
+  }
+
+  private setFileStatus(relativePath: string, status: FileProgress["status"], receivedBytes?: number) {
+    this.fileProgress = this.fileProgress.map((item) => {
+      if (item.relativePath !== relativePath) return item;
+      return {
+        ...item,
+        status,
+        receivedBytes: typeof receivedBytes === "number" ? receivedBytes : item.receivedBytes
+      };
+    });
   }
 
   private async uploadFile(
@@ -346,21 +534,14 @@ export class UploadQueue {
       const blob = local.file.slice(offset, end);
       offset = await this.putChunkWithRetry(session.id, offset, blob);
       onOffset(offset);
-      await savePersistedBatch({
-        id: batchId,
-        parentId: this.parentId,
-        totalBytes: this.files.reduce((sum, file) => sum + file.expectedSize, 0),
-        createdAt: Date.now(),
-        files: [{
-          id: session.id,
-          relativePath: session.relativePath,
-          fileName: session.fileName,
-          expectedSize: session.expectedSize,
-          lastModifiedMs: session.lastModifiedMs,
-          receivedBytes: offset,
-          status: "open"
-        }]
-      }).catch(() => undefined);
+      if (this.batchSnapshot && this.batchSnapshot.id === batchId) {
+        this.batchSnapshot.files = this.batchSnapshot.files.map((item) =>
+          item.id === session.id
+            ? { ...item, receivedBytes: offset, status: offset >= session.expectedSize ? "complete" : "open" }
+            : item
+        );
+        await savePersistedBatch(this.batchSnapshot).catch(() => undefined);
+      }
     }
     await this.request(`/api/uploads/files/${session.id}/complete`, { method: "POST", body: "{}" });
   }
@@ -376,10 +557,7 @@ export class UploadQueue {
         this.emit({
           status: "waiting",
           message: `Bağlantı koptu, yeniden deneniyor (${attempt})…`,
-          batchId: null,
-          totalBytes: 0,
-          sentBytes: offset,
-          percent: 0,
+          batchId: this.batchSnapshot?.id || null,
           currentFile: ""
         });
         await sleep(Math.min(15000, 500 * 2 ** (attempt - 1)));
@@ -423,13 +601,22 @@ export class UploadQueue {
   }
 
   private emit(partial: Partial<QueueProgress> & Pick<QueueProgress, "status" | "message">) {
-    this.onProgress({
-      batchId: null,
-      totalBytes: 0,
+    const base: QueueProgress = {
+      batchId: this.batchSnapshot?.id || null,
+      totalBytes: this.batchSnapshot?.totalBytes || this.files.reduce((sum, f) => sum + f.expectedSize, 0),
       sentBytes: 0,
       currentFile: "",
       percent: 0,
-      ...partial
+      status: partial.status,
+      message: partial.message,
+      files: this.fileProgress,
+      hasLiveFiles: this.files.length > 0
+    };
+    this.onProgress({
+      ...base,
+      ...partial,
+      files: partial.files || this.fileProgress,
+      hasLiveFiles: partial.hasLiveFiles ?? this.files.length > 0
     });
   }
 }

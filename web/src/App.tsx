@@ -299,7 +299,6 @@ export function App() {
   async function enqueueFiles(selected: QueuedFile[], parentId: string | null = currentFolder) {
     if (!selected.length) return;
     setMessage("");
-    setBusy(true);
     try {
       const prepared = [...selected];
       // Same-name conflicts in the current listing (flat uploads / top-level names).
@@ -329,14 +328,33 @@ export function App() {
           }
         }
       }
-      await queueRef.current?.start(prepared, parentId);
       setPendingResume(null);
       const folderName = parentId ? filesListName(parentId) : null;
       setMessage(folderName ? `"${folderName}" klasörüne yükleme başlatıldı.` : "Yükleme başlatıldı.");
+      // Don't await: uploads keep running while the user navigates other pages.
+      void queueRef.current?.start(prepared, parentId).catch((error) => {
+        setMessage(error instanceof Error ? error.message : "Dosyalar yüklenemedi");
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Dosyalar yüklenemedi");
-    } finally {
-      setBusy(false);
+    }
+  }
+
+  function continuePendingUpload() {
+    const queue = queueRef.current;
+    if (!queue) return;
+    // In-session pause: continue without re-picking files.
+    if (uploadProgress?.hasLiveFiles && (uploadProgress.status === "paused" || uploadProgress.status === "waiting")) {
+      queue.resume();
+      return;
+    }
+    if (queue.isRunning() && uploadProgress?.hasLiveFiles) {
+      queue.resume();
+      return;
+    }
+    // Only after full page reload File handles are gone — then re-select same folder/files.
+    if (pendingResume) {
+      folderInput.current?.click();
     }
   }
 
@@ -389,16 +407,13 @@ export function App() {
   async function uploadFiles(event: ChangeEvent<HTMLInputElement>, asDirectory = false) {
     const selected = filesFromList(event.target.files || [], asDirectory);
     event.target.value = "";
-    if (pendingResume && asDirectory) {
-      setBusy(true);
-      try {
-        await queueRef.current?.resumeWithFiles(pendingResume, selected);
-        setPendingResume(null);
-      } catch (error) {
+    if (pendingResume && asDirectory && !queueRef.current?.hasLiveFiles()) {
+      setPendingResume(null);
+      void queueRef.current?.resumeWithFiles(pendingResume, selected).catch((error) => {
         setMessage(error instanceof Error ? error.message : "Yüklemeye devam edilemedi");
-      } finally {
-        setBusy(false);
-      }
+        void listPersistedBatches().then((batches) => setPendingResume(batches[0] || null));
+      });
+      setMessage("Yarım kalan yüklemeye devam ediliyor…");
       return;
     }
     await enqueueFiles(selected);
@@ -866,27 +881,14 @@ export function App() {
           </div>
         </header>
 
-        {pendingResume && (
+        {pendingResume && !(uploadProgress?.hasLiveFiles || (uploadProgress && uploadProgress.status !== "idle" && uploadProgress.status !== "done")) && (
           <div className="notice">
-            Yarım kalan bir yükleme var ({pendingResume.files.length} dosya).
-            <button onClick={() => folderInput.current?.click()}>Devam et</button>
-            <button onClick={() => { void queueRef.current?.cancel(pendingResume.id); setPendingResume(null); }}>İptal</button>
+            Yarım kalan bir yükleme var ({pendingResume.files.length} dosya). Sayfa yenilendiği için aynı klasörü yeniden seçmeniz gerekir.
+            <button type="button" onClick={continuePendingUpload}>Klasörü yeniden seç</button>
+            <button type="button" onClick={() => { void queueRef.current?.cancel(pendingResume.id); setPendingResume(null); }}>İptal</button>
           </div>
         )}
 
-        {uploadProgress && uploadProgress.status !== "idle" && uploadProgress.status !== "done" && (
-          <div className="upload-status visible">
-            <div className="upload-status-bar"><span style={{ width: `${uploadProgress.percent}%` }} /></div>
-            <strong>{uploadProgress.percent}% · {uploadProgress.message}</strong>
-            <small>{formatBytes(uploadProgress.sentBytes)} / {formatBytes(uploadProgress.totalBytes)}{uploadProgress.currentFile ? ` · ${uploadProgress.currentFile}` : ""}</small>
-            <div className="upload-actions">
-              {uploadProgress.status === "paused"
-                ? <button onClick={() => queueRef.current?.resume()}>Devam</button>
-                : <button onClick={() => queueRef.current?.pause()}>Duraklat</button>}
-              <button onClick={() => void queueRef.current?.cancel(uploadProgress.batchId)}>İptal</button>
-            </div>
-          </div>
-        )}
         {message && <div className="notice">{message}<button onClick={() => setMessage("")}>×</button></div>}
 
         <section
@@ -934,6 +936,43 @@ export function App() {
 
       {shareTarget && (
         <ShareModal request={request} entryId={shareTarget.id} entryName={shareTarget.name} onClose={() => setShareTarget(null)} />
+      )}
+
+      {uploadProgress && uploadProgress.status !== "idle" && uploadProgress.status !== "done" && (
+        <aside className="upload-dock" aria-live="polite">
+          <header className="upload-dock-head">
+            <div>
+              <strong>Yüklemeler</strong>
+              <small>{uploadProgress.percent}% · {uploadProgress.message}</small>
+            </div>
+            <div className="upload-actions">
+              {uploadProgress.status === "paused"
+                ? <button type="button" onClick={() => queueRef.current?.resume()}>Devam</button>
+                : <button type="button" onClick={() => queueRef.current?.pause()}>Duraklat</button>}
+              <button type="button" onClick={() => void queueRef.current?.cancel(uploadProgress.batchId)}>İptal</button>
+            </div>
+          </header>
+          <div className="upload-status-bar"><span style={{ width: `${uploadProgress.percent}%` }} /></div>
+          <small className="upload-dock-meta">
+            {formatBytes(uploadProgress.sentBytes)} / {formatBytes(uploadProgress.totalBytes)}
+            {uploadProgress.currentFile ? ` · ${uploadProgress.currentFile}` : ""}
+          </small>
+          {!!uploadProgress.files?.length && (
+            <ul className="upload-dock-list">
+              {uploadProgress.files.map((file) => {
+                const filePct = file.expectedSize
+                  ? Math.min(100, Math.round((file.receivedBytes / file.expectedSize) * 100))
+                  : 0;
+                return (
+                  <li key={file.relativePath} data-status={file.status}>
+                    <span title={file.relativePath}>{file.fileName}</span>
+                    <em>{file.status === "complete" ? "Tamam" : `${filePct}%`}</em>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </aside>
       )}
 
       {preview && (
