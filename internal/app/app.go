@@ -46,6 +46,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	authService := auth.NewService(db, cfg, licenseService)
 	adminService := admin.NewService(db)
 	mailService := mailer.New(db)
+	authService.SetMailer(mailService)
 	fileService := files.NewService(db, fileStorage, cfg, accessSvc)
 	planService := plans.NewService(db)
 	shareService := shares.NewService(db, cfg, accessSvc)

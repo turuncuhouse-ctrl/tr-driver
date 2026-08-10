@@ -34,6 +34,7 @@ type User = {
   reservedBytes?: number;
   maxBatchBytes?: number;
   uploadChunkBytes?: number;
+  email2FAEnabled?: boolean;
 };
 
 type FileEntry = {
@@ -162,8 +163,11 @@ export function App() {
   const [layout, setLayout] = useState<LayoutMode>(readStoredLayout);
   const [theme, setTheme] = useState<ThemeMode>(readStoredTheme);
   const [crumbs, setCrumbs] = useState<Crumb[]>([{ id: null, name: "Dosyalarım" }]);
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "forgot" | "reset" | "login2fa">("login");
   const [message, setMessage] = useState("");
+  const [challengeToken, setChallengeToken] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [uploadProgress, setUploadProgress] = useState<QueueProgress | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -365,22 +369,65 @@ export function App() {
   async function submitAuth(event: FormEvent) {
     event.preventDefault();
     setMessage("");
-    if (mode === "register" && form.password.length < 8) {
-      setMessage("Şifre en az 8 karakter olmalı.");
-      return;
-    }
     setBusy(true);
     try {
+      if (mode === "forgot") {
+        const res = await request<{ message?: string }>("/api/auth/forgot-password", {
+          method: "POST",
+          body: JSON.stringify({ email: form.email })
+        });
+        setMessage(res.message || "Kod gönderildi.");
+        setMode("reset");
+        return;
+      }
+      if (mode === "reset") {
+        await request("/api/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({ email: form.email, code: otpCode, newPassword })
+        });
+        setMessage("Şifre güncellendi. Giriş yapabilirsiniz.");
+        setMode("login");
+        setOtpCode("");
+        setNewPassword("");
+        setForm((f) => ({ ...f, password: "" }));
+        return;
+      }
+      if (mode === "login2fa") {
+        await request<User>("/api/auth/login/2fa", {
+          method: "POST",
+          body: JSON.stringify({ challengeToken, code: otpCode })
+        });
+        setChallengeToken("");
+        setOtpCode("");
+        setMode("login");
+        setCrumbs([{ id: null, name: "Dosyalarım" }]);
+        await bootstrap();
+        return;
+      }
+      if (mode === "register" && form.password.length < 8) {
+        setMessage("Şifre en az 8 karakter olmalı.");
+        return;
+      }
       const path = mode === "register" ? "/api/auth/register" : "/api/auth/login";
       const payload = mode === "register"
         ? form
         : { email: form.email, password: form.password };
-      await request<User>(path, { method: "POST", body: JSON.stringify(payload) });
+      const res = await request<User & { requires2FA?: boolean; challengeToken?: string; message?: string }>(path, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      if (res.requires2FA && res.challengeToken) {
+        setChallengeToken(res.challengeToken);
+        setOtpCode("");
+        setMode("login2fa");
+        setMessage(res.message || "E-postanıza gelen doğrulama kodunu girin.");
+        return;
+      }
       setForm({ email: "", password: "", displayName: "" });
       setCrumbs([{ id: null, name: "Dosyalarım" }]);
       await bootstrap();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Giriş yapılamadı");
+      setMessage(error instanceof Error ? error.message : "İşlem başarısız");
     } finally {
       setBusy(false);
     }
@@ -705,6 +752,18 @@ export function App() {
   }
 
   if (!user) {
+    const title =
+      mode === "register" ? "Hesap oluştur"
+        : mode === "forgot" ? "Şifremi unuttum"
+          : mode === "reset" ? "Yeni şifre belirle"
+            : mode === "login2fa" ? "İki adımlı doğrulama"
+              : "Tekrar hoş geldin";
+    const subtitle =
+      mode === "register" ? "Ücretsiz depolama alanınla hemen başla."
+        : mode === "forgot" ? "E-posta adresine 6 haneli bir sıfırlama kodu göndereceğiz."
+          : mode === "reset" ? "E-postadaki kodu ve yeni şifreni gir."
+            : mode === "login2fa" ? "E-postana gelen 6 haneli kodu gir."
+              : "Dosyalarına erişmek için giriş yap.";
     return (
       <main className="auth-page">
         <button className="theme-toggle floating" type="button" onClick={toggleTheme} title="Tema">
@@ -716,18 +775,47 @@ export function App() {
           <p>Google Drive’a para ödemeden, kendi sunucunda çalışan dosya bulutu.</p>
         </section>
         <form className="auth-card" onSubmit={submitAuth}>
-          <h2>{mode === "register" ? "Hesap oluştur" : "Tekrar hoş geldin"}</h2>
-          <p>{mode === "register" ? "Ücretsiz depolama alanınla hemen başla." : "Dosyalarına erişmek için giriş yap."}</p>
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
           {mode === "register" && (
             <label>Adın<input required autoComplete="name" value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></label>
           )}
-          <label>E-posta<input required type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-          <label>Şifre<input required minLength={8} type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
-          <button className="primary" disabled={busy}>{busy ? "Lütfen bekle…" : mode === "register" ? "Ücretsiz hesap oluştur" : "Giriş yap"}</button>
-          {message && <div className="notice error">{message}</div>}
-          <button className="text-button" type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setMessage(""); }}>
-            {mode === "login" ? "Hesabın yok mu? Üye ol" : "Zaten hesabın var mı? Giriş yap"}
+          {(mode === "login" || mode === "register" || mode === "forgot" || mode === "reset") && (
+            <label>E-posta<input required type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+          )}
+          {(mode === "login" || mode === "register") && (
+            <label>Şifre<input required minLength={8} type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
+          )}
+          {(mode === "login2fa" || mode === "reset") && (
+            <label>Doğrulama kodu<input required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 haneli kod" /></label>
+          )}
+          {mode === "reset" && (
+            <label>Yeni şifre<input required minLength={8} type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /></label>
+          )}
+          <button className="primary" disabled={busy}>
+            {busy ? "Lütfen bekle…"
+              : mode === "register" ? "Ücretsiz hesap oluştur"
+                : mode === "forgot" ? "Kod gönder"
+                  : mode === "reset" ? "Şifreyi güncelle"
+                    : mode === "login2fa" ? "Doğrula ve giriş yap"
+                      : "Giriş yap"}
           </button>
+          {message && <div className={`notice ${mode === "forgot" || mode === "reset" ? "" : "error"}`}>{message}</div>}
+          {mode === "login" && (
+            <button className="text-button" type="button" onClick={() => { setMode("forgot"); setMessage(""); }}>
+              Şifremi unuttum
+            </button>
+          )}
+          {(mode === "login" || mode === "register") && (
+            <button className="text-button" type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setMessage(""); }}>
+              {mode === "login" ? "Hesabın yok mu? Üye ol" : "Zaten hesabın var mı? Giriş yap"}
+            </button>
+          )}
+          {(mode === "forgot" || mode === "reset" || mode === "login2fa") && (
+            <button className="text-button" type="button" onClick={() => { setMode("login"); setMessage(""); setOtpCode(""); setChallengeToken(""); }}>
+              Girişe dön
+            </button>
+          )}
         </form>
       </main>
     );

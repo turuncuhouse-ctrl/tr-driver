@@ -27,15 +27,16 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrRateLimited        = errors.New("too many login attempts")
+	ErrInvalidCredentials = errors.New("e-posta veya şifre hatalı")
+	ErrRateLimited        = errors.New("çok fazla deneme; lütfen daha sonra tekrar deneyin")
 )
 
 type Service struct {
-	db       *pgxpool.Pool
-	cfg      config.Config
-	limiter  *loginLimiter
-	license  LicenseGate
+	db      *pgxpool.Pool
+	cfg     config.Config
+	limiter *loginLimiter
+	license LicenseGate
+	mail    MailSender
 }
 
 type LicenseGate interface {
@@ -160,44 +161,56 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 	return &user, sessionToken, nil
 }
 
-func (s *Service) Login(ctx context.Context, remoteAddr, email, password string) (*domain.User, string, error) {
+func (s *Service) Login(ctx context.Context, remoteAddr, email, password string) (*LoginResult, error) {
+	user, err := s.authenticatePassword(ctx, remoteAddr, email, password)
+	if err != nil {
+		return nil, err
+	}
+
+	if user.Email2FAEnabled {
+		challengeToken, err := s.startLogin2FA(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{Requires2FA: true, ChallengeToken: challengeToken}, nil
+	}
+
+	sessionToken, err := s.issueSession(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{User: user, SessionToken: sessionToken}, nil
+}
+
+func (s *Service) authenticatePassword(ctx context.Context, remoteAddr, email, password string) (*domain.User, error) {
 	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		remoteAddr = host
 	}
 	if s.limiter.blocked(remoteAddr) {
-		return nil, "", ErrRateLimited
+		return nil, ErrRateLimited
 	}
 
 	var user domain.User
 	err := s.db.QueryRow(ctx, `
 		select id::text, email, password_hash, display_name, role, plan_code, quota_bytes, coalesce(bonus_quota_bytes,0), used_bytes, reserved_bytes,
-		       storage_root_id::text, created_at, last_login_at
+		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false)
 		from users where email = $1`, strings.ToLower(strings.TrimSpace(email)),
-	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt)
+	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled)
 	if err != nil {
 		s.limiter.add(remoteAddr)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", ErrInvalidCredentials
+			return nil, ErrInvalidCredentials
 		}
-		return nil, "", err
+		return nil, err
 	}
 	user.QuotaBytes = user.BaseQuotaBytes + user.BonusQuotaBytes
+	user.MaxBatchBytes = s.maxBatchBytes(ctx)
+	user.UploadChunkBytes = s.cfg.UploadChunkBytes
 	if !verifyPassword(password, user.PasswordHash) {
 		s.limiter.add(remoteAddr)
-		return nil, "", ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
-
-	sessionToken, tokenHash, err := newSessionToken()
-	if err != nil {
-		return nil, "", err
-	}
-	if _, err := s.db.Exec(ctx, `insert into sessions (user_id, token_hash, expires_at) values ($1::uuid, $2, $3)`, user.ID, tokenHash, time.Now().Add(s.cfg.SessionTTL)); err != nil {
-		return nil, "", err
-	}
-	if _, err := s.db.Exec(ctx, `update users set last_login_at = now() where id = $1::uuid`, user.ID); err != nil {
-		return nil, "", err
-	}
-	return &user, sessionToken, nil
+	return &user, nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
@@ -209,12 +222,12 @@ func (s *Service) UserBySession(ctx context.Context, token string) (*domain.User
 	var user domain.User
 	err := s.db.QueryRow(ctx, `
 		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, coalesce(u.bonus_quota_bytes,0), u.used_bytes, u.reserved_bytes,
-		       u.storage_root_id::text, u.created_at, u.last_login_at
+		       u.storage_root_id::text, u.created_at, u.last_login_at, coalesce(u.email_2fa_enabled,false)
 		from sessions s
 		join users u on u.id = s.user_id
 		where s.token_hash = $1 and s.expires_at > now()`,
 		hashToken(token),
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -289,11 +302,11 @@ func (s *Service) UserByDeviceToken(ctx context.Context, token string) (*domain.
 	var deviceID string
 	err = tx.QueryRow(ctx, `
 		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, coalesce(u.bonus_quota_bytes,0), u.used_bytes, u.reserved_bytes,
-		       u.storage_root_id::text, u.created_at, u.last_login_at, d.id::text
+		       u.storage_root_id::text, u.created_at, u.last_login_at, coalesce(u.email_2fa_enabled,false), d.id::text
 		from devices d join users u on u.id = d.user_id
 		where d.token_hash = $1 and d.revoked_at is null and d.expires_at > now()
 		for update of d`, hashToken(token),
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &deviceID)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &deviceID)
 	if err != nil {
 		return nil, "", err
 	}

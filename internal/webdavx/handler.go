@@ -45,8 +45,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) user(r *http.Request) (*domain.User, error) {
 	if u, p, ok := r.BasicAuth(); ok {
-		user, _, err := h.auth.Login(r.Context(), clientIP(r), u, p)
-		return user, err
+		result, err := h.auth.BeginDeviceLogin(r.Context(), clientIP(r), u, p)
+		if err != nil {
+			return nil, err
+		}
+		if result.Requires2FA {
+			return nil, errors.New("email 2FA is enabled; sign in via the web app and use the session, or disable 2FA for WebDAV password login")
+		}
+		return result.User, nil
 	}
 	if c, err := r.Cookie("session_token"); err == nil && c.Value != "" {
 		return h.auth.UserBySession(r.Context(), c.Value)

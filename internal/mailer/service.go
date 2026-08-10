@@ -103,6 +103,14 @@ func (s *Service) rawPassword(ctx context.Context) (string, error) {
 	return v, err
 }
 
+func (s *Service) Configured(ctx context.Context) (bool, error) {
+	st, err := s.Get(ctx)
+	if err != nil {
+		return false, err
+	}
+	return st.Enabled && st.Host != "" && st.From != "", nil
+}
+
 func (s *Service) Send(ctx context.Context, to, subject, body string) error {
 	st, err := s.Get(ctx)
 	if err != nil {

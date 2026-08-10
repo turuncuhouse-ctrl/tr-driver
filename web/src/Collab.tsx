@@ -292,10 +292,70 @@ export function TrashPanel({ request }: Props) {
 
 export function SettingsPanel({ request }: Props) {
   const [devices, setDevices] = useState<Device[]>([]);
-  async function refresh() { setDevices(await request<Device[]>("/api/auth/devices")); }
+  const [security, setSecurity] = useState<{ email2FAEnabled: boolean; mailConfigured: boolean } | null>(null);
+  const [password, setPassword] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function refresh() {
+    setDevices(await request<Device[]>("/api/auth/devices"));
+    setSecurity(await request("/api/auth/security"));
+  }
   useEffect(() => { void refresh(); }, []);
+
+  async function toggle2FA(enabled: boolean) {
+    if (!password.trim()) {
+      setNote("Değişikliği onaylamak için şifrenizi girin.");
+      return;
+    }
+    setSaving(true);
+    setNote("");
+    try {
+      const next = await request<{ email2FAEnabled: boolean; mailConfigured: boolean }>("/api/auth/security", {
+        method: "POST",
+        body: JSON.stringify({ email2FAEnabled: enabled, password })
+      });
+      setSecurity(next);
+      setPassword("");
+      setNote(enabled ? "E-posta ile iki adımlı doğrulama açıldı." : "İki adımlı doğrulama kapatıldı.");
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : "Kayıt başarısız");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="collab-panel">
+      <h2>Güvenlik</h2>
+      <section className="admin-settings" style={{ marginBottom: 24 }}>
+        <div>
+          <h3>E-posta ile iki adımlı doğrulama</h3>
+          <p>İsteğe bağlı. Açıkken girişte şifreden sonra e-postanıza 6 haneli kod gelir.</p>
+          {security && !security.mailConfigured && (
+            <p className="notice error">SMTP yapılandırılmamış. Yönetici Mail ayarlarını açmalı.</p>
+          )}
+        </div>
+        <div className="admin-settings-form">
+          <label>
+            Hesap şifreniz (onay)
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+          </label>
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" className="primary" disabled={saving || !!security?.email2FAEnabled} onClick={() => void toggle2FA(true)}>
+              2FA aç
+            </button>
+            <button type="button" disabled={saving || !security?.email2FAEnabled} onClick={() => void toggle2FA(false)}>
+              2FA kapat
+            </button>
+          </div>
+          {note && <div className="notice">{note}</div>}
+          {security && (
+            <small>Durum: {security.email2FAEnabled ? "Açık" : "Kapalı"}</small>
+          )}
+        </div>
+      </section>
+
       <h2>Cihazlar</h2>
       <ul className="plain-list">
         {devices.map((d) => (

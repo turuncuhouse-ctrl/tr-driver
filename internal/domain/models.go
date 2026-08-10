@@ -20,6 +20,7 @@ type User struct {
 	PersonalDriveID  string    `json:"personalDriveId,omitempty"`
 	MaxBatchBytes    int64     `json:"maxBatchBytes,omitempty"`
 	UploadChunkBytes int64     `json:"uploadChunkBytes,omitempty"`
+	Email2FAEnabled  bool      `json:"email2FAEnabled"`
 	DeviceID         *string   `json:"-"`
 }
 

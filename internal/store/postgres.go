@@ -265,6 +265,20 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 		)`,
 		`alter table instance_license add column if not exists instance_id text not null default ''`,
 		`alter table users add column if not exists bonus_quota_bytes bigint not null default 0`,
+		`alter table users add column if not exists email_2fa_enabled boolean not null default false`,
+		`create table if not exists auth_challenges (
+			id uuid primary key default gen_random_uuid(),
+			user_id uuid not null references users(id) on delete cascade,
+			purpose text not null,
+			code_hash text not null,
+			token_hash text not null,
+			expires_at timestamptz not null,
+			consumed_at timestamptz,
+			attempts int not null default 0,
+			created_at timestamptz not null default now()
+		)`,
+		`create index if not exists auth_challenges_token_hash_idx on auth_challenges(token_hash)`,
+		`create index if not exists auth_challenges_user_purpose_idx on auth_challenges(user_id, purpose)`,
 	}
 
 	for _, stmt := range ddl {
