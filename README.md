@@ -79,6 +79,13 @@ Bakınız [`SECURITY.md`](SECURITY.md). Son denetimde düzeltilen kritik maddele
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
+GitHub: https://github.com/turuncuhouse-ctrl/tr-driver
+
+Deploy / lisans satışı:
+- [`docs/DEPLOY_VPS.md`](docs/DEPLOY_VPS.md)
+- [`docs/LICENSE_SALES.md`](docs/LICENSE_SALES.md)
+- [`docs/GITHUB.md`](docs/GITHUB.md)
+
 ## Lisans (yazılım)
 
 Kod: [MIT](LICENSE). Ticari **koltuk lisansı** ayrıdır (anahtar ile etkinleştirilir).
