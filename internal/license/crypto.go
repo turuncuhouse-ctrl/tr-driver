@@ -12,12 +12,15 @@ import (
 	"time"
 )
 
-// DefaultPublicKeyHex matches DefaultPrivateSeedHex via ed25519.NewKeyFromSeed.
-// Replace before public license sales: set LICENSE_PUBLIC_KEY (base64) or rebuild with your keypair.
-// WARNING: the matching seed below is public in this repo; do not sell keys signed with the default.
-const DefaultPublicKeyHex = "8de0c7c531b9b6983b4177ea8e9ca0f1afa7add693329323087a36de4a2633e0"
+// DefaultPublicKeyHex is the TR Driver vendor verify key (keys/public.key).
+// Override with LICENSE_PUBLIC_KEY (base64/hex) if you use a different keypair.
+const DefaultPublicKeyHex = "3c3b4490455e00e702efa5d6c3cb2365b6431e5912d069744bac7fb3bc2159ed"
+
+// DevRFCPublicKeyHex pairs with DefaultPrivateSeedHex (RFC 8032 sample). Dev/tests only.
+const DevRFCPublicKeyHex = "8de0c7c531b9b6983b4177ea8e9ca0f1afa7add693329323087a36de4a2633e0"
 
 // DefaultPrivateSeedHex is ONLY for local/dev signing when LICENSE_ALLOW_DEV_SIGNING=1.
+// It pairs with DevRFCPublicKeyHex — not with DefaultPublicKeyHex. Never sell keys signed with it.
 const DefaultPrivateSeedHex = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919655bcc226d7ad573"
 
 type Payload struct {
@@ -170,7 +173,12 @@ func Verify(key string) (*Payload, error) {
 }
 
 func IsUsingDefaultPublicKey() bool {
-	return strings.TrimSpace(os.Getenv("LICENSE_PUBLIC_KEY")) == ""
+	// Warn only when the insecure RFC sample verify key is active.
+	pub, err := publicKey()
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(hex.EncodeToString(pub), DevRFCPublicKeyHex)
 }
 
 func CanSignLocally() bool {
