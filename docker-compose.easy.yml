@@ -13,7 +13,8 @@ services:
       npm ci --no-audit --no-fund &&
       npm run build &&
       cd /app &&
-      go build -o /tmp/trdriver ./cmd/server &&
+      go build -ldflags='-X necipdrive/internal/version.Version=0.4.2' -o /tmp/trdriver ./cmd/server &&
+      echo Built TR Driver 0.4.2 &&
       exec /tmp/trdriver"
     restart: unless-stopped
     ports:

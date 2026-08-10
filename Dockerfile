@@ -13,7 +13,7 @@ RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum* ./
 COPY . .
 COPY --from=web /web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/necipdrive ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X necipdrive/internal/version.Version=0.4.2" -o /out/necipdrive ./cmd/server
 
 # ---- Runtime ----
 FROM alpine:3.20

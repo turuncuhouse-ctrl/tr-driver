@@ -130,6 +130,66 @@ func (h *Handler) adminPost(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// AdminPath handles /api/admin/license/{request|issue} for older frontends / bookmarks.
+func (h *Handler) AdminPath(w http.ResponseWriter, r *http.Request) {
+	sub := strings.TrimPrefix(r.URL.Path, "/api/admin/license/")
+	sub = strings.Trim(sub, "/")
+	switch sub {
+	case "", "status":
+		h.Admin(w, r)
+	case "request":
+		if r.Method != http.MethodPost {
+			httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			Tier string `json:"tier"`
+		}
+		if err := httpx.ReadJSON(r, &req); err != nil || req.Tier == "" {
+			httpx.Error(w, http.StatusBadRequest, "tier required")
+			return
+		}
+		code, payload, err := h.service.CreateRequest(r.Context(), req.Tier)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"requestCode":  code,
+			"request":      payload,
+			"instructions": "Bu talep kodunu TR Driver satıcısına gönderin.",
+		})
+	case "issue":
+		if r.Method != http.MethodPost {
+			httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			RequestCode string `json:"requestCode"`
+			Tier        string `json:"tier"`
+			Years       int    `json:"years"`
+			Customer    string `json:"customer"`
+			Note        string `json:"note"`
+		}
+		if err := httpx.ReadJSON(r, &req); err != nil || req.RequestCode == "" {
+			httpx.Error(w, http.StatusBadRequest, "requestCode required")
+			return
+		}
+		years := req.Years
+		if years == 0 {
+			years = 1
+		}
+		key, payload, err := h.service.IssueFromRequest(r.Context(), req.RequestCode, req.Tier, years, req.Customer, req.Note)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"licenseKey": key, "request": payload})
+	default:
+		httpx.Error(w, http.StatusNotFound, "unknown license path")
+	}
+}
+
 func (h *Handler) RequireAdminSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth.DeviceIDFromContext(r.Context()) != "" {

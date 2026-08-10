@@ -2,6 +2,7 @@ package app
 
 import (
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 
@@ -53,7 +54,9 @@ func NewRouter(
 	})
 	mux.Handle("/api/license", http.HandlerFunc(licenseHandler.PublicStatus))
 	mux.Handle("/api/updates/check", http.HandlerFunc(updateHandler.Check))
-	mux.Handle("/api/admin/license", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.Admin))))
+	adminLicense := authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.Admin)))
+	mux.Handle("/api/admin/license", adminLicense)
+	mux.Handle("/api/admin/license/", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.AdminPath))))
 	mux.Handle("/api/auth/register", http.HandlerFunc(authHandler.Register))
 	mux.Handle("/api/auth/login", http.HandlerFunc(authHandler.Login))
 	mux.Handle("/api/auth/device-login", http.HandlerFunc(authHandler.DeviceLogin))
@@ -113,7 +116,12 @@ func NewRouter(
 	if err == nil {
 		fileServer := http.FileServer(http.FS(staticFiles))
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/s/") || r.URL.Path == "/healthz" {
+			// Unmatched /api/* must never look like a generic Go 404; force redeploy messages.
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				httpx.Error(w, http.StatusNotFound, "api route not found: "+r.URL.Path+" — sunucu binary eski olabilir; container'ı yeniden build/redeploy edin")
+				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/s/") || r.URL.Path == "/healthz" {
 				http.NotFound(w, r)
 				return
 			}
@@ -125,6 +133,15 @@ func NewRouter(
 			}
 			fileServer.ServeHTTP(w, r)
 		}))
+	} else {
+		log.Printf("static UI not found (web/dist); API-only mode")
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				httpx.Error(w, http.StatusNotFound, "api route not found: "+r.URL.Path)
+				return
+			}
+			http.NotFound(w, r)
+		})
 	}
 
 	return securityHeaders(csrfMiddleware(loggingMiddleware(mux), cfg.SessionSecret)), nil
