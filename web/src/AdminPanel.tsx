@@ -15,6 +15,8 @@ type AdminUser = {
   role: "user" | "admin";
   planCode: string;
   quotaBytes: number;
+  baseQuotaBytes?: number;
+  bonusQuotaBytes?: number;
   usedBytes: number;
   createdAt: string;
   lastLoginAt: string;
@@ -32,6 +34,16 @@ type Summary = {
 type Settings = {
   maxUploadBatchBytes: number;
   uploadChunkBytes: number;
+};
+
+type MailSettings = {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  from: string;
+  useTLS: boolean;
 };
 
 type RequestFn = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -61,6 +73,10 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [mail, setMail] = useState<MailSettings>({
+    enabled: false, host: "", port: 587, username: "", password: "", from: "", useTLS: true
+  });
+  const [savingMail, setSavingMail] = useState(false);
   const [batchLimitGB, setBatchLimitGB] = useState("10");
   const [search, setSearch] = useState("");
   const [busyUser, setBusyUser] = useState<string | null>(null);
@@ -101,16 +117,18 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   async function load() {
     setLoading(true);
     try {
-      const [nextSummary, nextUsers, nextSettings, nextLicense] = await Promise.all([
+      const [nextSummary, nextUsers, nextSettings, nextLicense, nextMail] = await Promise.all([
         request<Summary>("/api/admin/summary"),
         request<AdminUser[]>("/api/admin/users"),
         request<Settings>("/api/admin/settings"),
-        request<NonNullable<typeof license>>("/api/admin/license")
+        request<NonNullable<typeof license>>("/api/admin/license"),
+        request<MailSettings>("/api/admin/mail").catch(() => null)
       ]);
       setSummary(nextSummary);
       setUsers(nextUsers);
       setSettings(nextSettings);
       setLicense(nextLicense);
+      if (nextMail) setMail({ ...nextMail, password: nextMail.password || "" });
       setBatchLimitGB((nextSettings.maxUploadBatchBytes / 1024 ** 3).toFixed(1));
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "Admin bilgileri yüklenemedi");
@@ -138,8 +156,8 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   }
 
   function setQuota(user: AdminUser) {
-    const currentGB = (user.quotaBytes / 1024 ** 3).toFixed(1);
-    const raw = window.prompt(`${user.displayName} için kota (GB):`, currentGB);
+    const currentGB = ((user.baseQuotaBytes ?? user.quotaBytes) / 1024 ** 3).toFixed(1);
+    const raw = window.prompt(`${user.displayName} için temel kota (GB):`, currentGB);
     if (!raw) return;
     const gigabytes = Number(raw.replace(",", "."));
     if (!Number.isFinite(gigabytes) || gigabytes < 0) {
@@ -152,6 +170,36 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
       { userId: user.id, quotaBytes: Math.round(gigabytes * 1024 ** 3) },
       "Kullanıcı kotası güncellendi."
     );
+  }
+
+  function setBonusQuota(user: AdminUser) {
+    const currentGB = ((user.bonusQuotaBytes || 0) / 1024 ** 3).toFixed(1);
+    const raw = window.prompt(`${user.displayName} için ek (bonus) kota (GB):`, currentGB);
+    if (raw === null) return;
+    const gigabytes = Number(raw.replace(",", "."));
+    if (!Number.isFinite(gigabytes) || gigabytes < 0) {
+      onMessage("Bonus kota sıfır veya pozitif bir sayı olmalı.");
+      return;
+    }
+    void mutate(
+      user.id,
+      "/api/admin/users/bonus-quota",
+      { userId: user.id, bonusQuotaBytes: Math.round(gigabytes * 1024 ** 3) },
+      "Bonus kota güncellendi."
+    );
+  }
+
+  async function saveMail() {
+    setSavingMail(true);
+    try {
+      await request("/api/admin/mail", { method: "POST", body: JSON.stringify(mail) });
+      await load();
+      onMessage("Mail ayarları kaydedildi.");
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : "Mail ayarları kaydedilemedi");
+    } finally {
+      setSavingMail(false);
+    }
   }
 
   async function createLicenseRequest() {
@@ -288,9 +336,9 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
             <select value={requestTier} onChange={(e) => setRequestTier(e.target.value)}>
               {(license?.catalog || [
                 { code: "personal", name: "1 Kullanıcı" },
-                { code: "small", name: "1–10" },
-                { code: "medium", name: "11–50" },
-                { code: "unlimited", name: "50+" }
+                { code: "small", name: "2–20" },
+                { code: "medium", name: "21–100" },
+                { code: "unlimited", name: "1000+" }
               ]).map((t) => (
                 <option key={t.code} value={t.code}>{t.name}</option>
               ))}
@@ -378,6 +426,31 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
         </div>
       </section>
 
+      <section className="admin-settings">
+        <div>
+          <h2>Mail (SMTP)</h2>
+          <p>Paylaşım linkini e-posta ile göndermek için. Kapalıysa kullanıcılar yalnızca link kopyalar.</p>
+        </div>
+        <div className="admin-settings-form">
+          <label className="row">
+            <input type="checkbox" checked={mail.enabled} onChange={(e) => setMail({ ...mail, enabled: e.target.checked })} />
+            SMTP etkin
+          </label>
+          <label>Host<input value={mail.host} onChange={(e) => setMail({ ...mail, host: e.target.value })} placeholder="smtp.ornek.com" /></label>
+          <label>Port<input type="number" value={mail.port} onChange={(e) => setMail({ ...mail, port: Number(e.target.value) || 587 })} /></label>
+          <label>Kullanıcı<input value={mail.username} onChange={(e) => setMail({ ...mail, username: e.target.value })} /></label>
+          <label>Şifre<input type="password" value={mail.password || ""} onChange={(e) => setMail({ ...mail, password: e.target.value })} placeholder="değiştirmek için yazın" /></label>
+          <label>From<input value={mail.from} onChange={(e) => setMail({ ...mail, from: e.target.value })} placeholder="noreply@ornek.com" /></label>
+          <label className="row">
+            <input type="checkbox" checked={mail.useTLS} onChange={(e) => setMail({ ...mail, useTLS: e.target.checked })} />
+            TLS
+          </label>
+          <button disabled={savingMail} onClick={() => void saveMail()}>
+            {savingMail ? "Kaydediliyor…" : "Mail ayarlarını kaydet"}
+          </button>
+        </div>
+      </section>
+
       <section className="admin-users">
         <div className="admin-users-head">
           <div><h2>Kullanıcılar</h2><p>{visibleUsers.length} kayıt gösteriliyor</p></div>
@@ -401,6 +474,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
                 </div>
                 <div className="admin-usage">
                   <strong>{formatBytes(account.usedBytes)} / {formatBytes(account.quotaBytes)}</strong>
+                  <small>temel {formatBytes(account.baseQuotaBytes ?? account.quotaBytes)} + bonus {formatBytes(account.bonusQuotaBytes || 0)}</small>
                   <div><span style={{ width: `${percent}%` }} /></div>
                 </div>
                 <select
@@ -418,6 +492,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
                 <span className={`role-badge ${account.role}`}>{account.role === "admin" ? "Yönetici" : "Kullanıcı"}</span>
                 <div className="admin-actions">
                   <button disabled={disabled} onClick={() => setQuota(account)}>Kota</button>
+                  <button disabled={disabled} onClick={() => setBonusQuota(account)}>Bonus</button>
                   <button
                     disabled={disabled}
                     onClick={() => void mutate(

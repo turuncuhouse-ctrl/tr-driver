@@ -145,12 +145,19 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
   const [days, setDays] = useState(7);
   const [maxDownloads, setMaxDownloads] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  const [mailEnabled, setMailEnabled] = useState(false);
+  const [mailTo, setMailTo] = useState("");
   const [msg, setMsg] = useState("");
 
   async function refresh() {
     setPerms(await request<Permission[]>(`/api/permissions?entryId=${encodeURIComponent(entryId)}`));
   }
-  useEffect(() => { void refresh(); }, [entryId]);
+  useEffect(() => {
+    void refresh();
+    void request<{ enabled: boolean }>("/api/mail/status")
+      .then((s) => setMailEnabled(!!s.enabled))
+      .catch(() => setMailEnabled(false));
+  }, [entryId]);
 
   async function grant(e: FormEvent) {
     e.preventDefault();
@@ -173,6 +180,23 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
     setLinkUrl(full);
     await navigator.clipboard.writeText(full).catch(() => undefined);
     setMsg("Link oluşturuldu ve kopyalandı");
+  }
+
+  async function emailLink(e: FormEvent) {
+    e.preventDefault();
+    if (!linkUrl) {
+      setMsg("Önce bir link oluşturun.");
+      return;
+    }
+    try {
+      await request("/api/shares/email", {
+        method: "POST",
+        body: JSON.stringify({ to: mailTo, url: linkUrl, subject: `Paylaşım: ${entryName}` })
+      });
+      setMsg("Link e-posta ile gönderildi.");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "E-posta gönderilemedi");
+    }
   }
 
   return (
@@ -205,6 +229,13 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
           <button className="primary" type="submit">Link oluştur</button>
           {linkUrl && <code>{linkUrl}</code>}
         </form>
+        {mailEnabled && (
+          <form className="stack" onSubmit={emailLink}>
+            <h3>Linki e-posta ile gönder</h3>
+            <input type="email" required value={mailTo} onChange={(e) => setMailTo(e.target.value)} placeholder="alıcı@ornek.com" />
+            <button className="primary" type="submit" disabled={!linkUrl}>Gönder</button>
+          </form>
+        )}
         {msg && <p>{msg}</p>}
       </div>
     </div>

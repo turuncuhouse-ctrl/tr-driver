@@ -84,7 +84,7 @@ func (h *Handler) SetQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		UserID    string `json:"userId"`
+		UserID     string `json:"userId"`
 		QuotaBytes int64  `json:"quotaBytes"`
 	}
 	if err := httpx.ReadJSON(r, &req); err != nil {
@@ -92,6 +92,26 @@ func (h *Handler) SetQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.SetQuota(r.Context(), req.UserID, req.QuotaBytes); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (h *Handler) SetBonusQuota(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		UserID          string `json:"userId"`
+		BonusQuotaBytes int64  `json:"bonusQuotaBytes"`
+	}
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if err := h.service.SetBonusQuota(r.Context(), req.UserID, req.BonusQuotaBytes); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}

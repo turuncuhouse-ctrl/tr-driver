@@ -113,6 +113,8 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 	if err != nil {
 		return nil, "", err
 	}
+	user.BaseQuotaBytes = user.QuotaBytes
+	user.BonusQuotaBytes = 0
 
 	rootID := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
@@ -168,10 +170,10 @@ func (s *Service) Login(ctx context.Context, remoteAddr, email, password string)
 
 	var user domain.User
 	err := s.db.QueryRow(ctx, `
-		select id::text, email, password_hash, display_name, role, plan_code, quota_bytes, used_bytes, reserved_bytes,
+		select id::text, email, password_hash, display_name, role, plan_code, quota_bytes, coalesce(bonus_quota_bytes,0), used_bytes, reserved_bytes,
 		       storage_root_id::text, created_at, last_login_at
 		from users where email = $1`, strings.ToLower(strings.TrimSpace(email)),
-	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role, &user.PlanCode, &user.QuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt)
+	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt)
 	if err != nil {
 		s.limiter.add(remoteAddr)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -179,6 +181,7 @@ func (s *Service) Login(ctx context.Context, remoteAddr, email, password string)
 		}
 		return nil, "", err
 	}
+	user.QuotaBytes = user.BaseQuotaBytes + user.BonusQuotaBytes
 	if !verifyPassword(password, user.PasswordHash) {
 		s.limiter.add(remoteAddr)
 		return nil, "", ErrInvalidCredentials
@@ -205,16 +208,17 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 func (s *Service) UserBySession(ctx context.Context, token string) (*domain.User, error) {
 	var user domain.User
 	err := s.db.QueryRow(ctx, `
-		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, u.used_bytes, u.reserved_bytes,
+		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, coalesce(u.bonus_quota_bytes,0), u.used_bytes, u.reserved_bytes,
 		       u.storage_root_id::text, u.created_at, u.last_login_at
 		from sessions s
 		join users u on u.id = s.user_id
 		where s.token_hash = $1 and s.expires_at > now()`,
 		hashToken(token),
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.QuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt)
 	if err != nil {
 		return nil, err
 	}
+	user.QuotaBytes = user.BaseQuotaBytes + user.BonusQuotaBytes
 	user.MaxBatchBytes = s.maxBatchBytes(ctx)
 	user.UploadChunkBytes = s.cfg.UploadChunkBytes
 	return &user, nil
@@ -284,15 +288,16 @@ func (s *Service) UserByDeviceToken(ctx context.Context, token string) (*domain.
 	var user domain.User
 	var deviceID string
 	err = tx.QueryRow(ctx, `
-		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, u.used_bytes, u.reserved_bytes,
+		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, coalesce(u.bonus_quota_bytes,0), u.used_bytes, u.reserved_bytes,
 		       u.storage_root_id::text, u.created_at, u.last_login_at, d.id::text
 		from devices d join users u on u.id = d.user_id
 		where d.token_hash = $1 and d.revoked_at is null and d.expires_at > now()
 		for update of d`, hashToken(token),
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.QuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &deviceID)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &deviceID)
 	if err != nil {
 		return nil, "", err
 	}
+	user.QuotaBytes = user.BaseQuotaBytes + user.BonusQuotaBytes
 	if _, err := tx.Exec(ctx, `update devices set last_seen_at = now() where id = $1::uuid`, deviceID); err != nil {
 		return nil, "", err
 	}

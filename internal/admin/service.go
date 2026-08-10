@@ -21,15 +21,17 @@ type Summary struct {
 }
 
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	DisplayName  string    `json:"displayName"`
-	Role         string    `json:"role"`
-	PlanCode     string    `json:"planCode"`
-	QuotaBytes   int64     `json:"quotaBytes"`
-	UsedBytes    int64     `json:"usedBytes"`
-	CreatedAt    time.Time `json:"createdAt"`
-	LastLoginAt  time.Time `json:"lastLoginAt"`
+	ID              string    `json:"id"`
+	Email           string    `json:"email"`
+	DisplayName     string    `json:"displayName"`
+	Role            string    `json:"role"`
+	PlanCode        string    `json:"planCode"`
+	QuotaBytes      int64     `json:"quotaBytes"` // effective
+	BaseQuotaBytes  int64     `json:"baseQuotaBytes"`
+	BonusQuotaBytes int64     `json:"bonusQuotaBytes"`
+	UsedBytes       int64     `json:"usedBytes"`
+	CreatedAt       time.Time `json:"createdAt"`
+	LastLoginAt     time.Time `json:"lastLoginAt"`
 }
 
 type Service struct {
@@ -97,7 +99,7 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 
 func (s *Service) Users(ctx context.Context) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		select id::text, email, display_name, role, plan_code, quota_bytes,
+		select id::text, email, display_name, role, plan_code, quota_bytes, coalesce(bonus_quota_bytes,0),
 		       used_bytes, created_at, last_login_at
 		from users
 		order by created_at desc
@@ -117,13 +119,15 @@ func (s *Service) Users(ctx context.Context) ([]User, error) {
 			&user.DisplayName,
 			&user.Role,
 			&user.PlanCode,
-			&user.QuotaBytes,
+			&user.BaseQuotaBytes,
+			&user.BonusQuotaBytes,
 			&user.UsedBytes,
 			&user.CreatedAt,
 			&user.LastLoginAt,
 		); err != nil {
 			return nil, err
 		}
+		user.QuotaBytes = user.BaseQuotaBytes + user.BonusQuotaBytes
 		users = append(users, user)
 	}
 	return users, rows.Err()
@@ -132,7 +136,7 @@ func (s *Service) Users(ctx context.Context) ([]User, error) {
 func (s *Service) SetPlan(ctx context.Context, userID, planCode string) error {
 	result, err := s.db.Exec(ctx, `
 		update users u
-		set plan_code = p.code, quota_bytes = greatest(p.quota_bytes, u.used_bytes)
+		set plan_code = p.code, quota_bytes = greatest(p.quota_bytes, u.used_bytes - coalesce(u.bonus_quota_bytes,0))
 		from plans p
 		where u.id = $1::uuid and p.code = $2 and p.active = true`,
 		userID, planCode,
@@ -153,7 +157,7 @@ func (s *Service) SetQuota(ctx context.Context, userID string, quotaBytes int64)
 	result, err := s.db.Exec(ctx, `
 		update users
 		set quota_bytes = $1
-		where id = $2::uuid and used_bytes <= $1`,
+		where id = $2::uuid and used_bytes <= ($1 + coalesce(bonus_quota_bytes,0))`,
 		quotaBytes, userID,
 	)
 	if err != nil {
@@ -161,6 +165,25 @@ func (s *Service) SetQuota(ctx context.Context, userID string, quotaBytes int64)
 	}
 	if result.RowsAffected() == 0 {
 		return errors.New("user not found or quota is below current usage")
+	}
+	return nil
+}
+
+func (s *Service) SetBonusQuota(ctx context.Context, userID string, bonusBytes int64) error {
+	if bonusBytes < 0 || bonusBytes > 10*1024*1024*1024*1024*1024 {
+		return errors.New("invalid bonus quota")
+	}
+	result, err := s.db.Exec(ctx, `
+		update users
+		set bonus_quota_bytes = $1
+		where id = $2::uuid and used_bytes <= (quota_bytes + $1)`,
+		bonusBytes, userID,
+	)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return errors.New("user not found or effective quota would be below current usage")
 	}
 	return nil
 }

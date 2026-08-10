@@ -1,6 +1,7 @@
 package files
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -165,7 +166,7 @@ func (s *Service) Upload(ctx context.Context, user domain.User, parentID, device
 		return nil, fmt.Errorf("file exceeds max upload limit")
 	}
 	var billQuota, billUsed int64
-	if err := s.db.QueryRow(ctx, `select quota_bytes, used_bytes from users where id = $1::uuid`, billUser).Scan(&billQuota, &billUsed); err != nil {
+	if err := s.db.QueryRow(ctx, `select quota_bytes + coalesce(bonus_quota_bytes,0), used_bytes from users where id = $1::uuid`, billUser).Scan(&billQuota, &billUsed); err != nil {
 		return nil, err
 	}
 	if billUsed+header.Size > billQuota {
@@ -199,7 +200,7 @@ func (s *Service) Upload(ctx context.Context, user domain.User, parentID, device
 	defer tx.Rollback(ctx)
 
 	var freshUsed, quota int64
-	if err := tx.QueryRow(ctx, `select used_bytes, quota_bytes from users where id = $1::uuid for update`, billUser).Scan(&freshUsed, &quota); err != nil {
+	if err := tx.QueryRow(ctx, `select used_bytes, quota_bytes + coalesce(bonus_quota_bytes,0) from users where id = $1::uuid for update`, billUser).Scan(&freshUsed, &quota); err != nil {
 		_ = s.storage.Delete(storageKey)
 		return nil, err
 	}
@@ -231,6 +232,120 @@ func (s *Service) Upload(ctx context.Context, user domain.User, parentID, device
 		_ = s.storage.Delete(storageKey)
 		return nil, err
 	}
+	return &entry, nil
+}
+
+// UploadBytes stores raw bytes (WebDAV / internal writers).
+func (s *Service) UploadBytes(ctx context.Context, userID, userRole, parentID, fileName, mimeType string, data []byte, deviceID string) error {
+	if err := s.access.Require(ctx, userID, userRole, parentID, access.ActionEdit); err != nil {
+		return err
+	}
+	driveID, billUser, err := s.parentContext(ctx, parentID)
+	if err != nil {
+		return err
+	}
+	size := int64(len(data))
+	if size > s.cfg.MaxUploadBytes {
+		return fmt.Errorf("file exceeds max upload limit")
+	}
+	fileName = sanitizeName(fileName)
+	if fileName == "" {
+		return errors.New("file name is required")
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	var billQuota, billUsed int64
+	if err := s.db.QueryRow(ctx, `select quota_bytes + coalesce(bonus_quota_bytes,0), used_bytes from users where id = $1::uuid`, billUser).Scan(&billQuota, &billUsed); err != nil {
+		return err
+	}
+	if billUsed+size > billQuota {
+		return fmt.Errorf("quota exceeded")
+	}
+	return s.uploadBytesInner(ctx, userID, billUser, driveID, parentID, fileName, mimeType, data, deviceID)
+}
+
+func (s *Service) uploadBytesInner(ctx context.Context, userID, billUser, driveID, parentID, fileName, mimeType string, data []byte, deviceID string) error {
+	storageKey := filepath.Join("user", billUser, time.Now().UTC().Format("2006/01/02"), uuid.NewString())
+	written, err := s.storage.Save(ctx, storageKey, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		_ = s.storage.Delete(storageKey)
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var freshUsed, quota int64
+	if err := tx.QueryRow(ctx, `select used_bytes, quota_bytes + coalesce(bonus_quota_bytes,0) from users where id = $1::uuid for update`, billUser).Scan(&freshUsed, &quota); err != nil {
+		_ = s.storage.Delete(storageKey)
+		return err
+	}
+	if freshUsed+written > quota {
+		_ = s.storage.Delete(storageKey)
+		return fmt.Errorf("quota exceeded")
+	}
+	// replace existing same name if any
+	var existingID, oldKey string
+	var oldSize int64
+	err = tx.QueryRow(ctx, `
+		select id::text, storage_key, size_bytes from file_entries
+		where parent_id = $1::uuid and lower(name) = lower($2) and deleted_at is null and kind = 'file'`,
+		parentID, fileName,
+	).Scan(&existingID, &oldKey, &oldSize)
+	if err == nil {
+		if _, err := tx.Exec(ctx, `
+			update file_entries set storage_key = $1, size_bytes = $2, mime_type = $3, content_version = content_version + 1, updated_at = now()
+			where id = $4::uuid`, storageKey, written, mimeType, existingID); err != nil {
+			_ = s.storage.Delete(storageKey)
+			return err
+		}
+		if _, err := tx.Exec(ctx, `update users set used_bytes = used_bytes - $1 + $2 where id = $3::uuid`, oldSize, written, billUser); err != nil {
+			_ = s.storage.Delete(storageKey)
+			return err
+		}
+		_ = s.storage.Delete(oldKey)
+		return tx.Commit(ctx)
+	}
+	var entryID string
+	if err := tx.QueryRow(ctx, `
+		insert into file_entries (user_id, drive_id, parent_id, name, kind, storage_key, size_bytes, mime_type)
+		values ($1::uuid, nullif($2,'')::uuid, $3::uuid, $4, 'file', $5, $6, $7)
+		returning id::text`,
+		userID, driveID, parentID, fileName, storageKey, written, mimeType,
+	).Scan(&entryID); err != nil {
+		_ = s.storage.Delete(storageKey)
+		return err
+	}
+	if _, err := tx.Exec(ctx, `update users set used_bytes = used_bytes + $1 where id = $2::uuid`, written, billUser); err != nil {
+		_ = s.storage.Delete(storageKey)
+		return err
+	}
+	_ = changelog.Append(ctx, tx, billUser, entryID, "upsert", fileName, &parentID, "file", written, mimeType, 1, "", stringPtr(deviceID), nil)
+	return tx.Commit(ctx)
+}
+
+// FindChildFile returns an active file with the same name under parent (case-insensitive).
+func (s *Service) FindChildFile(ctx context.Context, parentID, name string) (*domain.FileEntry, error) {
+	name = sanitizeName(name)
+	var entry domain.FileEntry
+	err := s.db.QueryRow(ctx, `
+		select id::text, user_id::text, coalesce(drive_id::text,''), parent_id::text, name, kind, storage_key,
+		       size_bytes, mime_type, content_version, content_hash, client_modified_at, last_opened_at, deleted_at, created_at, updated_at
+		from file_entries
+		where parent_id = $1::uuid and lower(name) = lower($2) and deleted_at is null and kind = 'file'`,
+		parentID, name,
+	).Scan(&entry.ID, &entry.UserID, &entry.DriveID, &entry.ParentID, &entry.Name, &entry.Kind, &entry.StorageKey,
+		&entry.SizeBytes, &entry.MimeType, &entry.ContentVersion, &entry.ContentHash, &entry.ClientModifiedAt, &entry.LastOpenedAt,
+		&entry.DeletedAt, &entry.CreatedAt, &entry.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	entry.StorageKey = ""
 	return &entry, nil
 }
 

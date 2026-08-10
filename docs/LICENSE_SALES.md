@@ -3,11 +3,11 @@
 ## Akış (talep → yanıt)
 
 ```
-Müşteri Admin                         Siz (satıcı)
-─────────────                         ────────────
+Müşteri Admin                         Satıcı (yerel araç)
+─────────────                         ──────────────────
 1) Paket seç
-2) "Talep kodu üret"  ──TRDR1...──►  3) Admin (VENDOR) veya CLI
-                                      4) Yanıt TRD1... üret
+2) "Talep kodu üret"  ──TRDR1...──►  3) Talep kodundan yanıt üret
+                                      4) Yanıt TRD1... 
 5) TRD1 yapıştır ◄──────────────────  5) Müşteriye ilet
 6) Etkinleştir (instance bağlanır)
 ```
@@ -16,29 +16,19 @@ Müşteri Admin                         Siz (satıcı)
 - Yanıt (`TRD1`) Ed25519 ile imzalanır ve **aynı instanceId**’ye kilitlenir.
 - Başka sunucuya aynı anahtar yapıştırılmaz.
 
-## Satıcı kurulumu (sizin VPS)
-
-```
-LICENSE_VENDOR_MODE=true
-LICENSE_PRIVATE_KEY=<seed-b64>   # asla GitHub’a koyma
-LICENSE_PUBLIC_KEY=<pub-b64>     # müşteri sunucularında da aynı public
-```
-
-Admin’de “Satıcı: yanıt lisansı üret” görünür.
-
-CLI:
-
-```powershell
-$env:LICENSE_PRIVATE_KEY="..."
-go run ./cmd/trdriver-licensegen -request "TRDR1...." -years 1 -customer "Firma A"
-```
-
 ## Müşteri sunucusu
 
 ```
-LICENSE_PUBLIC_KEY=<aynı-public-b64>
+LICENSE_PUBLIC_KEY=<satıcının-public-b64>
 # PRIVATE key YOK — imza atamaz, sadece doğrular
 ```
+
+Admin’den talep kodu üretin → satıcıya gönderin → gelen `TRD1` yanıtını etkinleştirin.
+
+## Satıcı
+
+Yanıt üretimi **yerel / offline araç** ile yapılır. Private key yalnızca satıcı makinesinde kalır; public README veya müşteri VPS’ine konmaz.
+İsteğe bağlı olarak kendi satıcı VPS’inizde `LICENSE_VENDOR_MODE` ile Admin üzerinden de üretilebilir — bu kurulum dokümanı ayrıdır ve public satış anlatımında yer almaz.
 
 ## Kırılma / korsana karşı gerçekçi sınır
 
@@ -46,7 +36,7 @@ Açık kaynak yazılımda lisans **mutlak** kırılamaz yapılamaz (kaynak patch
 
 | Önlem | Etki |
 |-------|------|
-| Private key sadece sizde | Sahte anahtar üretmek zor (anahtar sızmazsa) |
+| Private key sadece satıcıda | Sahte anahtar üretmek zor (anahtar sızmazsa) |
 | Instance bağlama | Başka kurulumda aynı key geçersiz |
 | Talep checksum + süre | Eski/değiştirilmiş talep reddi |
 | Device token ≠ admin | Sync token ile lisans üretilemez |
@@ -56,4 +46,13 @@ Açık kaynak yazılımda lisans **mutlak** kırılamaz yapılamaz (kaynak patch
 
 ## Ödeme
 
-Manuel (havale) → talep kodu → siz yanıt üretirsiniz. Otomatik ödeme sonra eklenebilir.
+Manuel (havale) → talep kodu → satıcı yanıt üretir. Otomatik ödeme sonra eklenebilir.
+
+## Fiyatlar (yıllık)
+
+| Paket | Kullanıcı | Fiyat |
+|-------|-----------|-------|
+| personal | 1 | Ücretsiz |
+| small | 2–20 | 499 TL |
+| medium | 21–100 | 1499 TL |
+| unlimited | 1000+ | 2999 TL |

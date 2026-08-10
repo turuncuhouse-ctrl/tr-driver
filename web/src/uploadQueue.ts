@@ -8,6 +8,7 @@ export type QueuedFile = {
   expectedSize: number;
   lastModifiedMs: number;
   file: File;
+  targetEntryId?: string;
 };
 
 export type UploadSessionState = {
@@ -222,7 +223,8 @@ export class UploadQueue {
           fileName: file.fileName,
           mimeType: file.mimeType,
           expectedSize: file.expectedSize,
-          lastModifiedMs: file.lastModifiedMs
+          lastModifiedMs: file.lastModifiedMs,
+          ...(file.targetEntryId ? { targetEntryId: file.targetEntryId } : {})
         }))
       })
     });

@@ -50,6 +50,11 @@ func csrfMiddleware(next http.Handler, secret string) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// WebDAV (Windows net use) uses Basic auth, not browser CSRF cookies.
+		if strings.HasPrefix(r.URL.Path, "/dav") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Header.Get("X-CSRF-Token") != token {
 			httpx.Error(w, http.StatusForbidden, "invalid csrf token")
 			return

@@ -97,7 +97,18 @@ server {
 
 Certbot ile HTTPS ekleyin.
 
+## Windows ağ sürücüsü (WebDAV)
+
+HTTPS sonrası:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\mount-drive.ps1 -ServerUrl "https://drive.ornek.com" -DriveLetter Z
+```
+
+Sunucu yolu: `/dav`. Tray sync ikincildir.
+
 ## Lisans
 
-Aynı akış: Admin → talep kodu → satıcı yanıtı → etkinleştir.  
+Aynı akış: Admin → talep kodu (TRDR1) → satıcı yanıtı (TRD1) → etkinleştir.  
+Müşteri sunucusunda yalnızca `LICENSE_PUBLIC_KEY`.  
 Detay: [`LICENSE_SALES.md`](LICENSE_SALES.md)

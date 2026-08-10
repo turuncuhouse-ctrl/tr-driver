@@ -16,6 +16,7 @@ import (
 	"necipdrive/internal/drives"
 	"necipdrive/internal/files"
 	"necipdrive/internal/license"
+	"necipdrive/internal/mailer"
 	"necipdrive/internal/plans"
 	"necipdrive/internal/shares"
 	"necipdrive/internal/storage"
@@ -44,6 +45,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	licenseService := license.NewService(db, cfg.AllowRegistration, cfg.LicenseVendorMode)
 	authService := auth.NewService(db, cfg, licenseService)
 	adminService := admin.NewService(db)
+	mailService := mailer.New(db)
 	fileService := files.NewService(db, fileStorage, cfg, accessSvc)
 	planService := plans.NewService(db)
 	shareService := shares.NewService(db, cfg, accessSvc)
@@ -73,7 +75,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		}
 	}()
 
-	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService)
+	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService)
 	if err != nil {
 		cleanupCancel()
 		db.Close()

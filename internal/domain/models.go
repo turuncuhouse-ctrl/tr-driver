@@ -9,7 +9,9 @@ type User struct {
 	DisplayName      string    `json:"displayName"`
 	Role             string    `json:"role"`
 	PlanCode         string    `json:"planCode"`
-	QuotaBytes       int64     `json:"quotaBytes"`
+	QuotaBytes       int64     `json:"quotaBytes"` // effective = base + bonus
+	BaseQuotaBytes   int64     `json:"baseQuotaBytes,omitempty"`
+	BonusQuotaBytes  int64     `json:"bonusQuotaBytes,omitempty"`
 	UsedBytes        int64     `json:"usedBytes"`
 	ReservedBytes    int64     `json:"reservedBytes"`
 	CreatedAt        time.Time `json:"createdAt"`

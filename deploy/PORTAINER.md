@@ -30,7 +30,7 @@ Sonra Portainer'da:
 4. `docker-compose.easy.yml` iceriginin tamamini yapistir
 5. Deploy the stack
 
-Bu yontemde `golang:1.24-alpine` image'i kullanilir ve kaynak kod
+Bu yontemde `golang:1.25-alpine` image'i kullanilir ve kaynak kod
 `/mnt/1tb_disk/necipdrive` icinden mount edilir. `docker build` gerekmez,
 image indirme hatasi (`pull access denied`) olusmaz.
 

@@ -59,24 +59,28 @@ Domain → `http://SUNUCU_IP:3080` (veya compose portu). HTTPS Let’s Encrypt a
 3. Admin → Lisans → talep kodu üret → satıcıya gönder → `TRD1` yanıtını etkinleştir
 4. İsterseniz `ALLOW_REGISTRATION=false`
 
-## 5) Satıcı kendi VPS’i
+## Windows ağ sürücüsü (WebDAV)
 
-Sizin (satıcı) sunucuda ek olarak:
+Birincil Windows erişimi: WebDAV path `/dav`.
 
-```
-LICENSE_VENDOR_MODE=true
-LICENSE_PRIVATE_KEY=<private-seed-b64>
-LICENSE_PUBLIC_KEY=<public-b64>
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\mount-drive.ps1 -ServerUrl "https://drive.ornek.com" -DriveLetter Z
 ```
 
-Admin’de **“Satıcı: yanıt lisansı üret”** paneli görünür.
+veya: `net use Z: https://drive.ornek.com/dav /user:EMAIL PASSWORD`
+
+HTTPS önerilir. Tray sync istemcisi ikincildir.
+
+## 5) Satıcı notu
+
+Satıcı yanıt üretimi yerel araçladır (Admin talep kodu → satıcı TRD1). Private key müşteri sunucusuna konmaz; müşteri yalnızca `LICENSE_PUBLIC_KEY` kullanır. Ayrıntı: [`LICENSE_SALES.md`](LICENSE_SALES.md).
 
 ## Güncelleme
 
 ```bash
 cd /mnt/1tb_disk/necipdrive
 git pull
-# Portainer → stack Update/Redeploy
+# Portainer → stack Update/Redeploy — healthz version kontrol edin
 ```
 
 Volume’lardaki Postgres ve dosya verisi korunur; migration otomatik çalışır.

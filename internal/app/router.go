@@ -14,12 +14,14 @@ import (
 	"necipdrive/internal/files"
 	"necipdrive/internal/httpx"
 	"necipdrive/internal/license"
+	"necipdrive/internal/mailer"
 	"necipdrive/internal/plans"
 	"necipdrive/internal/shares"
 	"necipdrive/internal/syncapi"
 	"necipdrive/internal/updates"
 	"necipdrive/internal/uploads"
 	"necipdrive/internal/version"
+	"necipdrive/internal/webdavx"
 )
 
 func NewRouter(
@@ -34,20 +36,23 @@ func NewRouter(
 	driveService *drives.Service,
 	collabService *collab.Service,
 	licenseService *license.Service,
+	mailService *mailer.Service,
 ) (http.Handler, error) {
 	mux := http.NewServeMux()
 
 	authHandler := auth.NewHandler(authService)
 	adminHandler := admin.NewHandler(adminService, cfg.MaxUploadBatchBytes, cfg.UploadChunkBytes)
+	mailHandler := admin.NewMailHandler(mailService)
 	fileHandler := files.NewHandler(fileService)
 	planHandler := plans.NewHandler(planService)
-	shareHandler := shares.NewHandler(shareService, fileService)
+	shareHandler := shares.NewHandler(shareService, fileService, mailService, cfg)
 	uploadHandler := uploads.NewHandler(uploadService)
 	syncHandler := syncapi.NewHandler(syncService)
 	driveHandler := drives.NewHandler(driveService)
 	collabHandler := collab.NewHandler(collabService)
 	licenseHandler := license.NewHandler(licenseService)
 	updateHandler := updates.NewHandler(updates.Config{ManifestURL: cfg.UpdateManifestURL, Channel: cfg.UpdateChannel})
+	davHandler := webdavx.New(authService, fileService)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "product": version.ProductName, "version": version.Version})
@@ -71,8 +76,11 @@ func NewRouter(
 	mux.Handle("/api/admin/users", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.Users))))
 	mux.Handle("/api/admin/users/plan", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.SetPlan))))
 	mux.Handle("/api/admin/users/quota", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.SetQuota))))
+	mux.Handle("/api/admin/users/bonus-quota", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.SetBonusQuota))))
 	mux.Handle("/api/admin/users/role", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.SetRole))))
 	mux.Handle("/api/admin/settings", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.Settings))))
+	mux.Handle("/api/admin/mail", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(mailHandler.Settings))))
+	mux.Handle("/api/mail/status", authHandler.RequireAuth(http.HandlerFunc(mailHandler.Status)))
 	mux.Handle("/api/files", authHandler.RequireAuth(http.HandlerFunc(fileHandler.ListOrCreateFolder)))
 	mux.Handle("/api/files/upload", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Upload)))
 	mux.Handle("/api/files/move", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Move)))
@@ -110,7 +118,10 @@ func NewRouter(
 		uploadHandler.AppendChunk(w, r)
 	})))
 	mux.Handle("/api/shares", authHandler.RequireAuth(http.HandlerFunc(shareHandler.API)))
+	mux.Handle("/api/shares/email", authHandler.RequireAuth(http.HandlerFunc(shareHandler.EmailLink)))
 	mux.Handle("/s/", http.HandlerFunc(shareHandler.DownloadPublic))
+	mux.Handle("/dav", davHandler)
+	mux.Handle("/dav/", davHandler)
 
 	staticFiles, err := staticFS()
 	if err == nil {
@@ -121,7 +132,7 @@ func NewRouter(
 				httpx.Error(w, http.StatusNotFound, "api route not found: "+r.URL.Path+" — sunucu binary eski olabilir; container'ı yeniden build/redeploy edin")
 				return
 			}
-			if strings.HasPrefix(r.URL.Path, "/s/") || r.URL.Path == "/healthz" {
+			if strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/dav") || r.URL.Path == "/healthz" {
 				http.NotFound(w, r)
 				return
 			}
@@ -150,8 +161,8 @@ func NewRouter(
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("X-Frame-Options", "DENY")
 		next.ServeHTTP(w, r)
 	})
 }

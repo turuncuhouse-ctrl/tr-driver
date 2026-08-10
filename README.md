@@ -2,13 +2,14 @@
 
 Kendi sunucunda çalışan, Google Drive’a para ödemeden dosya bulutu. Go + PostgreSQL + React.
 
-**Amaç:** düşük kaynaklı Linux VPS üzerinde self-host; Windows senkron istemcisi; ortak alanlar, paylaşım, sürümler; kullanıcı sayısı bazlı ticari lisans.
+**Amaç:** düşük kaynaklı Linux VPS üzerinde self-host; Windows ağ sürücüsü (WebDAV); ortak alanlar, paylaşım, sürümler; kullanıcı sayısı bazlı ticari lisans.
 
 ## Özellikler
 
 - Kişisel drive, Shared Drives, ACL, paylaşım linkleri, çöp, yıldız, arama
-- Windows tray sync istemcisi (WebView2)
-- Admin paneli + **kullanıcı koltuğu lisansları** (1 / 10 / 50 / sınırsız)
+- **Windows ağ sürücüsü:** WebDAV (`/dav`) + `net use` / `packaging/windows/mount-drive.ps1`
+- Tray sync istemcisi (ikincil; birincil erişim WebDAV mount)
+- Admin paneli + **kullanıcı koltuğu lisansları** (1 / 2–20 / 21–100 / sınırsız)
 - Merkezi güncelleme kontrolü (`UPDATE_MANIFEST_URL`)
 - MIT açık kaynak; lisans anahtarı ile koltuk limiti açılır
 
@@ -16,25 +17,21 @@ Kendi sunucunda çalışan, Google Drive’a para ödemeden dosya bulutu. Go + P
 
 | Paket | Kullanıcı | Fiyat |
 |-------|-----------|-------|
-| personal | 1 | 99 TL |
-| small | 1–10 | 499 TL |
-| medium | 11–50 | 1499 TL |
-| unlimited | 50+ | 2999 TL |
+| personal | 1 | Ücretsiz |
+| small | 2–20 | 499 TL |
+| medium | 21–100 | 1499 TL |
+| unlimited | 1000+ | 2999 TL |
 
-Lisanssız kurulumda **1 kullanıcı** (ilk admin) oluşturulabilir. Anahtar: Admin paneli → Lisans.
+Lisanssız kurulumda **1 kullanıcı** (ilk admin) oluşturulabilir.
 
-Anahtar üretimi (satıcı tarafı):
+### Müşteri aktivasyonu
 
-```bash
-# Geliştirme / test (RFC örnek anahtarı — satış için KULLANMAYIN)
-set LICENSE_ALLOW_DEV_SIGNING=1
-go run ./cmd/trdriver-licensegen -tier small -years 1 -customer "Acme"
+1. Admin → Lisans → paket seç → **talep kodu üret** (`TRDR1…`)
+2. Talebi satıcıya iletin
+3. Gelen yanıt anahtarını (`TRD1…`) Admin’e yapıştırıp **etkinleştirin**
+4. Müşteri sunucusunda doğrulama için satıcının verdiği `LICENSE_PUBLIC_KEY` kullanılır
 
-# Üretim: kendi Ed25519 seed'iniz
-set LICENSE_PRIVATE_KEY=<base64-32-byte-seed>
-set LICENSE_PUBLIC_KEY=<base64-32-byte-public>   # sunucu doğrulama (müşteri sunucusunda da)
-go run ./cmd/trdriver-licensegen -tier unlimited -years 1 -customer "Musteri A.S."
-```
+Satıcı tarafı yanıt üretimi yerel araçla yapılır (private key asla GitHub’a veya müşteri sunucusuna konmaz). Ayrıntı: [`docs/LICENSE_SALES.md`](docs/LICENSE_SALES.md).
 
 ## Hızlı geliştirme
 
@@ -47,10 +44,10 @@ cd web && npm ci && npm run build && cd ..
 go run ./cmd/server
 ```
 
-Windows sync:
+Windows ağ sürücüsü:
 
-```bash
-go build -ldflags="-H windowsgui" -o dist/windows/necipdrive-sync.exe ./cmd/necipdrive-sync
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\mount-drive.ps1 -ServerUrl "https://drive.ornek.com" -DriveLetter Z
 ```
 
 ## Docker / Portainer
@@ -67,7 +64,7 @@ Compose dosyaları **secret hardcode etmez**. Şunları ortam değişkeni olarak
 
 - `ALLOW_REGISTRATION=true|false`
 - `UPDATE_MANIFEST_URL=https://.../trdriver-updates.json`
-- `LICENSE_PUBLIC_KEY=...` (kendi imza anahtarınız)
+- `LICENSE_PUBLIC_KEY=...` (satıcının public anahtarı)
 
 Örnek merkezi güncelleme manifest’i: [`docs/update-manifest.example.json`](docs/update-manifest.example.json)
 

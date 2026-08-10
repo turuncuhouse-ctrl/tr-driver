@@ -55,12 +55,31 @@ type Plan = {
   billingTerm: string;
 };
 
+type LicenseTier = {
+  code: string;
+  name: string;
+  maxUsers: number;
+  priceTlYear: number;
+  description?: string;
+  free?: boolean;
+};
+
+type LicensePublic = {
+  tier: string;
+  maxUsers: number;
+  userCount: number;
+  seatsRemaining: number;
+  catalog: LicenseTier[];
+};
+
 type Crumb = { id: string | null; name: string };
 type LayoutMode = "list" | "grid";
+type ThemeMode = "light" | "dark";
 type PreviewKind = "image" | "video" | "audio" | "pdf";
 type PreviewState = { entry: FileEntry; kind: PreviewKind };
 
 const LAYOUT_KEY = "necipdrive.fileLayout";
+const THEME_KEY = "trdriver.theme";
 const INTERNAL_DRAG_TYPE = "application/x-necipdrive-entry";
 
 const formatBytes = (value: number) => {
@@ -120,14 +139,28 @@ const readStoredLayout = (): LayoutMode => {
   }
 };
 
+const readStoredTheme = (): ThemeMode => {
+  try {
+    return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+};
+
+const applyTheme = (theme: ThemeMode) => {
+  document.documentElement.setAttribute("data-theme", theme);
+};
+
 export function App() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [view, setView] = useState<"files" | "admin" | string>("files");
+  const [licenseInfo, setLicenseInfo] = useState<LicensePublic | null>(null);
+  const [view, setView] = useState<"files" | "admin" | "packages" | string>("files");
   const [layout, setLayout] = useState<LayoutMode>(readStoredLayout);
+  const [theme, setTheme] = useState<ThemeMode>(readStoredTheme);
   const [crumbs, setCrumbs] = useState<Crumb[]>([{ id: null, name: "Dosyalarım" }]);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [message, setMessage] = useState("");
@@ -212,7 +245,17 @@ export function App() {
 
   useEffect(() => {
     void bootstrap();
+    applyTheme(readStoredTheme());
   }, []);
+
+  useEffect(() => {
+    applyTheme(theme);
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
 
   useEffect(() => {
     queueRef.current = new UploadQueue({
@@ -253,12 +296,40 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [preview]);
 
-  async function enqueueFiles(files: QueuedFile[], parentId: string | null = currentFolder) {
-    if (!files.length) return;
+  async function enqueueFiles(selected: QueuedFile[], parentId: string | null = currentFolder) {
+    if (!selected.length) return;
     setMessage("");
     setBusy(true);
     try {
-      await queueRef.current?.start(files, parentId);
+      const prepared = [...selected];
+      // Same-name conflicts in the current listing (flat uploads / top-level names).
+      if (parentId === currentFolder || (parentId == null && currentFolder == null)) {
+        const conflicts = prepared.filter((item) => {
+          const topLevel = !item.relativePath.includes("/");
+          if (!topLevel) return false;
+          return files.some((f) => f.kind === "file" && f.name.toLocaleLowerCase("tr-TR") === item.fileName.toLocaleLowerCase("tr-TR"));
+        });
+        if (conflicts.length) {
+          const names = conflicts.slice(0, 5).map((c) => c.fileName).join(", ");
+          const more = conflicts.length > 5 ? ` (+${conflicts.length - 5})` : "";
+          const ok = window.confirm(
+            `${conflicts.length} dosya zaten var (${names}${more}). Üzerine yazılsın mı?`
+          );
+          if (!ok) {
+            setMessage("Yükleme iptal edildi (çakışan dosyalar).");
+            return;
+          }
+          for (const item of prepared) {
+            const match = files.find(
+              (f) => f.kind === "file" && f.name.toLocaleLowerCase("tr-TR") === item.fileName.toLocaleLowerCase("tr-TR")
+            );
+            if (match && !item.relativePath.includes("/")) {
+              item.targetEntryId = match.id;
+            }
+          }
+        }
+      }
+      await queueRef.current?.start(prepared, parentId);
       setPendingResume(null);
       const folderName = parentId ? filesListName(parentId) : null;
       setMessage(folderName ? `"${folderName}" klasörüne yükleme başlatıldı.` : "Yükleme başlatıldı.");
@@ -511,10 +582,14 @@ export function App() {
   }
 
   function showPlans() {
-    setView("files");
-    window.setTimeout(() => {
-      document.querySelector(".plans")?.scrollIntoView({ behavior: "smooth" });
-    }, 0);
+    setView("packages");
+    void request<LicensePublic>("/api/license")
+      .then(setLicenseInfo)
+      .catch(() => setLicenseInfo(null));
+  }
+
+  function toggleTheme() {
+    setTheme((current) => (current === "light" ? "dark" : "light"));
   }
 
   async function logout() {
@@ -617,6 +692,9 @@ export function App() {
   if (!user) {
     return (
       <main className="auth-page">
+        <button className="theme-toggle floating" type="button" onClick={toggleTheme} title="Tema">
+          {theme === "light" ? "◐" : "◑"}
+        </button>
         <section className="auth-brand">
           <span className="brand-mark">TR</span>
           <h1>TR Driver</h1>
@@ -681,10 +759,13 @@ export function App() {
           unread={unread}
         />
         <nav>
-          <button className="nav-item" onClick={showPlans}>◇ Paketler</button>
+          <button className={`nav-item ${view === "packages" ? "active" : ""}`} onClick={showPlans}>◇ Paketler</button>
           {user.role === "admin" && (
             <button className={`nav-item ${view === "admin" ? "active" : ""}`} onClick={() => setView("admin")}>⚙ Yönetim</button>
           )}
+          <button className="nav-item" type="button" onClick={toggleTheme} title="Tema">
+            {theme === "light" ? "◐ Açık" : "◑ Koyu"}
+          </button>
         </nav>
         <div className="quota-card">
           <div><span>Depolama</span><strong>{usageRate}%</strong></div>
@@ -707,6 +788,39 @@ export function App() {
             onMessage={setMessage}
             onCurrentUserChanged={refreshUser}
           />
+        ) : view === "packages" ? (
+          <section className="plans packages-view">
+            <div>
+              <h2>Koltuk paketleri</h2>
+              <p>Kullanıcı sayısı lisansları. Depolama kotası yöneticiniz tarafından ayarlanır.</p>
+            </div>
+            {licenseInfo && (
+              <div className="license-status notice">
+                Aktif lisans: <strong>{licenseInfo.tier}</strong>
+                {" · "}
+                Kullanıcı {licenseInfo.userCount}/{licenseInfo.maxUsers === 0 ? "∞" : licenseInfo.maxUsers}
+                {" · "}
+                Kalan koltuk: {licenseInfo.maxUsers === 0 ? "∞" : licenseInfo.seatsRemaining}
+              </div>
+            )}
+            <div className="plan-grid">
+              {(licenseInfo?.catalog || []).map((tier) => (
+                <article className={`plan-card ${tier.code === licenseInfo?.tier ? "current" : ""}`} key={tier.code}>
+                  <div>
+                    <strong>{tier.name}</strong>
+                    {tier.code === licenseInfo?.tier && <span>Aktif</span>}
+                  </div>
+                  <h3>{tier.maxUsers === 0 ? "Sınırsız" : `${tier.maxUsers} kullanıcı`}</h3>
+                  <p>{tier.free || tier.priceTlYear === 0 ? "Ücretsiz bireysel" : `${tier.priceTlYear} ₺ / yıl`}</p>
+                  <small>{tier.description || ""}</small>
+                </article>
+              ))}
+              {!licenseInfo?.catalog?.length && (
+                <div className="empty-state"><p>Lisans kataloğu yüklenemedi.</p></div>
+              )}
+            </div>
+            <p className="muted-note">Satın alma: Yönetici panelinden talep kodu (TRDR1) üretip satıcıya iletin; gelen TRD1 yanıtını etkinleştirin.</p>
+          </section>
         ) : view === "drives" ? (
           <DrivesPanel request={request} onOpenFolder={openDriveRoot} />
         ) : view === "trash" ? (
@@ -761,9 +875,10 @@ export function App() {
         )}
 
         {uploadProgress && uploadProgress.status !== "idle" && uploadProgress.status !== "done" && (
-          <div className="upload-status">
-            <span style={{ width: `${uploadProgress.percent}%` }} />
+          <div className="upload-status visible">
+            <div className="upload-status-bar"><span style={{ width: `${uploadProgress.percent}%` }} /></div>
             <strong>{uploadProgress.percent}% · {uploadProgress.message}</strong>
+            <small>{formatBytes(uploadProgress.sentBytes)} / {formatBytes(uploadProgress.totalBytes)}{uploadProgress.currentFile ? ` · ${uploadProgress.currentFile}` : ""}</small>
             <div className="upload-actions">
               {uploadProgress.status === "paused"
                 ? <button onClick={() => queueRef.current?.resume()}>Devam</button>
@@ -812,20 +927,6 @@ export function App() {
         {detailEntry && (
           <CommentsVersionsPanel request={request} entryId={detailEntry.id} />
         )}
-
-        <section className="plans">
-          <div><h2>Depolama paketleri</h2><p>İhtiyacın arttığında hazır paketlerden birine geçebilirsin.</p></div>
-          <div className="plan-grid">
-            {plans.map((plan) => (
-              <article className={`plan-card ${plan.code === user.planCode ? "current" : ""}`} key={plan.code}>
-                <div><strong>{plan.name}</strong>{plan.code === user.planCode && <span>Mevcut paket</span>}</div>
-                <h3>{formatBytes(plan.quotaBytes)}</h3>
-                <p>{plan.priceCents === 0 ? "Sonsuza kadar ücretsiz" : `${(plan.priceCents / 100).toFixed(2)} ₺ / ay`}</p>
-                <button disabled={plan.code === user.planCode}>{plan.code === user.planCode ? "Kullanılıyor" : "Yakında"}</button>
-              </article>
-            ))}
-          </div>
-        </section>
           </>
         )}
         {view === "admin" && message && <div className="notice admin-notice">{message}<button onClick={() => setMessage("")}>×</button></div>}

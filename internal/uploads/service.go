@@ -117,7 +117,7 @@ func (s *Service) CreateBatch(ctx context.Context, user domain.User, parentID st
 
 	var used, reserved, quota int64
 	if err := tx.QueryRow(ctx, `
-		select used_bytes, reserved_bytes, quota_bytes
+		select used_bytes, reserved_bytes, quota_bytes + coalesce(bonus_quota_bytes,0)
 		from users where id = $1::uuid for update`,
 		user.ID,
 	).Scan(&used, &reserved, &quota); err != nil {

@@ -264,6 +264,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 			updated_at timestamptz not null default now()
 		)`,
 		`alter table instance_license add column if not exists instance_id text not null default ''`,
+		`alter table users add column if not exists bonus_quota_bytes bigint not null default 0`,
 	}
 
 	for _, stmt := range ddl {

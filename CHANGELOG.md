@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0 — WebDAV, paketler UI, mail, bonus kota
+
+### Added
+- FS-backed WebDAV (`/dav`) + `packaging/windows/mount-drive.ps1` (Windows `net use` birincil yol)
+- Admin SMTP mail ayarları; paylaşım modalında link e-posta gönderme
+- Kullanıcı `bonus_quota_bytes` (etkin kota = plan + bonus); Admin Bonus butonu
+- Açık/koyu tema (localStorage); kurumsal renk değişkenleri
+- Yükleme: görünür progress, aynı isim çakışmasında üzerine yazma onayı + `targetEntryId`
+- Paketler görünümü: koltuk lisans kataloğu (`/api/license`); depolama plan kartları kullanıcıdan kaldırıldı
+
+### Changed
+- Lisans fiyatları: free 1 kullanıcı; small 2–20 @ 499; medium 21–100 @ 1499; unlimited @ 2999
+- Public README / LICENSE_SALES: keygen/private-key satış adımları temizlendi
+- `healthz` version → 0.5.0
+
 ## 0.4.1 — Lisans talep/yanıt + kurulum kılavuzları
 
 ### Added

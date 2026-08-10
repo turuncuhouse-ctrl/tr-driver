@@ -10,17 +10,21 @@ import (
 	"time"
 
 	"necipdrive/internal/auth"
+	"necipdrive/internal/config"
 	"necipdrive/internal/files"
 	"necipdrive/internal/httpx"
+	"necipdrive/internal/mailer"
 )
 
 type Handler struct {
 	service     *Service
 	fileService *files.Service
+	mail        *mailer.Service
+	cfg         config.Config
 }
 
-func NewHandler(service *Service, fileService *files.Service) *Handler {
-	return &Handler{service: service, fileService: fileService}
+func NewHandler(service *Service, fileService *files.Service, mail *mailer.Service, cfg config.Config) *Handler {
+	return &Handler{service: service, fileService: fileService, mail: mail, cfg: cfg}
 }
 
 func (h *Handler) API(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +96,62 @@ func (h *Handler) API(w http.ResponseWriter, r *http.Request) {
 
 // Create kept for backward compatibility.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { h.API(w, r) }
+
+func (h *Handler) EmailLink(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.mail == nil {
+		httpx.Error(w, http.StatusBadRequest, "mail not configured")
+		return
+	}
+	st, err := h.mail.Get(r.Context())
+	if err != nil || !st.Enabled {
+		httpx.Error(w, http.StatusBadRequest, "mail disabled")
+		return
+	}
+	user := auth.UserFromContext(r.Context())
+	var req struct {
+		To      string `json:"to"`
+		URL     string `json:"url"`
+		Subject string `json:"subject"`
+		Message string `json:"message"`
+	}
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	to := strings.TrimSpace(req.To)
+	link := strings.TrimSpace(req.URL)
+	if to == "" || link == "" {
+		httpx.Error(w, http.StatusBadRequest, "to and url required")
+		return
+	}
+	if !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") {
+		if strings.HasPrefix(link, "/") {
+			link = strings.TrimRight(h.cfg.PublicBaseURL, "/") + link
+		} else {
+			httpx.Error(w, http.StatusBadRequest, "invalid url")
+			return
+		}
+	}
+	subject := strings.TrimSpace(req.Subject)
+	if subject == "" {
+		subject = "TR Driver paylaşım bağlantısı"
+	}
+	body := strings.TrimSpace(req.Message)
+	if body == "" {
+		body = user.DisplayName + " sizinle bir dosya paylaştı:\n\n" + link + "\n"
+	} else if !strings.Contains(body, link) {
+		body = body + "\n\n" + link + "\n"
+	}
+	if err := h.mail.Send(r.Context(), to, subject, body); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
 
 func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(r.URL.Path, "/s/")
