@@ -2,6 +2,7 @@ package license
 
 import (
 	"net/http"
+	"strings"
 
 	"necipdrive/internal/auth"
 	"necipdrive/internal/httpx"
@@ -36,91 +37,97 @@ func (h *Handler) PublicStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) AdminStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+// Admin handles GET status and POST actions on /api/admin/license
+// action: activate | request | issue  (default activate for backward compat with {key})
+func (h *Handler) Admin(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		st, err := h.service.Status(r.Context())
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "license status unavailable")
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, st)
+	case http.MethodPost:
+		h.adminPost(w, r)
+	default:
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
 	}
-	st, err := h.service.Status(r.Context())
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "license status unavailable")
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
-func (h *Handler) Activate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
+func (h *Handler) adminPost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Key string `json:"key"`
-	}
-	if err := httpx.ReadJSON(r, &req); err != nil || req.Key == "" {
-		httpx.Error(w, http.StatusBadRequest, "key required")
-		return
-	}
-	st, err := h.service.Activate(r.Context(), req.Key)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, st)
-}
-
-func (h *Handler) CreateRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		Tier string `json:"tier"`
-	}
-	if err := httpx.ReadJSON(r, &req); err != nil || req.Tier == "" {
-		httpx.Error(w, http.StatusBadRequest, "tier required")
-		return
-	}
-	code, payload, err := h.service.CreateRequest(r.Context(), req.Tier)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"requestCode": code,
-		"request":     payload,
-		"instructions": "Bu talep kodunu TR Driver satıcısına gönderin. Size TRD1... yanıt anahtarı iletecek; buraya yapıştırıp etkinleştirin.",
-	})
-}
-
-func (h *Handler) Issue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		RequestCode string `json:"requestCode"`
+		Action      string `json:"action"`
+		Key         string `json:"key"`
 		Tier        string `json:"tier"`
+		RequestCode string `json:"requestCode"`
 		Years       int    `json:"years"`
 		Customer    string `json:"customer"`
 		Note        string `json:"note"`
 	}
-	if err := httpx.ReadJSON(r, &req); err != nil || req.RequestCode == "" {
-		httpx.Error(w, http.StatusBadRequest, "requestCode required")
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if req.Years == 0 {
-		req.Years = 1
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" {
+		if req.RequestCode != "" {
+			action = "issue"
+		} else if req.Tier != "" && req.Key == "" {
+			action = "request"
+		} else {
+			action = "activate"
+		}
 	}
-	key, payload, err := h.service.IssueFromRequest(r.Context(), req.RequestCode, req.Tier, req.Years, req.Customer, req.Note)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err.Error())
-		return
+
+	switch action {
+	case "request":
+		if req.Tier == "" {
+			httpx.Error(w, http.StatusBadRequest, "tier required")
+			return
+		}
+		code, payload, err := h.service.CreateRequest(r.Context(), req.Tier)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"requestCode":  code,
+			"request":      payload,
+			"instructions": "Bu talep kodunu TR Driver satıcısına gönderin. Size TRD1... yanıt anahtarı iletecek; buraya yapıştırıp etkinleştirin.",
+		})
+	case "issue":
+		if req.RequestCode == "" {
+			httpx.Error(w, http.StatusBadRequest, "requestCode required")
+			return
+		}
+		years := req.Years
+		if years == 0 {
+			years = 1
+		}
+		key, payload, err := h.service.IssueFromRequest(r.Context(), req.RequestCode, req.Tier, years, req.Customer, req.Note)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"licenseKey": key,
+			"request":    payload,
+		})
+	case "activate":
+		if req.Key == "" {
+			httpx.Error(w, http.StatusBadRequest, "key required")
+			return
+		}
+		st, err := h.service.Activate(r.Context(), req.Key)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, st)
+	default:
+		httpx.Error(w, http.StatusBadRequest, "unknown action (use request, activate, or issue)")
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"licenseKey": key,
-		"request":    payload,
-	})
 }
 
 func (h *Handler) RequireAdminSession(next http.Handler) http.Handler {

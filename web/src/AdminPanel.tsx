@@ -157,9 +157,9 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   async function createLicenseRequest() {
     setCreatingRequest(true);
     try {
-      const res = await request<{ requestCode: string }>("/api/admin/license/request", {
+      const res = await request<{ requestCode: string }>("/api/admin/license", {
         method: "POST",
-        body: JSON.stringify({ tier: requestTier })
+        body: JSON.stringify({ action: "request", tier: requestTier })
       });
       setRequestCode(res.requestCode);
       onMessage("Talep kodu oluşturuldu — satıcıya gönderin.");
@@ -178,9 +178,10 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     }
     setIssuing(true);
     try {
-      const res = await request<{ licenseKey: string }>("/api/admin/license/issue", {
+      const res = await request<{ licenseKey: string }>("/api/admin/license", {
         method: "POST",
         body: JSON.stringify({
+          action: "issue",
           requestCode: code,
           tier: vendorTier || undefined,
           years: 1,
@@ -206,7 +207,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     try {
       const next = await request<NonNullable<typeof license>>("/api/admin/license", {
         method: "POST",
-        body: JSON.stringify({ key })
+        body: JSON.stringify({ action: "activate", key })
       });
       setLicense(next);
       setLicenseKey("");
@@ -295,7 +296,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
               ))}
             </select>
           </label>
-          <button disabled={creatingRequest} onClick={() => void createLicenseRequest()}>
+          <button type="button" disabled={creatingRequest} onClick={() => void createLicenseRequest()}>
             {creatingRequest ? "Üretiliyor…" : "Talep kodu üret"}
           </button>
           {requestCode && (
@@ -308,7 +309,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
             Satıcıdan gelen lisans anahtarı
             <input value={licenseKey} onChange={(e) => setLicenseKey(e.target.value)} placeholder="TRD1...." />
           </label>
-          <button disabled={activating} onClick={() => void activateLicense()}>
+          <button type="button" disabled={activating} onClick={() => void activateLicense()}>
             {activating ? "Etkinleştiriliyor…" : "Lisansı etkinleştir"}
           </button>
         </div>
@@ -341,7 +342,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
               Müşteri adı
               <input value={vendorCustomer} onChange={(e) => setVendorCustomer(e.target.value)} />
             </label>
-            <button disabled={issuing || !license.canIssueLicenses} onClick={() => void issueFromRequest()}>
+            <button type="button" disabled={issuing || !license.canIssueLicenses} onClick={() => void issueFromRequest()}>
               {issuing ? "Üretiliyor…" : "Yanıt lisansı üret"}
             </button>
             {issuedKey && (

@@ -53,15 +53,7 @@ func NewRouter(
 	})
 	mux.Handle("/api/license", http.HandlerFunc(licenseHandler.PublicStatus))
 	mux.Handle("/api/updates/check", http.HandlerFunc(updateHandler.Check))
-	mux.Handle("/api/admin/license", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			licenseHandler.Activate(w, r)
-			return
-		}
-		licenseHandler.AdminStatus(w, r)
-	}))))
-	mux.Handle("/api/admin/license/request", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.CreateRequest))))
-	mux.Handle("/api/admin/license/issue", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.Issue))))
+	mux.Handle("/api/admin/license", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(licenseHandler.Admin))))
 	mux.Handle("/api/auth/register", http.HandlerFunc(authHandler.Register))
 	mux.Handle("/api/auth/login", http.HandlerFunc(authHandler.Login))
 	mux.Handle("/api/auth/device-login", http.HandlerFunc(authHandler.DeviceLogin))

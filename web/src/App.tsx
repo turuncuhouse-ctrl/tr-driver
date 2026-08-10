@@ -166,8 +166,15 @@ export function App() {
       }
     });
     if (!response.ok) {
-      const result = await response.json().catch(() => ({ error: "İşlem başarısız" }));
-      throw new Error(result.error || "İşlem başarısız");
+      const text = await response.text();
+      let message = `İşlem başarısız (HTTP ${response.status})`;
+      try {
+        const parsed = JSON.parse(text) as { error?: string };
+        if (parsed?.error) message = parsed.error;
+      } catch {
+        if (text && text.length < 200) message = text;
+      }
+      throw new Error(message);
     }
     return response.json() as Promise<T>;
   }
