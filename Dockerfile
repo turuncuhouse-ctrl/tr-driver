@@ -7,13 +7,14 @@ COPY web/ ./
 RUN npm run build
 
 # ---- Go build ----
-FROM golang:1.25-alpine AS builder
+FROM golang:1.24-alpine AS builder
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum* ./
 COPY . .
 COPY --from=web /web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X necipdrive/internal/version.Version=0.4.2" -o /out/necipdrive ./cmd/server
+ENV GOTOOLCHAIN=local
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X necipdrive/internal/version.Version=0.5.0" -o /out/necipdrive ./cmd/server
 
 # ---- Runtime ----
 FROM alpine:3.20
