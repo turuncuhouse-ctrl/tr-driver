@@ -127,6 +127,25 @@ export function App() {
     return stateLabel[state] || state;
   }, [snap]);
 
+  async function pickFolder() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      (window as unknown as { __trPickerOpen?: boolean }).__trPickerOpen = true;
+      const res = await api<{ status?: string; path?: string }>("/api/pick-folder", { method: "POST" });
+      if (res.status === "cancelled" || res.status === "busy") {
+        return;
+      }
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Klasör seçilemedi");
+    } finally {
+      (window as unknown as { __trPickerOpen?: boolean }).__trPickerOpen = false;
+      setBusy(false);
+    }
+  }
+
   async function onLogin(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -138,6 +157,7 @@ export function App() {
       });
       setLogin((p) => ({ ...p, password: "" }));
       await refresh();
+      window.location.hash = "#/settings";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Giriş başarısız");
     } finally {
@@ -182,8 +202,13 @@ export function App() {
         <section className="card">
           <div className="row between">
             <h2>Senkron klasörleri</h2>
-            <button className="primary" disabled={!snap.connected || busy} onClick={() => void api("/api/pick-folder", { method: "POST" }).then(refresh)}>Klasör seç</button>
+            <button className="primary" disabled={!snap.connected || busy} onClick={() => void pickFolder()}>
+              {busy ? "Bekleyin…" : "Klasör seç"}
+            </button>
           </div>
+          {!snap.folders?.length && snap.connected && (
+            <p className="muted">Henüz klasör yok. Bir kez “Klasör seç” ile eşitlemek istediğiniz klasörü seçin — tekrar tekrar açılmaz.</p>
+          )}
           <ul className="folder-list">
             {(snap.folders || []).map((f) => (
               <li key={f.ID}>
@@ -193,9 +218,9 @@ export function App() {
                 </div>
                 <div className="row">
                   {f.Paused
-                    ? <button onClick={() => void api("/api/resume-folder", { method: "POST", body: JSON.stringify({ id: f.ID }) }).then(refresh)}>Devam</button>
-                    : <button onClick={() => void api("/api/pause-folder", { method: "POST", body: JSON.stringify({ id: f.ID }) }).then(refresh)}>Duraklat</button>}
-                  <button className="danger" onClick={() => void api("/api/remove-folder", { method: "POST", body: JSON.stringify({ id: f.ID }) }).then(refresh)}>Kaldır</button>
+                    ? <button type="button" onClick={() => void api("/api/resume-folder", { method: "POST", body: JSON.stringify({ id: f.ID }) }).then(refresh)}>Devam</button>
+                    : <button type="button" onClick={() => void api("/api/pause-folder", { method: "POST", body: JSON.stringify({ id: f.ID }) }).then(refresh)}>Duraklat</button>}
+                  <button type="button" className="danger" onClick={() => void api("/api/remove-folder", { method: "POST", body: JSON.stringify({ id: f.ID }) }).then(refresh)}>Kaldır</button>
                 </div>
               </li>
             ))}

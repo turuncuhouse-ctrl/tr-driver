@@ -48,9 +48,8 @@ func newWindowController(hostURL string) *windowController {
 }
 
 func (c *windowController) run() {
-	for !c.quitting.Load() {
-		c.runOnce()
-	}
+	c.runOnce()
+	// Do not auto-recreate the WebView forever — that causes tray flicker.
 }
 
 func (c *windowController) runOnce() {
@@ -89,6 +88,7 @@ func (c *windowController) runOnce() {
 	w.Init(`
 		window.addEventListener('blur', function () {
 			try {
+				if (window.__trPickerOpen) return;
 				if ((location.hash || '').indexOf('flyout') >= 0 && window.hostHide) {
 					window.hostHide();
 				}
@@ -153,7 +153,7 @@ func (c *windowController) showFlyout() {
 		}
 		w.SetTitle("TR Driver Sync")
 		w.SetSize(400, 520, webview2.HintFixed)
-		w.Navigate(c.hostURL + "/#/flyout")
+		w.Eval(`try{location.hash='#/flyout'}catch(e){}`)
 		positionNearTray(w.Window(), 400, 520)
 		showNativeWindow(w.Window(), true)
 	})
@@ -171,12 +171,15 @@ func (c *windowController) showSettings() {
 		}
 		w.SetTitle("TR Driver Ayarlar")
 		w.SetSize(780, 720, webview2.HintNone)
-		w.Navigate(c.hostURL + "/#/settings")
+		w.Eval(`try{location.hash='#/settings'}catch(e){}`)
 		showNativeWindow(w.Window(), true)
 	})
 }
 
 func (c *windowController) hide() {
+	if PickingFolder() {
+		return
+	}
 	c.dispatch(func() {
 		c.mu.Lock()
 		w := c.webview

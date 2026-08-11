@@ -2,8 +2,8 @@
 
 package desktop
 
-import "fmt"
+func PickingFolder() bool { return false }
 
 func PickFolder() (string, error) {
-	return "", fmt.Errorf("klasör seçici yalnızca Windows'ta desteklenir")
+	return "", nil
 }

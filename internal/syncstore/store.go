@@ -14,9 +14,11 @@ import (
 type Store struct{ DB *sql.DB }
 
 type Root struct {
-	ID, LocalPath, RemoteParentID string
-	Cursor                        int64
-	Paused                        bool
+	ID              string `json:"ID"`
+	LocalPath       string `json:"LocalPath"`
+	RemoteParentID  string `json:"RemoteParentID"`
+	Cursor          int64  `json:"Cursor"`
+	Paused          bool   `json:"Paused"`
 }
 type Node struct {
 	ID, RootID, LocalRel, RemoteID, Kind, ContentHash, SyncState string
@@ -28,9 +30,12 @@ type Job struct {
 	Attempts, NextRunAt, CreatedAt   int64
 }
 type Activity struct {
-	ID                           int64
-	RootID, Kind, Path, Message string
-	CreatedAt                    int64
+	ID        int64  `json:"ID"`
+	RootID    string `json:"RootID"`
+	Kind      string `json:"Kind"`
+	Path      string `json:"Path"`
+	Message   string `json:"Message"`
+	CreatedAt int64  `json:"CreatedAt"`
 }
 
 func Open(path string) (*Store, error) {

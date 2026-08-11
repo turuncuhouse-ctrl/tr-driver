@@ -308,7 +308,7 @@ export function App() {
     const tick = () => {
       void loadFiles(folderRef.current).catch(() => undefined);
     };
-    const id = window.setInterval(tick, 4000);
+    const id = window.setInterval(tick, 2000);
     const onFocus = () => tick();
     window.addEventListener("focus", onFocus);
     return () => {

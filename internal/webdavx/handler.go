@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"necipdrive/internal/auth"
@@ -21,10 +22,21 @@ import (
 type Handler struct {
 	auth  *auth.Service
 	files *files.Service
+	locks webdav.LockSystem
+	authC sync.Map // basic auth cache: user -> *cachedAuth
+}
+
+type cachedAuth struct {
+	user    *domain.User
+	expires time.Time
 }
 
 func New(authService *auth.Service, fileService *files.Service) *Handler {
-	return &Handler{auth: authService, files: fileService}
+	return &Handler{
+		auth:  authService,
+		files: fileService,
+		locks: webdav.NewMemLS(),
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,13 +50,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler := &webdav.Handler{
 		Prefix:     "/dav",
 		FileSystem: fs,
-		LockSystem: webdav.NewMemLS(),
+		LockSystem: h.locks,
 	}
 	handler.ServeHTTP(w, r)
 }
 
 func (h *Handler) user(r *http.Request) (*domain.User, error) {
 	if u, p, ok := r.BasicAuth(); ok {
+		key := u + "\x00" + p
+		if v, ok := h.authC.Load(key); ok {
+			c := v.(*cachedAuth)
+			if time.Now().Before(c.expires) {
+				return c.user, nil
+			}
+			h.authC.Delete(key)
+		}
 		result, err := h.auth.BeginDeviceLogin(r.Context(), clientIP(r), u, p)
 		if err != nil {
 			return nil, err
@@ -52,6 +72,7 @@ func (h *Handler) user(r *http.Request) (*domain.User, error) {
 		if result.Requires2FA {
 			return nil, errors.New("email 2FA is enabled; sign in via the web app and use the session, or disable 2FA for WebDAV password login")
 		}
+		h.authC.Store(key, &cachedAuth{user: result.User, expires: time.Now().Add(10 * time.Minute)})
 		return result.User, nil
 	}
 	if c, err := r.Cookie("session_token"); err == nil && c.Value != "" {
@@ -133,12 +154,32 @@ func (d *driveFS) Rename(ctx context.Context, oldName, newName string) error {
 	if err != nil {
 		return err
 	}
-	_, newBase := path.Split(clean(newName))
+	newParent, newBase, err := d.resolveParent(ctx, newName)
+	if err != nil {
+		return err
+	}
 	if newBase == "" {
 		return os.ErrInvalid
 	}
-	// same parent rename only for simplicity
-	return d.h.files.Rename(ctx, d.user.ID, d.user.Role, entry.ID, newBase, "")
+
+	oldParent := d.user.StorageRootID
+	if entry.ParentID != nil && *entry.ParentID != "" {
+		oldParent = *entry.ParentID
+	}
+
+	// Cross-folder move (Windows Explorer drag into another folder).
+	if oldParent != newParent {
+		if err := d.h.files.Move(ctx, d.user.ID, d.user.Role, entry.ID, newParent, ""); err != nil {
+			return err
+		}
+	}
+	// Rename within (or after) move when the basename changes.
+	if !strings.EqualFold(entry.Name, newBase) {
+		if err := d.h.files.Rename(ctx, d.user.ID, d.user.Role, entry.ID, newBase, ""); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *driveFS) Stat(ctx context.Context, name string) (os.FileInfo, error) {

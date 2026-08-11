@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -216,6 +217,14 @@ func (h *Host) handleAutostart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Host) handlePickFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	if PickingFolder() {
+		writeJSON(w, map[string]string{"status": "busy"})
+		return
+	}
 	path, err := PickFolder()
 	if err != nil {
 		http.Error(w, err.Error(), 400)
@@ -226,6 +235,11 @@ func (h *Host) handlePickFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.app.AddFolder(path); err != nil {
+		// Duplicate is not a hard error for UX — return existing.
+		if strings.Contains(err.Error(), "zaten ekli") {
+			writeJSON(w, map[string]string{"status": "ok", "path": path, "note": "already_added"})
+			return
+		}
 		http.Error(w, err.Error(), 400)
 		return
 	}
