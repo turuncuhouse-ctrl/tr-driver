@@ -14,3 +14,11 @@ secrets/
 *.b64
 .DS_Store
 Thumbs.db
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/
+android/offline-m2/
+android/offline-m2.bak/
+*.apk
+*.aab

@@ -1,0 +1,10 @@
+# Android / Gradle
+android/.gradle/
+android/**/build/
+android/local.properties
+android/*.iml
+android/.idea/
+*.apk
+*.aab
+*.ap_
+*.dex

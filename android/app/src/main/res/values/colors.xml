@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tr_blue">#0B5CAD</color>
+    <color name="tr_blue_dark">#083F78</color>
+    <color name="tr_sky">#E8F2FC</color>
+    <color name="tr_ink">#102A43</color>
+    <color name="tr_white">#FFFFFF</color>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.TRDriver" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/tr_blue</item>
+        <item name="colorPrimaryVariant">@color/tr_blue_dark</item>
+        <item name="colorOnPrimary">@color/tr_white</item>
+        <item name="android:statusBarColor">@color/tr_blue_dark</item>
+        <item name="android:windowBackground">@color/tr_sky</item>
+    </style>
+</resources>
