@@ -26,6 +26,8 @@ type Settings struct {
 	// TLSMode: auto | starttls | smtps | none
 	// auto = 465→smtps, otherwise starttls when UseTLS
 	TLSMode string `json:"tlsMode,omitempty"`
+	// SkipTLSVerify disables certificate name/CA checks (self-signed / wrong hostname).
+	SkipTLSVerify bool `json:"skipTLSVerify"`
 }
 
 type Service struct {
@@ -69,6 +71,8 @@ func (s *Service) Get(ctx context.Context) (Settings, error) {
 			st.UseTLS = v != "0" && !strings.EqualFold(v, "false")
 		case "mail_tls_mode":
 			st.TLSMode = strings.ToLower(strings.TrimSpace(v))
+		case "mail_skip_tls_verify":
+			st.SkipTLSVerify = v == "1" || strings.EqualFold(v, "true")
 		}
 	}
 	if st.TLSMode == "" {
@@ -91,13 +95,14 @@ func (s *Service) Save(ctx context.Context, in Settings) error {
 		return fmt.Errorf("invalid tlsMode %q (auto|starttls|smtps|none)", in.TLSMode)
 	}
 	pairs := map[string]string{
-		"mail_enabled":  boolStr(in.Enabled),
-		"mail_host":     strings.TrimSpace(in.Host),
-		"mail_port":     strconv.Itoa(in.Port),
-		"mail_username": strings.TrimSpace(in.Username),
-		"mail_from":     strings.TrimSpace(in.From),
-		"mail_use_tls":  boolStr(in.UseTLS),
-		"mail_tls_mode": mode,
+		"mail_enabled":         boolStr(in.Enabled),
+		"mail_host":            strings.TrimSpace(in.Host),
+		"mail_port":            strconv.Itoa(in.Port),
+		"mail_username":        strings.TrimSpace(in.Username),
+		"mail_from":            strings.TrimSpace(in.From),
+		"mail_use_tls":         boolStr(in.UseTLS),
+		"mail_tls_mode":        mode,
+		"mail_skip_tls_verify": boolStr(in.SkipTLSVerify),
 	}
 	if in.Password != "" && in.Password != "********" {
 		pairs["mail_password"] = in.Password
@@ -193,7 +198,11 @@ func (s *Service) sendWith(ctx context.Context, st Settings, to, subject, body s
 		"Content-Type: text/plain; charset=UTF-8\r\n" +
 		"\r\n" + body + "\r\n")
 
-	tlsCfg := &tls.Config{ServerName: st.Host, MinVersion: tls.VersionTLS12}
+	tlsCfg := &tls.Config{
+		ServerName:         st.Host,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: st.SkipTLSVerify, //nolint:gosec // optional admin setting for broken mail certs
+	}
 	mode := resolveTLSMode(st)
 
 	dialer := &net.Dialer{Timeout: 20 * time.Second}

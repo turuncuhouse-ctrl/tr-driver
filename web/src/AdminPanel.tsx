@@ -45,6 +45,7 @@ type MailSettings = {
   from: string;
   useTLS: boolean;
   tlsMode?: string;
+  skipTLSVerify?: boolean;
 };
 
 type RequestFn = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -75,7 +76,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   const [summary, setSummary] = useState<Summary | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mail, setMail] = useState<MailSettings>({
-    enabled: false, host: "", port: 587, username: "", password: "", from: "", useTLS: true, tlsMode: "auto"
+    enabled: false, host: "", port: 587, username: "", password: "", from: "", useTLS: true, tlsMode: "auto", skipTLSVerify: false
   });
   const [savingMail, setSavingMail] = useState(false);
   const [testingMail, setTestingMail] = useState(false);
@@ -474,6 +475,13 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
               <option value="none">Yok (şifresiz)</option>
             </select>
           </label>
+          <label className="row">
+            <input type="checkbox" checked={!!mail.skipTLSVerify} onChange={(e) => setMail({ ...mail, skipTLSVerify: e.target.checked })} />
+            Sertifika doğrulamasını atla (self-signed / yanlış hostname)
+          </label>
+          {mail.skipTLSVerify && (
+            <p className="notice error">TLS şifrelemesi kalır; yalnızca sertifika adı/CA kontrolü kapatılır. Mümkünse sunucu sertifikasını düzeltin.</p>
+          )}
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
             <button disabled={savingMail} onClick={() => void saveMail()}>
               {savingMail ? "Kaydediliyor…" : "Mail ayarlarını kaydet"}
