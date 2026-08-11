@@ -1,7 +1,10 @@
 package net.neciparmagan.trdriver
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -15,18 +18,24 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.switchmaterial.SwitchMaterial
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import net.neciparmagan.trdriver.backup.GalleryBackupWorker
 import net.neciparmagan.trdriver.data.FileEntry
+import net.neciparmagan.trdriver.data.SessionStore
+import net.neciparmagan.trdriver.data.UploadedMediaDb
 import net.neciparmagan.trdriver.presentation.DriveViewModel
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
     private val vm: DriveViewModel by viewModels()
+    private lateinit var session: SessionStore
 
     private lateinit var loginPanel: View
     private lateinit var filesPanel: View
@@ -34,6 +43,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var crumbs: TextView
     private lateinit var list: RecyclerView
     private lateinit var titleEmail: TextView
+    private lateinit var switchGallery: SwitchMaterial
+    private lateinit var switchWifiOnly: SwitchMaterial
+    private lateinit var backupStatus: TextView
 
     private val adapter = FileAdapter(
         onOpen = { entry ->
@@ -53,9 +65,26 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) vm.upload(uri)
     }
 
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            val granted = result.values.any { it }
+            if (granted) {
+                session.galleryBackupEnabled = true
+                switchGallery.isChecked = true
+                GalleryBackupWorker.schedule(this)
+                refreshBackupStatus()
+                Toast.makeText(this, "Galeri yedekleme açıldı", Toast.LENGTH_SHORT).show()
+            } else {
+                switchGallery.isChecked = false
+                session.galleryBackupEnabled = false
+                Toast.makeText(this, "Galeri izni gerekli", Toast.LENGTH_LONG).show()
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        session = SessionStore(this)
 
         loginPanel = findViewById(R.id.loginPanel)
         filesPanel = findViewById(R.id.filesPanel)
@@ -63,6 +92,9 @@ class MainActivity : AppCompatActivity() {
         crumbs = findViewById(R.id.crumbs)
         list = findViewById(R.id.fileList)
         titleEmail = findViewById(R.id.titleEmail)
+        switchGallery = findViewById(R.id.switchGalleryBackup)
+        switchWifiOnly = findViewById(R.id.switchWifiOnly)
+        backupStatus = findViewById(R.id.backupStatus)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
@@ -93,10 +125,53 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("İptal", null)
                 .show()
         }
-        findViewById<Button>(R.id.btnLogout).setOnClickListener { vm.logout() }
+        findViewById<Button>(R.id.btnLogout).setOnClickListener {
+            session.galleryBackupEnabled = false
+            GalleryBackupWorker.schedule(this)
+            vm.logout()
+        }
         crumbs.setOnClickListener {
             val state = vm.state.value
             if (state.crumbs.size > 1) vm.goToCrumb(state.crumbs.lastIndex - 1)
+        }
+
+        switchGallery.isChecked = session.galleryBackupEnabled
+        switchWifiOnly.isChecked = session.wifiOnlyBackup
+        switchGallery.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                if (hasMediaPermission()) {
+                    session.galleryBackupEnabled = true
+                    GalleryBackupWorker.schedule(this)
+                    refreshBackupStatus()
+                } else {
+                    switchGallery.isChecked = false
+                    requestMediaPermission()
+                }
+            } else {
+                session.galleryBackupEnabled = false
+                GalleryBackupWorker.schedule(this)
+                refreshBackupStatus()
+            }
+        }
+        switchWifiOnly.setOnCheckedChangeListener { _, checked ->
+            session.wifiOnlyBackup = checked
+            if (session.galleryBackupEnabled) {
+                GalleryBackupWorker.schedule(this)
+            }
+            refreshBackupStatus()
+        }
+        findViewById<Button>(R.id.btnBackupNow).setOnClickListener {
+            if (!session.galleryBackupEnabled) {
+                Toast.makeText(this, "Önce otomatik yedeklemeyi açın", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (!hasMediaPermission()) {
+                requestMediaPermission()
+                return@setOnClickListener
+            }
+            GalleryBackupWorker.runNow(this)
+            Toast.makeText(this, "Yedekleme başlatıldı", Toast.LENGTH_SHORT).show()
+            refreshBackupStatus()
         }
 
         lifecycleScope.launch {
@@ -117,6 +192,10 @@ class MainActivity : AppCompatActivity() {
                     titleEmail.text = state.user?.email ?: state.email
                     crumbs.text = state.crumbs.joinToString(" / ") { it.name }
                     adapter.submit(state.files)
+                    if (session.galleryBackupEnabled) {
+                        GalleryBackupWorker.schedule(this@MainActivity)
+                    }
+                    refreshBackupStatus()
                 }
 
                 state.message?.let {
@@ -129,6 +208,46 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::backupStatus.isInitialized) refreshBackupStatus()
+    }
+
+    private fun refreshBackupStatus() {
+        val count = UploadedMediaDb(this).countUploaded()
+        val net = if (session.wifiOnlyBackup) "yalnız Wi‑Fi" else "Wi‑Fi + mobil veri"
+        val on = if (session.galleryBackupEnabled) "Açık" else "Kapalı"
+        val last = session.lastBackupMessage.ifBlank { "Henüz çalışmadı" }
+        backupStatus.text = "Durum: $on · $net · Yerelde işlenen: $count\n$last\nHedef klasör: TR Photos / yıl / ay"
+    }
+
+    private fun mediaPermissions(): Array<String> {
+        return if (Build.VERSION.SDK_INT >= 33) {
+            arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.POST_NOTIFICATIONS,
+            )
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    private fun hasMediaPermission(): Boolean {
+        val required = if (Build.VERSION.SDK_INT >= 33) {
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        return required.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun requestMediaPermission() {
+        permissionLauncher.launch(mediaPermissions())
     }
 
     private fun openDownloaded(file: File) {

@@ -1,5 +1,0 @@
-tasks.register("showCp") {
-  doLast {
-    configurations.debugCompileClasspath.forEach { println(it) }
-  }
-}

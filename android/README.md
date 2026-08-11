@@ -23,4 +23,5 @@ APK:
 
 Telefona USB veya dosya paylaşımı ile kopyalayıp kurun (“Bilinmeyen uygulamalar” izni).
 
-Varsayılan sunucu: `https://drive.neciparmagan.net.tr`
+Otomatik galeri yedekleme: uygulamada **Otomatik foto/video yedekle** açın.
+Dosyalar sunucuda `TR Photos / yıl / ay` altına gider. Wi‑Fi / mobil veri tercihi ayardan seçilir.
