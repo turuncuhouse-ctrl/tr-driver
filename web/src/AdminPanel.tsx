@@ -44,6 +44,7 @@ type MailSettings = {
   password?: string;
   from: string;
   useTLS: boolean;
+  tlsMode?: string;
 };
 
 type RequestFn = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -74,9 +75,11 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   const [summary, setSummary] = useState<Summary | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mail, setMail] = useState<MailSettings>({
-    enabled: false, host: "", port: 587, username: "", password: "", from: "", useTLS: true
+    enabled: false, host: "", port: 587, username: "", password: "", from: "", useTLS: true, tlsMode: "auto"
   });
   const [savingMail, setSavingMail] = useState(false);
+  const [testingMail, setTestingMail] = useState(false);
+  const [mailNote, setMailNote] = useState("");
   const [batchLimitGB, setBatchLimitGB] = useState("10");
   const [search, setSearch] = useState("");
   const [busyUser, setBusyUser] = useState<string | null>(null);
@@ -191,14 +194,31 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
 
   async function saveMail() {
     setSavingMail(true);
+    setMailNote("");
     try {
       await request("/api/admin/mail", { method: "POST", body: JSON.stringify(mail) });
       await load();
-      onMessage("Mail ayarları kaydedildi.");
+      setMailNote("Mail ayarları kaydedildi.");
     } catch (error) {
-      onMessage(error instanceof Error ? error.message : "Mail ayarları kaydedilemedi");
+      setMailNote(error instanceof Error ? error.message : "Mail ayarları kaydedilemedi");
     } finally {
       setSavingMail(false);
+    }
+  }
+
+  async function testMail() {
+    setTestingMail(true);
+    setMailNote("");
+    try {
+      const res = await request<{ message?: string }>("/api/admin/mail/test", {
+        method: "POST",
+        body: JSON.stringify({ to: "" })
+      });
+      setMailNote(res.message || "Test e-postası gönderildi.");
+    } catch (error) {
+      setMailNote(error instanceof Error ? error.message : "Test gönderilemedi");
+    } finally {
+      setTestingMail(false);
     }
   }
 
@@ -429,25 +449,40 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
       <section className="admin-settings">
         <div>
           <h2>Mail (SMTP)</h2>
-          <p>Paylaşım linkini e-posta ile göndermek için. Kapalıysa kullanıcılar yalnızca link kopyalar.</p>
+          <p>Şifre sıfırlama, 2FA kodları ve paylaşım e-postaları için. 587=STARTTLS, 465=SMTPS (otomatik).</p>
         </div>
         <div className="admin-settings-form">
           <label className="row">
             <input type="checkbox" checked={mail.enabled} onChange={(e) => setMail({ ...mail, enabled: e.target.checked })} />
             SMTP etkin
           </label>
-          <label>Host<input value={mail.host} onChange={(e) => setMail({ ...mail, host: e.target.value })} placeholder="smtp.ornek.com" /></label>
+          <label>Host<input value={mail.host} onChange={(e) => setMail({ ...mail, host: e.target.value })} placeholder="smtp.gmail.com" /></label>
           <label>Port<input type="number" value={mail.port} onChange={(e) => setMail({ ...mail, port: Number(e.target.value) || 587 })} /></label>
           <label>Kullanıcı<input value={mail.username} onChange={(e) => setMail({ ...mail, username: e.target.value })} /></label>
           <label>Şifre<input type="password" value={mail.password || ""} onChange={(e) => setMail({ ...mail, password: e.target.value })} placeholder="değiştirmek için yazın" /></label>
           <label>From<input value={mail.from} onChange={(e) => setMail({ ...mail, from: e.target.value })} placeholder="noreply@ornek.com" /></label>
           <label className="row">
             <input type="checkbox" checked={mail.useTLS} onChange={(e) => setMail({ ...mail, useTLS: e.target.checked })} />
-            TLS
+            Şifreleme (TLS)
           </label>
-          <button disabled={savingMail} onClick={() => void saveMail()}>
-            {savingMail ? "Kaydediliyor…" : "Mail ayarlarını kaydet"}
-          </button>
+          <label>
+            TLS modu
+            <select value={mail.tlsMode || "auto"} onChange={(e) => setMail({ ...mail, tlsMode: e.target.value })}>
+              <option value="auto">Otomatik (587→STARTTLS, 465→SMTPS)</option>
+              <option value="starttls">STARTTLS (587)</option>
+              <option value="smtps">SMTPS / SSL (465)</option>
+              <option value="none">Yok (şifresiz)</option>
+            </select>
+          </label>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <button disabled={savingMail} onClick={() => void saveMail()}>
+              {savingMail ? "Kaydediliyor…" : "Mail ayarlarını kaydet"}
+            </button>
+            <button disabled={testingMail || !mail.enabled} onClick={() => void testMail()}>
+              {testingMail ? "Gönderiliyor…" : "Test e-postası gönder"}
+            </button>
+          </div>
+          {mailNote && <div className="notice">{mailNote}</div>}
         </div>
       </section>
 

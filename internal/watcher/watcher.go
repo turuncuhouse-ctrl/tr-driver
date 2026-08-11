@@ -101,7 +101,7 @@ func (w *Watcher) run(fw *fsnotify.Watcher) {
 				default:
 				}
 			}
-			timer.Reset(400 * time.Millisecond)
+			timer.Reset(250 * time.Millisecond)
 		case <-timer.C:
 			flush()
 		case <-tick:

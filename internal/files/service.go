@@ -306,6 +306,11 @@ func (s *Service) uploadBytesInner(ctx context.Context, userID, billUser, driveI
 			return err
 		}
 		_ = s.storage.Delete(oldKey)
+		var ver int64 = 1
+		_ = tx.QueryRow(ctx, `select content_version from file_entries where id = $1::uuid`, existingID).Scan(&ver)
+		if err := changelog.Append(ctx, tx, billUser, existingID, "upsert", fileName, &parentID, "file", written, mimeType, ver, "", stringPtr(deviceID), nil); err != nil {
+			return err
+		}
 		return tx.Commit(ctx)
 	}
 	var entryID string

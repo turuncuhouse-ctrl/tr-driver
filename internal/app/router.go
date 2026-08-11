@@ -84,6 +84,7 @@ func NewRouter(
 	mux.Handle("/api/admin/users/role", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.SetRole))))
 	mux.Handle("/api/admin/settings", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.Settings))))
 	mux.Handle("/api/admin/mail", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(mailHandler.Settings))))
+	mux.Handle("/api/admin/mail/test", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(mailHandler.Test))))
 	mux.Handle("/api/mail/status", authHandler.RequireAuth(http.HandlerFunc(mailHandler.Status)))
 	mux.Handle("/api/files", authHandler.RequireAuth(http.HandlerFunc(fileHandler.ListOrCreateFolder)))
 	mux.Handle("/api/files/upload", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Upload)))

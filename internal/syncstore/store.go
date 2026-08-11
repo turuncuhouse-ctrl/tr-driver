@@ -148,6 +148,10 @@ func (s *Store) GetNodeByRel(rootID, rel string) (Node, error) {
 func (s *Store) GetNodeByRemote(rootID, remoteID string) (Node, error) {
 	return scanNode(s.DB.QueryRow(`SELECT id,root_id,local_rel,remote_id,kind,size,mtime_ms,content_hash,content_version,sync_state FROM nodes WHERE root_id=? AND remote_id=?`, rootID, remoteID))
 }
+func (s *Store) DeleteNode(rootID, remoteID string) error {
+	_, err := s.DB.Exec(`DELETE FROM nodes WHERE root_id=? AND remote_id=?`, rootID, remoteID)
+	return err
+}
 func (s *Store) EnqueueJob(rootID, kind, payload string) (int64, error) {
 	var id int64
 	err := s.DB.QueryRow(`SELECT id FROM jobs WHERE root_id=? AND kind=? AND payload=? LIMIT 1`, rootID, kind, payload).Scan(&id)

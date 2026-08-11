@@ -61,7 +61,7 @@ type Engine struct {
 
 func New(store *syncstore.Store, api API, cfg Config) *Engine {
 	if cfg.PollInterval == 0 {
-		cfg.PollInterval = 30 * time.Second
+		cfg.PollInterval = 5 * time.Second
 	}
 	return &Engine{store: store, api: api, cfg: cfg, watchers: map[string]*watcher.Watcher{}}
 }
@@ -221,6 +221,7 @@ func (e *Engine) AddRootWatch(ctx context.Context, root syncstore.Root) error {
 		ctx = e.rootCtx
 	}
 	w := watcher.New(root.LocalPath)
+	w.SetRescanInterval(30 * time.Second)
 	if err := w.Start(); err != nil {
 		e.mu.Unlock()
 		return err
@@ -400,16 +401,14 @@ func (e *Engine) pull(ctx context.Context) {
 }
 func (e *Engine) apply(ctx context.Context, r syncstore.Root, c syncclient.Change) {
 	n, _ := e.store.GetNodeByRemote(r.ID, c.Entry.ID)
-	rel := n.LocalRel
-	if rel == "" {
-		rel = c.Entry.Name
-	}
+	rel := e.resolveLocalRel(r, c, n)
 	path := filepath.Join(r.LocalPath, filepath.FromSlash(rel))
 	if c.Entry.Deleted() || c.Type == "trash" || c.Type == "purge" {
 		if err := moveToTrash(path); err != nil {
 			e.setStatus(func(s *Status) { s.State, s.LastError = "error", err.Error() })
 			return
 		}
+		_ = e.store.DeleteNode(r.ID, c.Entry.ID)
 		e.addActivity(r.ID, "trash", rel, "Removed local item")
 		return
 	}
@@ -419,6 +418,24 @@ func (e *Engine) apply(ctx context.Context, r syncstore.Root, c syncclient.Chang
 		e.queueUpload(r, filepath.ToSlash(strings.TrimPrefix(conflict, r.LocalPath+string(os.PathSeparator))))
 	}
 	e.setProgress(func(s *Status) { s.State = "syncing"; s.CurrentFile = path; s.BytesTotal, s.BytesDone, s.Percent = 0, 0, 0 })
+
+	if c.Entry.Kind == "folder" {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			e.setStatus(func(s *Status) { s.State, s.LastError = "error", err.Error() })
+			return
+		}
+		_ = e.store.UpsertNode(syncstore.Node{
+			ID: c.Entry.ID, RootID: r.ID, LocalRel: rel, RemoteID: c.Entry.ID, Kind: "folder",
+			ContentVersion: c.Entry.Version, SyncState: "synced",
+		})
+		e.addActivity(r.ID, "mkdir", rel, "Created local folder")
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		e.setStatus(func(s *Status) { s.State, s.LastError = "error", err.Error() })
+		return
+	}
 	if err := e.api.Download(ctx, c.Entry.ID, path, true); err != nil {
 		e.setStatus(func(s *Status) { s.State, s.LastError = "offline", err.Error() })
 		return
@@ -429,9 +446,30 @@ func (e *Engine) apply(ctx context.Context, r syncstore.Root, c syncclient.Chang
 		size = info.Size()
 		mtime = info.ModTime().UnixMilli()
 	}
-	_ = e.store.UpsertNode(syncstore.Node{ID: c.Entry.ID, RootID: r.ID, LocalRel: rel, RemoteID: c.Entry.ID, Kind: c.Entry.Kind, Size: size, MtimeMS: mtime, ContentVersion: c.Entry.Version, SyncState: "syncing"})
+	_ = e.store.UpsertNode(syncstore.Node{
+		ID: c.Entry.ID, RootID: r.ID, LocalRel: rel, RemoteID: c.Entry.ID, Kind: "file",
+		Size: size, MtimeMS: mtime, ContentVersion: c.Entry.Version, SyncState: "synced",
+	})
 	e.setProgress(func(s *Status) { s.BytesSynced += size; s.BytesTotal = size; s.BytesDone = size; s.Percent = 100 })
 	e.addActivity(r.ID, "download", rel, "Downloaded file")
+}
+
+func (e *Engine) resolveLocalRel(r syncstore.Root, c syncclient.Change, n syncstore.Node) string {
+	if n.LocalRel != "" {
+		return n.LocalRel
+	}
+	name := c.Entry.Name
+	if name == "" {
+		name = c.Name
+	}
+	if c.Entry.ParentID != nil && *c.Entry.ParentID != "" {
+		parent, err := e.store.GetNodeByRemote(r.ID, *c.Entry.ParentID)
+		if err == nil && parent.LocalRel != "" {
+			return filepath.ToSlash(filepath.Join(parent.LocalRel, name))
+		}
+		// Parent may be the sync root itself (storage root id matches remote personal root).
+	}
+	return name
 }
 func (e *Engine) addActivity(rootID, kind, path, message string) {
 	if err := e.store.AddActivity(rootID, kind, path, message); err != nil {

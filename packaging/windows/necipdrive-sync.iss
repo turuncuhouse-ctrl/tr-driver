@@ -1,6 +1,6 @@
 ; Inno Setup script for TR Driver Sync
 #define MyAppName "TR Driver Sync"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.5.1"
 #define MyAppPublisher "TR Driver"
 #define MyAppExeName "necipdrive-sync.exe"
 
@@ -18,7 +18,7 @@ OutputBaseFilename=TRDriverSyncSetup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=necipdrive.ico
+; SetupIconFile is optional — use exe icon if ico missing
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=force
 RestartApplications=no
@@ -45,6 +45,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 function InitializeSetup(): Boolean;
 var
   Version: String;
+  ResultCode: Integer;
 begin
   Result := True;
   if not RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version)
@@ -54,7 +55,6 @@ begin
       ShellExec('open', 'https://developer.microsoft.com/microsoft-edge/webview2/', '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
   end;
 end;
-var ResultCode: Integer;
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "TR Driver Sync'i başlat"; Flags: nowait postinstall skipifsilent

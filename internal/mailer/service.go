@@ -23,6 +23,9 @@ type Settings struct {
 	Password string `json:"password,omitempty"` // write-only on GET (masked)
 	From     string `json:"from"`
 	UseTLS   bool   `json:"useTLS"`
+	// TLSMode: auto | starttls | smtps | none
+	// auto = 465→smtps, otherwise starttls when UseTLS
+	TLSMode string `json:"tlsMode,omitempty"`
 }
 
 type Service struct {
@@ -34,7 +37,7 @@ func New(db *pgxpool.Pool) *Service {
 }
 
 func (s *Service) Get(ctx context.Context) (Settings, error) {
-	st := Settings{Port: 587, UseTLS: true}
+	st := Settings{Port: 587, UseTLS: true, TLSMode: "auto"}
 	rows, err := s.db.Query(ctx, `select key, value from app_settings where key like 'mail_%'`)
 	if err != nil {
 		return st, err
@@ -64,7 +67,12 @@ func (s *Service) Get(ctx context.Context) (Settings, error) {
 			st.From = v
 		case "mail_use_tls":
 			st.UseTLS = v != "0" && !strings.EqualFold(v, "false")
+		case "mail_tls_mode":
+			st.TLSMode = strings.ToLower(strings.TrimSpace(v))
 		}
+	}
+	if st.TLSMode == "" {
+		st.TLSMode = "auto"
 	}
 	return st, rows.Err()
 }
@@ -73,6 +81,15 @@ func (s *Service) Save(ctx context.Context, in Settings) error {
 	if in.Port <= 0 {
 		in.Port = 587
 	}
+	mode := strings.ToLower(strings.TrimSpace(in.TLSMode))
+	switch mode {
+	case "", "auto", "starttls", "smtps", "none":
+		if mode == "" {
+			mode = "auto"
+		}
+	default:
+		return fmt.Errorf("invalid tlsMode %q (auto|starttls|smtps|none)", in.TLSMode)
+	}
 	pairs := map[string]string{
 		"mail_enabled":  boolStr(in.Enabled),
 		"mail_host":     strings.TrimSpace(in.Host),
@@ -80,6 +97,7 @@ func (s *Service) Save(ctx context.Context, in Settings) error {
 		"mail_username": strings.TrimSpace(in.Username),
 		"mail_from":     strings.TrimSpace(in.From),
 		"mail_use_tls":  boolStr(in.UseTLS),
+		"mail_tls_mode": mode,
 	}
 	if in.Password != "" && in.Password != "********" {
 		pairs["mail_password"] = in.Password
@@ -111,6 +129,23 @@ func (s *Service) Configured(ctx context.Context) (bool, error) {
 	return st.Enabled && st.Host != "" && st.From != "", nil
 }
 
+func resolveTLSMode(st Settings) string {
+	mode := strings.ToLower(strings.TrimSpace(st.TLSMode))
+	if mode == "" || mode == "auto" {
+		if !st.UseTLS {
+			return "none"
+		}
+		if st.Port == 465 {
+			return "smtps"
+		}
+		return "starttls"
+	}
+	if mode == "none" || !st.UseTLS {
+		return "none"
+	}
+	return mode
+}
+
 func (s *Service) Send(ctx context.Context, to, subject, body string) error {
 	st, err := s.Get(ctx)
 	if err != nil {
@@ -119,6 +154,30 @@ func (s *Service) Send(ctx context.Context, to, subject, body string) error {
 	if !st.Enabled {
 		return errors.New("mail disabled")
 	}
+	return s.sendWith(ctx, st, to, subject, body)
+}
+
+// SendTest sends a test message using currently saved settings (must be enabled).
+func (s *Service) SendTest(ctx context.Context, to string) error {
+	st, err := s.Get(ctx)
+	if err != nil {
+		return err
+	}
+	if st.Host == "" || st.From == "" {
+		return errors.New("mail settings incomplete (host/from)")
+	}
+	if to == "" {
+		to = st.From
+	}
+	// Temporarily allow test even if enabled checkbox forgotten, but prefer enabled.
+	if !st.Enabled {
+		return errors.New("SMTP kapalı — önce etkinleştirip kaydedin")
+	}
+	body := "TR Driver SMTP test mesajı.\n\nAyarlarınız çalışıyor.\n"
+	return s.sendWith(ctx, st, to, "TR Driver SMTP test", body)
+}
+
+func (s *Service) sendWith(ctx context.Context, st Settings, to, subject, body string) error {
 	if st.Host == "" || st.From == "" || to == "" {
 		return errors.New("mail settings incomplete")
 	}
@@ -134,32 +193,51 @@ func (s *Service) Send(ctx context.Context, to, subject, body string) error {
 		"Content-Type: text/plain; charset=UTF-8\r\n" +
 		"\r\n" + body + "\r\n")
 
-	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	tlsCfg := &tls.Config{ServerName: st.Host, MinVersion: tls.VersionTLS12}
+	mode := resolveTLSMode(st)
+
+	dialer := &net.Dialer{Timeout: 20 * time.Second}
+	raw, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("smtp connect %s: %w", addr, err)
 	}
-	defer conn.Close()
 
 	var client *smtp.Client
-	if st.UseTLS {
-		tlsConn := tls.Client(conn, &tls.Config{ServerName: st.Host, MinVersion: tls.VersionTLS12})
+	switch mode {
+	case "smtps":
+		tlsConn := tls.Client(raw, tlsCfg)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
-			return err
+			_ = raw.Close()
+			return fmt.Errorf("smtp TLS (465/SMTPS): %w", err)
 		}
 		client, err = smtp.NewClient(tlsConn, st.Host)
-	} else {
-		client, err = smtp.NewClient(conn, st.Host)
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			_ = tlsConn.Close()
+			return err
+		}
+	default:
+		client, err = smtp.NewClient(raw, st.Host)
+		if err != nil {
+			_ = raw.Close()
+			return err
+		}
+		if mode == "starttls" {
+			if ok, _ := client.Extension("STARTTLS"); !ok {
+				_ = client.Close()
+				return errors.New("sunucu STARTTLS desteklemiyor; port 465 (SMTPS) veya TLS modunu deneyin")
+			}
+			if err := client.StartTLS(tlsCfg); err != nil {
+				_ = client.Close()
+				return fmt.Errorf("smtp STARTTLS: %w", err)
+			}
+		}
 	}
 	defer client.Close()
 
 	if st.Username != "" {
 		auth := smtp.PlainAuth("", st.Username, pass, st.Host)
 		if err := client.Auth(auth); err != nil {
-			return err
+			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
 	if err := client.Mail(st.From); err != nil {

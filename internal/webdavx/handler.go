@@ -103,7 +103,15 @@ func (d *driveFS) OpenFile(ctx context.Context, name string, flag int, _ os.File
 		return &davDir{d: d, id: entry.ID, name: entry.Name, path: name}, nil
 	}
 	if flag&os.O_WRONLY != 0 || flag&os.O_RDWR != 0 || flag&os.O_TRUNC != 0 {
-		return &davFile{d: d, entry: entry, path: name, writing: true, create: false}, nil
+		var buf []byte
+		dirty := flag&os.O_TRUNC != 0
+		if flag&os.O_TRUNC == 0 {
+			if rc, err := d.h.files.OpenStorage(entry.StorageKey); err == nil {
+				buf, _ = io.ReadAll(rc)
+				_ = rc.Close()
+			}
+		}
+		return &davFile{d: d, entry: entry, path: name, writing: true, create: false, buf: buf, dirty: dirty}, nil
 	}
 	rc, err := d.h.files.OpenStorage(entry.StorageKey)
 	if err != nil {
@@ -286,15 +294,20 @@ type davFile struct {
 	writing  bool
 	create   bool
 	buf      []byte
+	offset   int64
+	dirty    bool
 }
 
 func (f *davFile) Close() error {
 	if f.reader != nil {
 		_ = f.reader.Close()
 	}
-	if f.writing && len(f.buf) > 0 {
-		// Persist via multipart-style upload helper
+	if f.writing && f.dirty {
 		return f.d.h.files.UploadBytes(context.Background(), f.d.user.ID, f.d.user.Role, f.parentIDForWrite(), f.name, "application/octet-stream", f.buf, "")
+	}
+	// Empty create (0-byte file) still needs a DB row for Windows "New → Text Document".
+	if f.writing && f.create && len(f.buf) == 0 {
+		return f.d.h.files.UploadBytes(context.Background(), f.d.user.ID, f.d.user.Role, f.parentIDForWrite(), f.name, "application/octet-stream", []byte{}, "")
 	}
 	return nil
 }
@@ -314,12 +327,37 @@ func (f *davFile) Write(p []byte) (int, error) {
 	if !f.writing {
 		return 0, os.ErrInvalid
 	}
-	f.buf = append(f.buf, p...)
+	end := int(f.offset) + len(p)
+	if end > len(f.buf) {
+		nb := make([]byte, end)
+		copy(nb, f.buf)
+		f.buf = nb
+	}
+	copy(f.buf[int(f.offset):], p)
+	f.offset += int64(len(p))
+	f.dirty = true
 	return len(p), nil
 }
-func (f *davFile) Seek(int64, int) (int64, error) { return 0, nil }
+func (f *davFile) Seek(offset int64, whence int) (int64, error) {
+	var next int64
+	switch whence {
+	case io.SeekStart:
+		next = offset
+	case io.SeekCurrent:
+		next = f.offset + offset
+	case io.SeekEnd:
+		next = int64(len(f.buf)) + offset
+	default:
+		return 0, os.ErrInvalid
+	}
+	if next < 0 {
+		return 0, os.ErrInvalid
+	}
+	f.offset = next
+	return next, nil
+}
 func (f *davFile) Stat() (os.FileInfo, error) {
-	if f.entry != nil {
+	if f.entry != nil && !f.dirty {
 		return infoFromEntry(f.entry), nil
 	}
 	return &davInfo{name: f.name, size: int64(len(f.buf)), mod: time.Now()}, nil

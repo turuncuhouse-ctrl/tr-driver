@@ -300,6 +300,23 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [preview]);
 
+  // Keep file list fresh so WebDAV / sync / other device changes appear without full reload.
+  useEffect(() => {
+    if (!user) return;
+    const fileViews = new Set(["files", "shared", "starred", "recent"]);
+    if (!fileViews.has(view)) return;
+    const tick = () => {
+      void loadFiles(folderRef.current).catch(() => undefined);
+    };
+    const id = window.setInterval(tick, 4000);
+    const onFocus = () => tick();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [user?.id, view, crumbs]);
+
   async function enqueueFiles(selected: QueuedFile[], parentId: string | null = currentFolder) {
     if (!selected.length) return;
     setMessage("");
@@ -662,6 +679,9 @@ export function App() {
       setFiles([]);
       setCrumbs([{ id: null, name: "Dosyalarım" }]);
       setPreview(null);
+      setMessage("");
+      setMode("login");
+      setView("files");
     }
   }
 

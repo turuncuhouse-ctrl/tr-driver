@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
 	"necipdrive/internal/syncclient"
 	"necipdrive/internal/syncengine"
@@ -268,10 +269,11 @@ func (a *App) Start() error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	eng := syncengine.New(a.store, a.client, syncengine.Config{
-		ServerURL:  a.cfg.ServerURL,
-		Email:      a.cfg.Email,
-		Token:      a.client.Token,
-		DeviceName: a.cfg.DeviceName,
+		ServerURL:    a.cfg.ServerURL,
+		Email:        a.cfg.Email,
+		Token:        a.client.Token,
+		DeviceName:   a.cfg.DeviceName,
+		PollInterval: 5 * time.Second,
 	})
 	if err := eng.Start(ctx); err != nil {
 		cancel()
