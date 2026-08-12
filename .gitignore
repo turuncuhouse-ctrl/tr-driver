@@ -20,5 +20,8 @@ android/local.properties
 android/.idea/
 android/offline-m2/
 android/offline-m2.bak/
+android/keystore/*.jks
+android/keystore/keystore.properties
 *.apk
 *.aab
+!web/public/apps/TRDriver.apk

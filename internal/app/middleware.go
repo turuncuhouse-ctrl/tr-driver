@@ -42,7 +42,8 @@ func csrfMiddleware(next http.Handler, secret string) http.Handler {
 		// Public auth endpoints bootstrap the session/device token before CSRF is available.
 		switch r.URL.Path {
 		case "/api/auth/login", "/api/auth/register", "/api/auth/device-login",
-			"/api/auth/login/2fa", "/api/auth/forgot-password", "/api/auth/reset-password":
+			"/api/auth/login/2fa", "/api/auth/forgot-password", "/api/auth/reset-password",
+			"/api/auth/qr/redeem":
 			next.ServeHTTP(w, r)
 			return
 		}

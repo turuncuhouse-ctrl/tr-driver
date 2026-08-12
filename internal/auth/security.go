@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	purposeLogin2FA     = "login_2fa"
+	purposeLogin2FA      = "login_2fa"
 	purposePasswordReset = "password_reset"
-	otpTTL              = 10 * time.Minute
+	purposeQRLogin       = "qr_login"
+	otpTTL               = 10 * time.Minute
+	qrLoginTTL           = 3 * time.Minute
 )
 
 var (
@@ -157,6 +159,70 @@ func (s *Service) ResetPassword(ctx context.Context, remoteAddr, email, code, ne
 	// Invalidate all sessions after reset.
 	_, _ = s.db.Exec(ctx, `delete from sessions where user_id = $1::uuid`, userID)
 	return nil
+}
+
+func (s *Service) CreateQRLogin(ctx context.Context, userID string) (challengeToken string, expiresAt time.Time, err error) {
+	challengeToken, tokenHash, err := generateChallengeToken()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	expiresAt = time.Now().Add(qrLoginTTL)
+	_, _ = s.db.Exec(ctx, `
+		update auth_challenges set consumed_at = now()
+		where user_id = $1::uuid and purpose = $2 and consumed_at is null`, userID, purposeQRLogin)
+	// code_hash unused for QR; store placeholder hash of token.
+	_, err = s.db.Exec(ctx, `
+		insert into auth_challenges (user_id, purpose, code_hash, token_hash, expires_at)
+		values ($1::uuid, $2, $3, $4, $5)`,
+		userID, purposeQRLogin, hashToken(challengeToken), tokenHash, expiresAt,
+	)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return challengeToken, expiresAt, nil
+}
+
+func (s *Service) RedeemQRLogin(ctx context.Context, challengeToken, deviceName string) (*domain.User, string, error) {
+	challengeToken = strings.TrimSpace(challengeToken)
+	if challengeToken == "" {
+		return nil, "", ErrChallengeInvalid
+	}
+	var userID, challengeID string
+	err := s.db.QueryRow(ctx, `
+		select id::text, user_id::text
+		from auth_challenges
+		where token_hash = $1 and purpose = $2 and consumed_at is null and expires_at > now()`,
+		hashToken(challengeToken), purposeQRLogin,
+	).Scan(&challengeID, &userID)
+	if err != nil {
+		return nil, "", ErrChallengeInvalid
+	}
+	res, err := s.db.Exec(ctx, `
+		update auth_challenges set consumed_at = now()
+		where id = $1::uuid and consumed_at is null`, challengeID)
+	if err != nil {
+		return nil, "", err
+	}
+	if res.RowsAffected() == 0 {
+		return nil, "", ErrChallengeInvalid
+	}
+	var user domain.User
+	err = s.db.QueryRow(ctx, `
+		select id::text, email, display_name, role, plan_code, quota_bytes, coalesce(bonus_quota_bytes,0), used_bytes, reserved_bytes,
+		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false)
+		from users where id = $1::uuid`, userID,
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled)
+	if err != nil {
+		return nil, "", err
+	}
+	user.QuotaBytes = user.BaseQuotaBytes + user.BonusQuotaBytes
+	user.MaxBatchBytes = s.maxBatchBytes(ctx)
+	user.UploadChunkBytes = s.cfg.UploadChunkBytes
+	_, token, err := s.CreateDevice(ctx, userID, deviceName)
+	if err != nil {
+		return nil, "", err
+	}
+	return &user, token, nil
 }
 
 func (s *Service) createChallenge(ctx context.Context, userID, purpose string) (code, challengeToken string, err error) {

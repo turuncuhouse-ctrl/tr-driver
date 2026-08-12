@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"necipdrive/internal/domain"
 	"necipdrive/internal/httpx"
@@ -322,7 +323,52 @@ func (h *Handler) Device(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
-// DeviceLogout revokes the current bearer device token (sync client logout).
+// CreateQRLogin issues a short-lived QR challenge for mobile device pairing.
+func (h *Handler) CreateQRLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user := UserFromContext(r.Context())
+	token, expiresAt, err := h.service.CreateQRLogin(r.Context(), user.ID)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"challengeToken": token,
+		"expiresAt":      expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) RedeemQRLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		ChallengeToken string `json:"challengeToken"`
+		DeviceName     string `json:"deviceName"`
+	}
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if strings.TrimSpace(req.DeviceName) == "" {
+		req.DeviceName = "Android"
+	}
+	user, token, err := h.service.RedeemQRLogin(r.Context(), req.ChallengeToken, req.DeviceName)
+	if err != nil {
+		status := http.StatusUnauthorized
+		if !errors.Is(err, ErrChallengeInvalid) {
+			status = http.StatusBadRequest
+		}
+		httpx.Error(w, status, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user": user, "token": token})
+}
+
 func (h *Handler) DeviceLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")

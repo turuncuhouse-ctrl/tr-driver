@@ -3,14 +3,17 @@ package net.neciparmagan.trdriver
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.MimeTypeMap
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -23,7 +26,10 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import coil.load
 import com.google.android.material.switchmaterial.SwitchMaterial
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
@@ -31,6 +37,8 @@ import net.neciparmagan.trdriver.data.FileEntry
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadedMediaDb
 import net.neciparmagan.trdriver.presentation.DriveViewModel
+import okhttp3.Headers
+import org.json.JSONObject
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -46,11 +54,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchGallery: SwitchMaterial
     private lateinit var switchWifiOnly: SwitchMaterial
     private lateinit var backupStatus: TextView
+    private lateinit var inputDisplayName: EditText
+    private lateinit var btnRegister: Button
+
+    private var registerNameVisible = false
 
     private val adapter = FileAdapter(
-        onOpen = { entry ->
-            if (entry.kind == "folder") vm.openFolder(entry) else vm.download(entry)
-        },
+        onOpen = { entry -> openEntry(entry) },
         onDownload = { vm.download(it) },
         onDelete = { entry ->
             AlertDialog.Builder(this)
@@ -63,6 +73,24 @@ class MainActivity : AppCompatActivity() {
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) vm.upload(uri)
+    }
+
+    private val qrLauncher = registerForActivityResult(ScanContract()) { result ->
+        val contents = result.contents ?: return@registerForActivityResult
+        runCatching {
+            val json = JSONObject(contents)
+            val token = json.optString("challengeToken").ifBlank {
+                json.optString("challenge_token")
+            }
+            val server = json.optString("server").takeIf { it.isNotBlank() }
+            if (token.isBlank()) {
+                Toast.makeText(this, "QR kodunda challengeToken yok", Toast.LENGTH_LONG).show()
+                return@registerForActivityResult
+            }
+            vm.redeemQr(token, server)
+        }.onFailure {
+            Toast.makeText(this, "QR okunamadı: ${it.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private val permissionLauncher =
@@ -95,6 +123,8 @@ class MainActivity : AppCompatActivity() {
         switchGallery = findViewById(R.id.switchGalleryBackup)
         switchWifiOnly = findViewById(R.id.switchWifiOnly)
         backupStatus = findViewById(R.id.backupStatus)
+        inputDisplayName = findViewById(R.id.inputDisplayName)
+        btnRegister = findViewById(R.id.btnRegister)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
@@ -111,6 +141,39 @@ class MainActivity : AppCompatActivity() {
             vm.updateOtp(otp.text.toString())
             vm.login()
         }
+
+        btnRegister.setOnClickListener {
+            if (!registerNameVisible) {
+                registerNameVisible = true
+                inputDisplayName.visibility = View.VISIBLE
+                btnRegister.text = "Hesabı oluştur"
+                inputDisplayName.requestFocus()
+                return@setOnClickListener
+            }
+            val name = inputDisplayName.text.toString().trim()
+            val mail = email.text.toString().trim()
+            val pass = password.text.toString()
+            if (name.isEmpty() || mail.isEmpty() || pass.isEmpty()) {
+                Toast.makeText(this, "Ad, e-posta ve şifre gerekli", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            vm.updateServer(server.text.toString())
+            vm.updateEmail(mail)
+            vm.updatePassword(pass)
+            vm.updateDisplayName(name)
+            vm.register()
+        }
+
+        findViewById<Button>(R.id.btnQrLogin).setOnClickListener {
+            val options = ScanOptions().apply {
+                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                setPrompt("TR Driver QR kodunu okutun")
+                setBeepEnabled(false)
+                setOrientationLocked(true)
+            }
+            qrLauncher.launch(options)
+        }
+
         findViewById<Button>(R.id.btnRefresh).setOnClickListener { vm.loadFiles() }
         findViewById<Button>(R.id.btnUpload).setOnClickListener { picker.launch("*/*") }
         findViewById<Button>(R.id.btnNewFolder).setOnClickListener {
@@ -128,6 +191,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnLogout).setOnClickListener {
             session.galleryBackupEnabled = false
             GalleryBackupWorker.schedule(this)
+            registerNameVisible = false
+            inputDisplayName.visibility = View.GONE
+            btnRegister.text = "Üye ol"
             vm.logout()
         }
         crumbs.setOnClickListener {
@@ -179,6 +245,9 @@ class MainActivity : AppCompatActivity() {
                 progress.visibility = if (state.busy) View.VISIBLE else View.GONE
                 if (!state.bootstrapped) return@collectLatest
 
+                adapter.updateAuth(session.token.orEmpty(), session.serverUrl)
+                adapter.updatePathHint(state.crumbs.joinToString("/") { it.name })
+
                 if (!state.loggedIn) {
                     loginPanel.visibility = View.VISIBLE
                     filesPanel.visibility = View.GONE
@@ -213,6 +282,25 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (::backupStatus.isInitialized) refreshBackupStatus()
+    }
+
+    private fun openEntry(entry: FileEntry) {
+        if (entry.kind == "folder") {
+            vm.openFolder(entry)
+            return
+        }
+        val mime = resolveMime(entry)
+        if (isPreviewableMedia(mime)) {
+            startActivity(
+                Intent(this, MediaPreviewActivity::class.java).apply {
+                    putExtra(MediaPreviewActivity.EXTRA_ID, entry.id)
+                    putExtra(MediaPreviewActivity.EXTRA_NAME, entry.name)
+                    putExtra(MediaPreviewActivity.EXTRA_MIME, mime)
+                },
+            )
+        } else {
+            vm.download(entry)
+        }
     }
 
     private fun refreshBackupStatus() {
@@ -258,6 +346,22 @@ class MainActivity : AppCompatActivity() {
         }
         runCatching { startActivity(Intent.createChooser(intent, "Dosyayı aç")) }
     }
+
+    companion object {
+        fun resolveMime(entry: FileEntry): String {
+            val declared = entry.mimeType.trim()
+            if (declared.isNotEmpty() && declared != "application/octet-stream") return declared
+            val ext = entry.name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            if (ext.isEmpty()) return declared
+            return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: declared
+        }
+
+        fun isPreviewableMedia(mime: String): Boolean {
+            return mime.startsWith("image/") ||
+                mime.startsWith("video/") ||
+                mime.startsWith("audio/")
+        }
+    }
 }
 
 private class FileAdapter(
@@ -266,10 +370,22 @@ private class FileAdapter(
     private val onDelete: (FileEntry) -> Unit,
 ) : RecyclerView.Adapter<FileAdapter.VH>() {
     private var items: List<FileEntry> = emptyList()
+    private var token: String = ""
+    private var serverUrl: String = ""
+    private var pathHint: String = ""
 
     fun submit(next: List<FileEntry>) {
         items = next
         notifyDataSetChanged()
+    }
+
+    fun updateAuth(token: String, serverUrl: String) {
+        this.token = token
+        this.serverUrl = serverUrl.trimEnd('/')
+    }
+
+    fun updatePathHint(path: String) {
+        pathHint = path
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -281,17 +397,48 @@ private class FileAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
+        val mime = MainActivity.resolveMime(item)
         holder.name.text = item.name
         holder.meta.text = if (item.kind == "folder") "Klasör" else "${item.sizeBytes} bayt"
         holder.itemView.setOnClickListener { onOpen(item) }
         holder.download.visibility = if (item.kind == "file") View.VISIBLE else View.GONE
         holder.download.setOnClickListener { onDownload(item) }
         holder.delete.setOnClickListener { onDelete(item) }
+
+        holder.thumb.setImageDrawable(null)
+        holder.thumb.setBackgroundColor(Color.parseColor("#E8F2FC"))
+        when {
+            item.kind == "folder" -> {
+                holder.thumb.setBackgroundColor(Color.parseColor("#0B5CAD"))
+            }
+            mime.startsWith("image/") && token.isNotBlank() && serverUrl.isNotBlank() -> {
+                val url = "$serverUrl/api/files/download/${item.id}?inline=1"
+                holder.thumb.load(url) {
+                    headers(Headers.headersOf("Authorization", "Bearer $token"))
+                    size(96, 96)
+                }
+            }
+        }
+
+        val badge = when {
+            MainActivity.isPreviewableMedia(mime) -> "Medya"
+            pathHint.contains("TR Photos", ignoreCase = true) -> "Yedek"
+            else -> null
+        }
+        if (badge != null) {
+            holder.badge.visibility = View.VISIBLE
+            holder.badge.text = badge
+        } else {
+            holder.badge.visibility = View.GONE
+            holder.badge.text = ""
+        }
     }
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {
+        val thumb: ImageView = view.findViewById(R.id.itemThumb)
         val name: TextView = view.findViewById(R.id.itemName)
         val meta: TextView = view.findViewById(R.id.itemMeta)
+        val badge: TextView = view.findViewById(R.id.itemBadge)
         val download: Button = view.findViewById(R.id.itemDownload)
         val delete: Button = view.findViewById(R.id.itemDelete)
     }

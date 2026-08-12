@@ -56,7 +56,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
 
     suspend fun login(email: String, password: String, challengeToken: String? = null, code: String? = null): DeviceLoginResponse =
         withContext(Dispatchers.IO) {
-            val deviceName = "Android-" + (Build.MODEL ?: "Phone")
+            val deviceName = session.deviceName.ifBlank { "Android-" + (Build.MODEL ?: "Phone") }
             val payload = DeviceLoginRequest(
                 email = email,
                 password = password,
@@ -180,6 +180,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
     }
 
     suspend fun ensurePhotosAlbumFolder(media: LocalMedia): String {
+        val device = sanitizeFolder(session.deviceName.ifBlank { android.os.Build.MODEL ?: "Android" })
         val root = if (session.photosRootId.isNotBlank()) {
             session.photosRootId
         } else {
@@ -187,9 +188,56 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             session.photosRootId = id
             id
         }
-        val yearId = ensureChildFolder(root, media.year.toString())
+        val deviceId = ensureChildFolder(root, device)
+        val yearId = ensureChildFolder(deviceId, media.year.toString())
         return ensureChildFolder(yearId, "%02d".format(media.month))
     }
+
+    private fun sanitizeFolder(name: String): String {
+        val cleaned = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(60)
+        return cleaned.ifBlank { "Android" }
+    }
+
+    suspend fun register(email: String, password: String, displayName: String): DeviceLoginResponse = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(
+            RegisterRequest.serializer(),
+            RegisterRequest(email = email, password = password, displayName = displayName),
+        )
+        val req = Request.Builder()
+            .url("${base()}/api/auth/register")
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+        }
+        login(email, password)
+    }
+
+    suspend fun redeemQr(challengeToken: String): DeviceLoginResponse = withContext(Dispatchers.IO) {
+        val deviceName = session.deviceName.ifBlank { "Android-" + (Build.MODEL ?: "Phone") }
+        val body = json.encodeToString(
+            QrRedeemRequest.serializer(),
+            QrRedeemRequest(challengeToken = challengeToken, deviceName = deviceName),
+        ).toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("${base()}/api/auth/qr/redeem")
+            .post(body)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            val parsed = json.decodeFromString(DeviceLoginResponse.serializer(), text)
+            if (!parsed.token.isNullOrBlank()) {
+                session.token = parsed.token
+                session.email = parsed.user?.email.orEmpty()
+                session.storageRootId = parsed.user?.storageRootId.orEmpty()
+            }
+            parsed
+        }
+    }
+
+    fun downloadUrl(fileId: String): String = "${base()}/api/files/download/$fileId"
 
     suspend fun upload(parentId: String?, uri: Uri): FileEntry = withContext(Dispatchers.IO) {
         val resolver = appContext.contentResolver

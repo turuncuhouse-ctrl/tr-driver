@@ -69,6 +69,8 @@ func NewRouter(
 	mux.Handle("/api/auth/reset-password", http.HandlerFunc(authHandler.ResetPassword))
 	mux.Handle("/api/auth/device-login", http.HandlerFunc(authHandler.DeviceLogin))
 	mux.Handle("/api/auth/device-logout", authHandler.RequireAuth(http.HandlerFunc(authHandler.DeviceLogout)))
+	mux.Handle("/api/auth/qr/create", authHandler.RequireSession(http.HandlerFunc(authHandler.CreateQRLogin)))
+	mux.Handle("/api/auth/qr/redeem", http.HandlerFunc(authHandler.RedeemQRLogin))
 	mux.Handle("/api/auth/logout", authHandler.RequireAuth(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("/api/auth/me", authHandler.RequireAuth(http.HandlerFunc(authHandler.Me)))
 	mux.Handle("/api/auth/security", authHandler.RequireSession(http.HandlerFunc(authHandler.Security)))

@@ -27,6 +27,7 @@ data class UiState(
     val requires2FA: Boolean = false,
     val challengeToken: String? = null,
     val otp: String = "",
+    val displayName: String = "",
     val user: User? = null,
     val crumbs: List<Crumb> = listOf(Crumb(null, "Dosyalarım")),
     val files: List<FileEntry> = emptyList(),
@@ -58,8 +59,58 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
     fun updateEmail(v: String) = _state.update { it.copy(email = v) }
     fun updatePassword(v: String) = _state.update { it.copy(password = v) }
     fun updateOtp(v: String) = _state.update { it.copy(otp = v) }
+    fun updateDisplayName(v: String) = _state.update { it.copy(displayName = v) }
     fun clearMessage() = _state.update { it.copy(message = null) }
     fun consumeDownload() = _state.update { it.copy(downloaded = null) }
+
+    fun register() {
+        val s = _state.value
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, message = null) }
+            try {
+                session.serverUrl = s.serverUrl
+                val name = s.displayName.ifBlank { s.email.substringBefore("@") }
+                val resp = api.register(s.email.trim(), s.password, name)
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        loggedIn = true,
+                        password = "",
+                        user = resp.user,
+                        crumbs = listOf(Crumb(null, "Dosyalarım")),
+                        message = "Hesap oluşturuldu",
+                    )
+                }
+                loadFiles()
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = e.message ?: "Kayıt başarısız") }
+            }
+        }
+    }
+
+    fun redeemQr(challengeToken: String, serverUrl: String?) {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, message = null) }
+            try {
+                if (!serverUrl.isNullOrBlank()) session.serverUrl = serverUrl.trimEnd('/')
+                val resp = api.redeemQr(challengeToken)
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        loggedIn = true,
+                        serverUrl = session.serverUrl,
+                        email = session.email,
+                        user = resp.user,
+                        crumbs = listOf(Crumb(null, "Dosyalarım")),
+                        message = "QR ile giriş başarılı",
+                    )
+                }
+                loadFiles()
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = e.message ?: "QR giriş başarısız") }
+            }
+        }
+    }
 
     fun login() {
         val s = _state.value

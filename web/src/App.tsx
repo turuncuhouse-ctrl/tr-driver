@@ -180,6 +180,7 @@ export function App() {
   const [searchQ, setSearchQ] = useState("");
   const [shareTarget, setShareTarget] = useState<FileEntry | null>(null);
   const [detailEntry, setDetailEntry] = useState<FileEntry | null>(null);
+  const [qrLogin, setQrLogin] = useState<{ token: string; expiresAt: string; payload: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const queueRef = useRef<UploadQueue | null>(null);
@@ -682,6 +683,21 @@ export function App() {
       setMessage("");
       setMode("login");
       setView("files");
+      setQrLogin(null);
+    }
+  }
+
+  async function openQRLogin() {
+    try {
+      const res = await request<{ challengeToken: string; expiresAt: string }>("/api/auth/qr/create", { method: "POST" });
+      const payload = JSON.stringify({
+        v: 1,
+        server: window.location.origin,
+        challengeToken: res.challengeToken
+      });
+      setQrLogin({ token: res.challengeToken, expiresAt: res.expiresAt, payload });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "QR oluşturulamadı");
     }
   }
 
@@ -895,6 +911,25 @@ export function App() {
           <div className="quota-bar"><span style={{ width: `${usageRate}%` }} /></div>
           <small>{formatBytes(user.usedBytes)} / {formatBytes(user.quotaBytes)}</small>
         </div>
+        <a className="mobile-apps-card" href="/apps/TRDriver.apk" download="TRDriver.apk">
+          <span className="android-mark" aria-hidden>▶</span>
+          <div>
+            <strong>Android uygulaması</strong>
+            <small>APK indir · galeri yedekleme &amp; medya</small>
+          </div>
+        </a>
+        <button
+          type="button"
+          className="mobile-apps-card"
+          style={{ width: "100%", cursor: "pointer", border: "1px solid #d7e3f5" }}
+          onClick={() => void openQRLogin()}
+        >
+          <span className="android-mark" aria-hidden>QR</span>
+          <div style={{ textAlign: "left" }}>
+            <strong>QR ile telefona giriş</strong>
+            <small>3 dakika geçerli kod oluştur</small>
+          </div>
+        </button>
         <div className="profile">
           <span className="avatar">{user.displayName.slice(0, 1).toUpperCase()}</span>
           <div><strong>{user.displayName}</strong><small>{user.email}</small></div>
@@ -1104,6 +1139,20 @@ export function App() {
                 <iframe title={preview.entry.name} src={previewURL} sandbox="" />
               )}
             </div>
+          </div>
+        </div>
+      )}
+      {qrLogin && (
+        <div className="qr-modal" onClick={() => setQrLogin(null)}>
+          <div className="qr-modal-card" onClick={(event) => event.stopPropagation()}>
+            <h3>Telefona QR ile giriş</h3>
+            <p>TR Driver Android uygulamasında “QR ile giriş”i açıp bu kodu okutun.</p>
+            <img
+              alt="QR giriş kodu"
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrLogin.payload)}`}
+            />
+            <small>Geçerlilik: {new Date(qrLogin.expiresAt).toLocaleTimeString("tr-TR")}</small>
+            <button type="button" className="primary" onClick={() => setQrLogin(null)}>Kapat</button>
           </div>
         </div>
       )}

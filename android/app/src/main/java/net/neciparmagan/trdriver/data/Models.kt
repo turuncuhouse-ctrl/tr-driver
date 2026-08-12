@@ -59,6 +59,19 @@ data class RenameRequest(
 )
 
 @Serializable
+data class RegisterRequest(
+    val email: String,
+    val password: String,
+    val displayName: String,
+)
+
+@Serializable
+data class QrRedeemRequest(
+    val challengeToken: String,
+    val deviceName: String,
+)
+
+@Serializable
 data class DeleteRequest(
     @SerialName("fileId") val fileId: String,
 )

@@ -40,6 +40,16 @@ class SessionStore(context: Context) {
         get() = prefs.getString(KEY_LAST_MSG, "") ?: ""
         set(value) = prefs.edit().putString(KEY_LAST_MSG, value).apply()
 
+    var deviceName: String
+        get() {
+            val stored = prefs.getString(KEY_DEVICE, "") ?: ""
+            if (stored.isNotBlank()) return stored
+            val generated = "Android-" + (android.os.Build.MODEL ?: "Phone").replace(" ", "-")
+            prefs.edit().putString(KEY_DEVICE, generated).apply()
+            return generated
+        }
+        set(value) = prefs.edit().putString(KEY_DEVICE, value).apply()
+
     val isLoggedIn: Boolean get() = !token.isNullOrBlank()
 
     fun clearAuth() {
@@ -59,5 +69,6 @@ class SessionStore(context: Context) {
         private const val KEY_GALLERY_ON = "gallery_on"
         private const val KEY_WIFI_ONLY = "wifi_only"
         private const val KEY_LAST_MSG = "last_backup_msg"
+        private const val KEY_DEVICE = "device_name"
     }
 }
