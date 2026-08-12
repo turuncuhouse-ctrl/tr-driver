@@ -126,6 +126,61 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
     }
 
+    suspend fun search(query: String): List<FileEntry> = withContext(Dispatchers.IO) {
+        val url = "${base()}/api/files/search?q=${Uri.encode(query.trim())}"
+        val req = authed(Request.Builder().url(url)).get().build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
+                .sortedWith(compareBy({ it.kind != "folder" }, { it.name.lowercase() }))
+        }
+    }
+
+    suspend fun createShareLink(entryId: String): ShareCreateResponse = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(
+            ShareCreateRequest.serializer(),
+            ShareCreateRequest(entryId = entryId),
+        )
+        val req = authed(Request.Builder().url("${base()}/api/shares"))
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(ShareCreateResponse.serializer(), text)
+        }
+    }
+
+    suspend fun setStarred(entryId: String, starred: Boolean) = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(StarRequest.serializer(), StarRequest(entryId, starred))
+        val req = authed(Request.Builder().url("${base()}/api/files/starred"))
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+        }
+    }
+
+    suspend fun listStarred(): List<FileEntry> = withContext(Dispatchers.IO) {
+        val req = authed(Request.Builder().url("${base()}/api/files/starred")).get().build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
+        }
+    }
+
+    suspend fun listRecent(): List<FileEntry> = withContext(Dispatchers.IO) {
+        val req = authed(Request.Builder().url("${base()}/api/files/recent")).get().build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
+        }
+    }
+
     suspend fun createFolder(parentId: String?, name: String): FileEntry = withContext(Dispatchers.IO) {
         val payload = json.encodeToString(
             CreateFolderRequest.serializer(),

@@ -61,7 +61,14 @@ class MainActivity : AppCompatActivity() {
     private var registerNameVisible = false
 
     private val adapter = FileAdapter(
-        onOpen = { entry -> openEntry(entry) },
+        onOpen = { entry ->
+            if (vm.state.value.selectionMode) {
+                vm.toggleSelection(entry.id)
+            } else {
+                openEntry(entry)
+            }
+        },
+        onLongPress = { entry -> vm.enterSelection(entry.id) },
         onDownload = { vm.download(it) },
         onDelete = { entry ->
             AlertDialog.Builder(this)
@@ -70,6 +77,9 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("İptal", null)
                 .show()
         },
+        onShare = { vm.shareEntry(it) },
+        onStar = { vm.toggleStar(it) },
+        onToggleCheck = { vm.toggleSelection(it.id) },
     )
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -177,6 +187,40 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnRefresh).setOnClickListener { vm.loadFiles() }
         findViewById<Button>(R.id.btnUpload).setOnClickListener { picker.launch("*/*") }
+        findViewById<Button>(R.id.btnSearch).setOnClickListener {
+            val q = findViewById<EditText>(R.id.inputSearch).text.toString()
+            vm.search(q)
+        }
+        findViewById<EditText>(R.id.inputSearch).setOnEditorActionListener { _, _, _ ->
+            vm.search(findViewById<EditText>(R.id.inputSearch).text.toString())
+            true
+        }
+        findViewById<Button>(R.id.btnStarred).setOnClickListener { vm.showStarred() }
+        findViewById<Button>(R.id.btnRecent).setOnClickListener { vm.showRecent() }
+        findViewById<Button>(R.id.btnOffline).setOnClickListener { showOfflineDownloads() }
+        findViewById<Button>(R.id.btnSelectMode).setOnClickListener {
+            val first = vm.state.value.files.firstOrNull()
+            if (first != null) vm.enterSelection(first.id)
+            else Toast.makeText(this, "Önce dosya listesi gerekli", Toast.LENGTH_SHORT).show()
+        }
+        findViewById<Button>(R.id.btnCancelSelect).setOnClickListener { vm.clearSelection() }
+        findViewById<Button>(R.id.btnDeleteSelected).setOnClickListener {
+            AlertDialog.Builder(this)
+                .setMessage("Seçili öğeler silinsin mi?")
+                .setPositiveButton("Sil") { _, _ -> vm.deleteSelected() }
+                .setNegativeButton("İptal", null)
+                .show()
+        }
+        findViewById<Button>(R.id.btnDownloadSelected).setOnClickListener { vm.downloadSelected() }
+        findViewById<Button>(R.id.btnShareSelected).setOnClickListener {
+            val id = vm.state.value.selectedIds.firstOrNull()
+            val entry = vm.state.value.files.firstOrNull { it.id == id }
+            if (entry == null) {
+                Toast.makeText(this, "Paylaşmak için bir öğe seçin", Toast.LENGTH_SHORT).show()
+            } else {
+                vm.shareEntry(entry)
+            }
+        }
         findViewById<Button>(R.id.btnNewFolder).setOnClickListener {
             val input = EditText(this).apply { hint = "Klasör adı" }
             AlertDialog.Builder(this)
@@ -261,7 +305,12 @@ class MainActivity : AppCompatActivity() {
                     filesPanel.visibility = View.VISIBLE
                     titleEmail.text = state.user?.email ?: state.email
                     crumbs.text = state.crumbs.joinToString(" / ") { it.name }
-                    adapter.submit(state.files)
+                    adapter.submit(state.files, state.selectionMode, state.selectedIds)
+                    findViewById<View>(R.id.selectionBar).visibility =
+                        if (state.selectionMode) View.VISIBLE else View.GONE
+                    findViewById<TextView>(R.id.selectionCount).text = "${state.selectedIds.size} seçili"
+                    findViewById<View>(R.id.offlineBanner).visibility =
+                        if (state.offline) View.VISIBLE else View.GONE
                     if (session.galleryBackupEnabled) {
                         GalleryBackupWorker.schedule(this@MainActivity)
                     }
@@ -276,6 +325,16 @@ class MainActivity : AppCompatActivity() {
                     openDownloaded(file)
                     vm.consumeDownload()
                 }
+                state.shareUrl?.let { url ->
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, url)
+                    }
+                    startActivity(Intent.createChooser(send, "Paylaşım linki"))
+                    // Also copy-friendly toast
+                    Toast.makeText(this@MainActivity, url, Toast.LENGTH_LONG).show()
+                    vm.consumeShareUrl()
+                }
             }
         }
     }
@@ -283,6 +342,22 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (::backupStatus.isInitialized) refreshBackupStatus()
+    }
+
+    private fun showOfflineDownloads() {
+        val files = vm.listOfflineDownloads()
+        if (files.isEmpty()) {
+            Toast.makeText(this, "Henüz çevrimdışı indirme yok", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val names = files.map { "${it.name} (${it.length() / 1024} KB)" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("İndirilenler (çevrimdışı)")
+            .setItems(names) { _, which ->
+                openDownloaded(files[which])
+            }
+            .setNegativeButton("Kapat", null)
+            .show()
     }
 
     private fun openEntry(entry: FileEntry) {
@@ -411,16 +486,24 @@ class MainActivity : AppCompatActivity() {
 
 private class FileAdapter(
     private val onOpen: (FileEntry) -> Unit,
+    private val onLongPress: (FileEntry) -> Unit,
     private val onDownload: (FileEntry) -> Unit,
     private val onDelete: (FileEntry) -> Unit,
+    private val onShare: (FileEntry) -> Unit,
+    private val onStar: (FileEntry) -> Unit,
+    private val onToggleCheck: (FileEntry) -> Unit,
 ) : RecyclerView.Adapter<FileAdapter.VH>() {
     private var items: List<FileEntry> = emptyList()
+    private var selectionMode: Boolean = false
+    private var selectedIds: Set<String> = emptySet()
     private var token: String = ""
     private var serverUrl: String = ""
     private var pathHint: String = ""
 
-    fun submit(next: List<FileEntry>) {
+    fun submit(next: List<FileEntry>, selectionMode: Boolean = false, selectedIds: Set<String> = emptySet()) {
         items = next
+        this.selectionMode = selectionMode
+        this.selectedIds = selectedIds
         notifyDataSetChanged()
     }
 
@@ -444,11 +527,27 @@ private class FileAdapter(
         val item = items[position]
         val mime = MainActivity.resolveMime(item)
         holder.name.text = item.name
-        holder.meta.text = if (item.kind == "folder") "Klasör" else "${item.sizeBytes} bayt"
+        holder.meta.text = if (item.kind == "folder") "Klasör" else formatSize(item.sizeBytes)
         holder.itemView.setOnClickListener { onOpen(item) }
-        holder.download.visibility = if (item.kind == "file") View.VISIBLE else View.GONE
+        holder.itemView.setOnLongClickListener {
+            onLongPress(item)
+            true
+        }
+
+        holder.check.visibility = if (selectionMode) View.VISIBLE else View.GONE
+        holder.check.setOnCheckedChangeListener(null)
+        holder.check.isChecked = item.id in selectedIds
+        holder.check.setOnCheckedChangeListener { _, _ -> onToggleCheck(item) }
+
+        holder.download.visibility = if (item.kind == "file" && !selectionMode) View.VISIBLE else View.GONE
+        holder.delete.visibility = if (!selectionMode) View.VISIBLE else View.GONE
+        holder.share.visibility = if (!selectionMode) View.VISIBLE else View.GONE
+        holder.star.visibility = if (!selectionMode) View.VISIBLE else View.GONE
+        holder.star.text = if (item.starred) "★" else "☆"
         holder.download.setOnClickListener { onDownload(item) }
         holder.delete.setOnClickListener { onDelete(item) }
+        holder.share.setOnClickListener { onShare(item) }
+        holder.star.setOnClickListener { onStar(item) }
 
         holder.thumb.setImageDrawable(null)
         holder.thumb.setBackgroundColor(Color.parseColor("#E8F2FC"))
@@ -466,6 +565,7 @@ private class FileAdapter(
         }
 
         val badge = when {
+            item.starred -> "Yıldızlı"
             MainActivity.isPreviewableMedia(mime) -> "Medya"
             pathHint.contains("TR Photos", ignoreCase = true) -> "Yedek"
             else -> null
@@ -479,11 +579,23 @@ private class FileAdapter(
         }
     }
 
+    private fun formatSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return String.format("%.1f KB", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024) return String.format("%.1f MB", mb)
+        return String.format("%.1f GB", mb / 1024.0)
+    }
+
     class VH(view: View) : RecyclerView.ViewHolder(view) {
+        val check: android.widget.CheckBox = view.findViewById(R.id.itemCheck)
         val thumb: ImageView = view.findViewById(R.id.itemThumb)
         val name: TextView = view.findViewById(R.id.itemName)
         val meta: TextView = view.findViewById(R.id.itemMeta)
         val badge: TextView = view.findViewById(R.id.itemBadge)
+        val star: Button = view.findViewById(R.id.itemStar)
+        val share: Button = view.findViewById(R.id.itemShare)
         val download: Button = view.findViewById(R.id.itemDownload)
         val delete: Button = view.findViewById(R.id.itemDelete)
     }

@@ -75,3 +75,23 @@ data class QrRedeemRequest(
 data class DeleteRequest(
     @SerialName("fileId") val fileId: String,
 )
+
+@Serializable
+data class ShareCreateRequest(
+    @SerialName("entryId") val entryId: String,
+    val permission: String = "view",
+    @SerialName("expiresInDays") val expiresInDays: Int? = 30,
+)
+
+@Serializable
+data class ShareCreateResponse(
+    val id: String = "",
+    val url: String = "",
+    val token: String = "",
+)
+
+@Serializable
+data class StarRequest(
+    @SerialName("entryId") val entryId: String,
+    val starred: Boolean,
+)
