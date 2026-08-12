@@ -1,5 +1,13 @@
 # Changelog
 
+## Free edition — ücretlendirme kaldırıldı
+
+### Changed
+- Koltuk paketleri / yıllık lisans fiyatları iptal; kullanıcı sayısı sınırı yok
+- Web «Paketler» menüsü ve admin lisans satın alma UI kaldırıldı
+- Plan seed: yalnızca Free aktif (`price_cents=0`); Pro/Team pasif
+- Varsayılan kota: `DATA_DIR` disk kapasitesi (`FREE_QUOTA_BYTES=0`); Admin’den ayarlanabilir
+
 ## 0.5.0 — WebDAV, paketler UI, mail, bonus kota
 
 ### Added

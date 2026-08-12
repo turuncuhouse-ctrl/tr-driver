@@ -39,7 +39,7 @@ SESSION_SECRET=...
 SHARE_PASSWORD_SALT=...
 PUBLIC_BASE_URL=https://drive.ornek.com
 ALLOW_REGISTRATION=true
-LICENSE_PUBLIC_KEY=   # satıcı public key (sizinki)
+FREE_QUOTA_BYTES=0
 ```
 
 ## 2) Compose seçenekleri
@@ -56,7 +56,7 @@ Domain → `http://SUNUCU_IP:3080` (veya compose portu). HTTPS Let’s Encrypt a
 
 1. `https://domain/healthz` → `{"status":"ok","product":"TR Driver",...}`
 2. Web UI’de ilk kullanıcı = admin
-3. Admin → Lisans → talep kodu üret → satıcıya gönder → `TRD1` yanıtını etkinleştir
+3. Admin → Varsayılan kota (disk kapasitesi) ve kullanıcı kotalarını istediğiniz gibi ayarlayın
 4. İsterseniz `ALLOW_REGISTRATION=false`
 
 ## Windows ağ sürücüsü (WebDAV)
@@ -70,10 +70,6 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\mount-drive.ps1 -Serv
 veya: `net use Z: https://drive.ornek.com/dav /user:EMAIL PASSWORD`
 
 HTTPS önerilir. Tray sync istemcisi ikincildir.
-
-## 5) Satıcı notu
-
-Satıcı yanıt üretimi yerel araçladır (Admin talep kodu → satıcı TRD1). Private key müşteri sunucusuna konmaz; müşteri yalnızca `LICENSE_PUBLIC_KEY` kullanır. Ayrıntı: [`LICENSE_SALES.md`](LICENSE_SALES.md).
 
 ## Güncelleme
 

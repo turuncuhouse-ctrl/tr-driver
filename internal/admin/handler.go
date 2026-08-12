@@ -150,15 +150,34 @@ func (h *Handler) Settings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, result)
 	case http.MethodPost:
 		var req struct {
-			MaxUploadBatchBytes int64 `json:"maxUploadBatchBytes"`
+			MaxUploadBatchBytes *int64 `json:"maxUploadBatchBytes"`
+			DefaultQuotaBytes   *int64 `json:"defaultQuotaBytes"`
+			MatchDiskCapacity   bool   `json:"matchDiskCapacity"`
 		}
 		if err := httpx.ReadJSON(r, &req); err != nil {
 			httpx.Error(w, http.StatusBadRequest, "invalid request")
 			return
 		}
-		if err := h.service.SetMaxUploadBatchBytes(r.Context(), req.MaxUploadBatchBytes); err != nil {
-			httpx.Error(w, http.StatusBadRequest, err.Error())
+		if req.MatchDiskCapacity {
+			n, err := h.service.MatchDefaultQuotaToDisk(r.Context())
+			if err != nil {
+				httpx.Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "updated", "defaultQuotaBytes": n})
 			return
+		}
+		if req.MaxUploadBatchBytes != nil {
+			if err := h.service.SetMaxUploadBatchBytes(r.Context(), *req.MaxUploadBatchBytes); err != nil {
+				httpx.Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+		if req.DefaultQuotaBytes != nil {
+			if err := h.service.SetDefaultQuotaBytes(r.Context(), *req.DefaultQuotaBytes); err != nil {
+				httpx.Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:

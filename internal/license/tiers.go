@@ -1,12 +1,12 @@
 package license
 
-// Seat tiers and list prices (kurus = TL * 100).
+// Seat tiers — TR Driver is free for all seats (no paid packaging).
 const (
-	TierPersonal   = "personal"   // 1 user — ücretsiz bireysel
-	TierSmall      = "small"      // 2–20
-	TierMedium     = "medium"     // 21–100
-	TierUnlimited  = "unlimited"  // 1000+ sınırsız
-	TierUnlicensed = "unlicensed" // default free: 1 seat
+	TierPersonal   = "personal"
+	TierSmall      = "small"
+	TierMedium     = "medium"
+	TierUnlimited  = "unlimited"
+	TierUnlicensed = "unlicensed" // default: unlimited free seats
 )
 
 type TierInfo struct {
@@ -21,10 +21,10 @@ type TierInfo struct {
 
 func Catalog() []TierInfo {
 	return []TierInfo{
-		{Code: TierPersonal, Name: "1 Kullanıcı (Bireysel)", MaxUsers: 1, PriceTLYear: 0, PriceKurus: 0, Free: true, Description: "Tek kullanıcı — ücretsiz bireysel kullanım"},
-		{Code: TierSmall, Name: "2–20 Kullanıcı", MaxUsers: 20, PriceTLYear: 499, PriceKurus: 49900, Description: "Küçük ekip"},
-		{Code: TierMedium, Name: "21–100 Kullanıcı", MaxUsers: 100, PriceTLYear: 1499, PriceKurus: 149900, Description: "Orta ölçek"},
-		{Code: TierUnlimited, Name: "1000+ Sınırsız", MaxUsers: 0, PriceTLYear: 2999, PriceKurus: 299900, Description: "Kurumsal / sınırsız kullanıcı"},
+		{Code: TierPersonal, Name: "Bireysel", MaxUsers: 0, PriceTLYear: 0, PriceKurus: 0, Free: true, Description: "Tamamen ücretsiz"},
+		{Code: TierSmall, Name: "Ekip", MaxUsers: 0, PriceTLYear: 0, PriceKurus: 0, Free: true, Description: "Tamamen ücretsiz — kullanıcı limiti yok"},
+		{Code: TierMedium, Name: "Kurum", MaxUsers: 0, PriceTLYear: 0, PriceKurus: 0, Free: true, Description: "Tamamen ücretsiz — kullanıcı limiti yok"},
+		{Code: TierUnlimited, Name: "Sınırsız", MaxUsers: 0, PriceTLYear: 0, PriceKurus: 0, Free: true, Description: "Tamamen ücretsiz"},
 	}
 }
 
@@ -37,5 +37,5 @@ func MaxUsersForTier(code string) (int, bool) {
 	return 0, false
 }
 
-// UnlicensedMaxUsers: ücretsiz bireysel — yalnızca 1 kullanıcı.
-const UnlicensedMaxUsers = 1
+// UnlicensedMaxUsers: 0 = unlimited free seats (no license purchase required).
+const UnlicensedMaxUsers = 0

@@ -45,7 +45,7 @@ SHARE_PASSWORD_SALT=...
 DATA_DIR=/var/lib/trdriver/files
 PUBLIC_BASE_URL=https://drive.ornek.com
 ALLOW_REGISTRATION=true
-LICENSE_PUBLIC_KEY=...
+FREE_QUOTA_BYTES=0
 ```
 
 ```bash
@@ -107,8 +107,6 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\mount-drive.ps1 -Serv
 
 Sunucu yolu: `/dav`. Tray sync ikincildir.
 
-## Lisans
+## Kota
 
-Aynı akış: Admin → talep kodu (TRDR1) → satıcı yanıtı (TRD1) → etkinleştir.  
-Müşteri sunucusunda yalnızca `LICENSE_PUBLIC_KEY`.  
-Detay: [`LICENSE_SALES.md`](LICENSE_SALES.md)
+Varsayılan kota `DATA_DIR` disk kapasitesine göre ayarlanır (`FREE_QUOTA_BYTES=0`). Admin panelinden varsayılan ve kullanıcı kotası değiştirilebilir.

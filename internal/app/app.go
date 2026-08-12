@@ -26,6 +26,9 @@ import (
 )
 
 func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
+	cfg.FreeQuotaBytes = storage.ResolveDefaultQuota(cfg.DataDir, cfg.FreeQuotaBytes)
+	log.Printf("default quota: %s (%d bytes) for DATA_DIR=%s", storage.FormatQuotaHint(cfg.FreeQuotaBytes), cfg.FreeQuotaBytes, cfg.DataDir)
+
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, nil, err
@@ -44,7 +47,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	accessSvc := access.New(db)
 	licenseService := license.NewService(db, cfg.AllowRegistration, cfg.LicenseVendorMode)
 	authService := auth.NewService(db, cfg, licenseService)
-	adminService := admin.NewService(db)
+	adminService := admin.NewService(db, cfg.DataDir, cfg.FreeQuotaBytes)
 	mailService := mailer.New(db)
 	authService.SetMailer(mailService)
 	fileService := files.NewService(db, fileStorage, cfg, accessSvc)

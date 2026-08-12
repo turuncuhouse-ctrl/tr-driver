@@ -1,4 +1,4 @@
-# GitHub’a ilk push (tr-driver)
+# GitHub’a push (tr-driver)
 
 Bu makinede `git` / `gh` PATH’te yoksa önce kurun.
 
@@ -17,7 +17,7 @@ gh auth login
 cd C:\Users\necip\Documents\necipdrive
 git init
 git add .
-git commit -m "Initial public release: TR Driver self-host cloud with seat licenses"
+git commit -m "Initial public release: TR Driver free self-hosted cloud"
 gh repo create tr-driver --public --source=. --remote=origin --push
 ```
 
@@ -32,7 +32,6 @@ git push -u origin main
 ## 3) Push öncesi kontrol
 
 - `.env` ve gerçek secret yok (`.gitignore` içinde `.env`)
-- `LICENSE_PRIVATE_KEY` asla commit edilmesin
 - `data/`, `web/node_modules/` ignore
 
 ## 4) VPS’i Git’e bağlama

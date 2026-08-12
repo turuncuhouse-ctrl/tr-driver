@@ -41,7 +41,8 @@ func Load() (Config, error) {
 		SessionSecret:       getEnv("SESSION_SECRET", ""),
 		DataDir:             getEnv("DATA_DIR", "./data"),
 		PublicBaseURL:       strings.TrimRight(getEnv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
-		FreeQuotaBytes:      getEnvInt64("FREE_QUOTA_BYTES", 5*1024*1024*1024),
+		// 0 / unset / "auto" → resolve from DATA_DIR disk capacity at startup
+		FreeQuotaBytes:      getEnvQuotaBytes("FREE_QUOTA_BYTES"),
 		MaxUploadBytes:      getEnvInt64("MAX_UPLOAD_BYTES", 10*1024*1024*1024),
 		MaxUploadBatchBytes: getEnvInt64("MAX_UPLOAD_BATCH_BYTES", 10*1024*1024*1024),
 		UploadChunkBytes:    getEnvInt64("UPLOAD_CHUNK_BYTES", 8*1024*1024),
@@ -118,6 +119,19 @@ func getEnvInt64(key string, fallback int64) int64 {
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return fallback
+	}
+	return parsed
+}
+
+// getEnvQuotaBytes: empty, "0", or "auto" means derive from DATA_DIR disk size.
+func getEnvQuotaBytes(key string) int64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" || strings.EqualFold(value, "auto") {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0
 	}
 	return parsed
 }

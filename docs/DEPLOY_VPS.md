@@ -39,7 +39,7 @@ SESSION_SECRET=<yeni-uzun-secret>
 SHARE_PASSWORD_SALT=<yeni-uzun-tuz>
 PUBLIC_BASE_URL=https://drive.neciparmagan.net.tr
 ALLOW_REGISTRATION=true
-LICENSE_PUBLIC_KEY=<ürettiğiniz-public-b64>
+FREE_QUOTA_BYTES=0
 UPDATE_MANIFEST_URL=   # sonra GitHub raw/release URL
 ```
 
@@ -62,11 +62,11 @@ curl -s https://drive.neciparmagan.net.tr/healthz
 curl -s https://drive.neciparmagan.net.tr/api/license
 ```
 
-Admin panel → Lisans: test anahtarı etkinleştir.
+Admin panel → Varsayılan kota / disk kapasitesi; kullanıcı kotası.
 
 ### 5) Sertleştirme (kullanıma açınca)
 
-- İlk admin kaydından sonra `ALLOW_REGISTRATION=false` (veya koltuk dolunca)
+- İlk admin kaydından sonra `ALLOW_REGISTRATION=false` (isteğe bağlı)
 - HTTPS (NPM Let’s Encrypt) açık kalsın
 - Eski commit’te sızmış secret’lar hâlâ kullanılıyorsa **mutlaka rotate**
 

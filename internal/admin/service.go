@@ -7,17 +7,19 @@ import (
 	"strconv"
 	"time"
 
+	"necipdrive/internal/storage"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Summary struct {
-	UserCount       int64 `json:"userCount"`
-	AdminCount      int64 `json:"adminCount"`
-	FileCount       int64 `json:"fileCount"`
-	ShareCount      int64 `json:"shareCount"`
-	UsedBytes       int64 `json:"usedBytes"`
-	AssignedBytes   int64 `json:"assignedBytes"`
+	UserCount     int64 `json:"userCount"`
+	AdminCount    int64 `json:"adminCount"`
+	FileCount     int64 `json:"fileCount"`
+	ShareCount    int64 `json:"shareCount"`
+	UsedBytes     int64 `json:"usedBytes"`
+	AssignedBytes int64 `json:"assignedBytes"`
 }
 
 type User struct {
@@ -35,20 +37,31 @@ type User struct {
 }
 
 type Service struct {
-	db *pgxpool.Pool
+	db            *pgxpool.Pool
+	dataDir       string
+	fallbackQuota int64
 }
 
-func NewService(db *pgxpool.Pool) *Service {
-	return &Service{db: db}
+func NewService(db *pgxpool.Pool, dataDir string, fallbackQuota int64) *Service {
+	return &Service{db: db, dataDir: dataDir, fallbackQuota: fallbackQuota}
 }
 
 type Settings struct {
-	MaxUploadBatchBytes int64 `json:"maxUploadBatchBytes"`
-	UploadChunkBytes    int64 `json:"uploadChunkBytes"`
+	MaxUploadBatchBytes int64  `json:"maxUploadBatchBytes"`
+	UploadChunkBytes    int64  `json:"uploadChunkBytes"`
+	DefaultQuotaBytes   int64  `json:"defaultQuotaBytes"`
+	DiskTotalBytes      int64  `json:"diskTotalBytes"`
+	DiskFreeBytes       int64  `json:"diskFreeBytes"`
+	DiskPath            string `json:"diskPath"`
 }
 
 func (s *Service) Settings(ctx context.Context, defaultBatch, chunkBytes int64) (Settings, error) {
-	settings := Settings{MaxUploadBatchBytes: defaultBatch, UploadChunkBytes: chunkBytes}
+	settings := Settings{
+		MaxUploadBatchBytes: defaultBatch,
+		UploadChunkBytes:    chunkBytes,
+		DefaultQuotaBytes:   s.fallbackQuota,
+		DiskPath:            s.dataDir,
+	}
 	var raw string
 	err := s.db.QueryRow(ctx, `select value from app_settings where key = 'max_upload_batch_bytes'`).Scan(&raw)
 	if err == nil {
@@ -57,6 +70,19 @@ func (s *Service) Settings(ctx context.Context, defaultBatch, chunkBytes int64) 
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return Settings{}, err
+	}
+	raw = ""
+	err = s.db.QueryRow(ctx, `select value from app_settings where key = 'default_quota_bytes'`).Scan(&raw)
+	if err == nil {
+		if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && parsed >= 0 {
+			settings.DefaultQuotaBytes = parsed
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Settings{}, err
+	}
+	if total, free, diskErr := storage.DiskSpace(s.dataDir); diskErr == nil {
+		settings.DiskTotalBytes = total
+		settings.DiskFreeBytes = free
 	}
 	return settings, nil
 }
@@ -76,6 +102,40 @@ func (s *Service) SetMaxUploadBatchBytes(ctx context.Context, bytes int64) error
 	return err
 }
 
+func (s *Service) SetDefaultQuotaBytes(ctx context.Context, bytes int64) error {
+	if bytes < 0 || bytes > 100*1024*1024*1024*1024 { // 100 TiB ceiling
+		return errors.New("invalid default quota")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		insert into app_settings (key, value, updated_at)
+		values ('default_quota_bytes', $1, now())
+		on conflict (key) do update set value = excluded.value, updated_at = now()`,
+		strconv.FormatInt(bytes, 10),
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `update plans set quota_bytes = $1 where code = 'free'`, bytes); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Service) MatchDefaultQuotaToDisk(ctx context.Context) (int64, error) {
+	total, _, err := storage.DiskSpace(s.dataDir)
+	if err != nil || total <= 0 {
+		return 0, fmt.Errorf("disk capacity unavailable: %w", err)
+	}
+	if err := s.SetDefaultQuotaBytes(ctx, total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 func (s *Service) Summary(ctx context.Context) (Summary, error) {
 	var result Summary
 	err := s.db.QueryRow(ctx, `
@@ -85,7 +145,7 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 			(select count(*) from file_entries where kind = 'file' and deleted_at is null),
 			(select count(*) from share_links),
 			coalesce((select sum(used_bytes) from users), 0),
-			coalesce((select sum(quota_bytes) from users), 0)`,
+			coalesce((select sum(quota_bytes + coalesce(bonus_quota_bytes,0)) from users), 0)`,
 	).Scan(
 		&result.UserCount,
 		&result.AdminCount,
@@ -151,7 +211,7 @@ func (s *Service) SetPlan(ctx context.Context, userID, planCode string) error {
 }
 
 func (s *Service) SetQuota(ctx context.Context, userID string, quotaBytes int64) error {
-	if quotaBytes < 0 || quotaBytes > 10*1024*1024*1024*1024*1024 {
+	if quotaBytes < 0 || quotaBytes > 100*1024*1024*1024*1024 {
 		return errors.New("invalid quota")
 	}
 	result, err := s.db.Exec(ctx, `
@@ -170,7 +230,7 @@ func (s *Service) SetQuota(ctx context.Context, userID string, quotaBytes int64)
 }
 
 func (s *Service) SetBonusQuota(ctx context.Context, userID string, bonusBytes int64) error {
-	if bonusBytes < 0 || bonusBytes > 10*1024*1024*1024*1024*1024 {
+	if bonusBytes < 0 || bonusBytes > 100*1024*1024*1024*1024 {
 		return errors.New("invalid bonus quota")
 	}
 	result, err := s.db.Exec(ctx, `

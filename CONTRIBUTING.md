@@ -17,10 +17,6 @@ Teşekkürler — amaç Google Drive ücretsiz alternatifini büyütmek.
 - Secret / gerçek parola commit etmeyin
 - UI metinlerinde ürün adı **TR Driver**
 
-## Lisans anahtarları
-
-Satış anahtarları üretmek için `cmd/trdriver-licensegen` kullanın. Varsayılan RFC test anahtarıyla imzalanmış anahtarları **satmayın**; kendi `LICENSE_PRIVATE_KEY` / `LICENSE_PUBLIC_KEY` çiftinizi oluşturun.
-
 ## Sorun bildirimi
 
 - Repro adımları, beklenen / görülen

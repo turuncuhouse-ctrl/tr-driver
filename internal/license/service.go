@@ -97,34 +97,19 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 		return nil, err
 	}
 
-	if st.MaxUsers == 0 {
-		st.SeatsRemaining = -1
-	} else {
-		left := st.MaxUsers - userCount
-		if left < 0 {
-			left = 0
-		}
-		st.SeatsRemaining = left
+	// Free edition: ignore paid seat caps; always report unlimited.
+	st.MaxUsers = 0
+	st.SeatsRemaining = -1
+	if st.Tier == TierUnlicensed {
+		st.Tier = "free"
 	}
-	st.CanRegisterPublic = s.allowRegistration && s.seatsAvailable(st)
+	st.CanRegisterPublic = s.allowRegistration
 	return st, nil
 }
 
-func (s *Service) seatsAvailable(st *Status) bool {
-	if st.MaxUsers == 0 {
-		return true
-	}
-	return st.UserCount < st.MaxUsers
-}
-
 func (s *Service) EnsureCanAddUser(ctx context.Context) error {
-	st, err := s.Status(ctx)
-	if err != nil {
-		return err
-	}
-	if !s.seatsAvailable(st) {
-		return errors.New("user seat limit reached; activate a higher TR Driver license")
-	}
+	// Free edition: no paid seat limits.
+	_ = ctx
 	return nil
 }
 
@@ -136,7 +121,7 @@ func (s *Service) RegistrationAllowed(ctx context.Context) error {
 			return errors.New("public registration is disabled")
 		}
 	}
-	return s.EnsureCanAddUser(ctx)
+	return nil
 }
 
 func (s *Service) CreateRequest(ctx context.Context, tier string) (string, *RequestPayload, error) {

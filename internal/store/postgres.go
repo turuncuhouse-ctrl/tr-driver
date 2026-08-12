@@ -294,16 +294,42 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 	seed := `insert into plans (code, name, quota_bytes, price_cents, billing_term, active)
 		values
 		('free', 'Free', $1, 0, 'monthly', true),
-		('pro', 'Pro', 50000000000, 49900, 'monthly', true),
-		('team', 'Team', 200000000000, 149900, 'monthly', true)
+		('pro', 'Pro', $1, 0, 'monthly', false),
+		('team', 'Team', $1, 0, 'monthly', false)
 		on conflict (code) do update
 		set name = excluded.name,
-			quota_bytes = excluded.quota_bytes,
-			price_cents = excluded.price_cents,
+			price_cents = 0,
 			billing_term = excluded.billing_term,
 			active = excluded.active`
 	if _, err := db.Exec(ctx, seed, freeQuotaBytes); err != nil {
 		return fmt.Errorf("seed plans: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+		update plans set price_cents = 0,
+			active = case when code = 'free' then true else false end`); err != nil {
+		return fmt.Errorf("free plans migration: %w", err)
+	}
+	// Default quota for new users: set once from disk/env; admin can override later.
+	if _, err := db.Exec(ctx, `
+		insert into app_settings (key, value, updated_at)
+		values ('default_quota_bytes', $1, now())
+		on conflict (key) do nothing`,
+		fmt.Sprintf("%d", freeQuotaBytes),
+	); err != nil {
+		return fmt.Errorf("seed default quota: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+		update plans p
+		set quota_bytes = s.value::bigint
+		from app_settings s
+		where p.code = 'free' and s.key = 'default_quota_bytes'`); err != nil {
+		return fmt.Errorf("sync free plan quota: %w", err)
+	}
+	// Existing paid-plan users → free plan code only (keep their current quota_bytes).
+	if _, err := db.Exec(ctx, `
+		update users set plan_code = 'free'
+		where plan_code is distinct from 'free'`); err != nil {
+		return fmt.Errorf("free user plan codes: %w", err)
 	}
 	if _, err := db.Exec(ctx, `
 		insert into app_settings (key, value)

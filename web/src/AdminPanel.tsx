@@ -34,6 +34,10 @@ type Summary = {
 type Settings = {
   maxUploadBatchBytes: number;
   uploadChunkBytes: number;
+  defaultQuotaBytes?: number;
+  diskTotalBytes?: number;
+  diskFreeBytes?: number;
+  diskPath?: string;
 };
 
 type MailSettings = {
@@ -82,10 +86,10 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   const [testingMail, setTestingMail] = useState(false);
   const [mailNote, setMailNote] = useState("");
   const [batchLimitGB, setBatchLimitGB] = useState("10");
+  const [defaultQuotaGB, setDefaultQuotaGB] = useState("5");
   const [search, setSearch] = useState("");
   const [busyUser, setBusyUser] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [licenseKey, setLicenseKey] = useState("");
   const [license, setLicense] = useState<{
     tier: string;
     maxUsers: number;
@@ -93,20 +97,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     seatsRemaining: number;
     customer?: string;
     instanceId?: string;
-    usingDefaultKey?: boolean;
-    vendorMode?: boolean;
-    canIssueLicenses?: boolean;
-    catalog?: { code: string; name: string; maxUsers: number; priceTlYear: number; description: string }[];
   } | null>(null);
-  const [activating, setActivating] = useState(false);
-  const [requestTier, setRequestTier] = useState("small");
-  const [requestCode, setRequestCode] = useState("");
-  const [creatingRequest, setCreatingRequest] = useState(false);
-  const [vendorRequest, setVendorRequest] = useState("");
-  const [vendorTier, setVendorTier] = useState("");
-  const [vendorCustomer, setVendorCustomer] = useState("");
-  const [issuedKey, setIssuedKey] = useState("");
-  const [issuing, setIssuing] = useState(false);
 
   const visibleUsers = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("tr-TR");
@@ -134,6 +125,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
       setLicense(nextLicense);
       if (nextMail) setMail({ ...nextMail, password: nextMail.password || "" });
       setBatchLimitGB((nextSettings.maxUploadBatchBytes / 1024 ** 3).toFixed(1));
+      setDefaultQuotaGB(((nextSettings.defaultQuotaBytes || 0) / 1024 ** 3).toFixed(1));
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "Admin bilgileri yüklenemedi");
     } finally {
@@ -223,71 +215,6 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     }
   }
 
-  async function createLicenseRequest() {
-    setCreatingRequest(true);
-    try {
-      const res = await request<{ requestCode: string }>("/api/admin/license", {
-        method: "POST",
-        body: JSON.stringify({ action: "request", tier: requestTier })
-      });
-      setRequestCode(res.requestCode);
-      onMessage("Talep kodu oluşturuldu — satıcıya gönderin.");
-    } catch (error) {
-      onMessage(error instanceof Error ? error.message : "Talep oluşturulamadı");
-    } finally {
-      setCreatingRequest(false);
-    }
-  }
-
-  async function issueFromRequest() {
-    const code = vendorRequest.trim();
-    if (!code) {
-      onMessage("Müşteri talep kodunu girin.");
-      return;
-    }
-    setIssuing(true);
-    try {
-      const res = await request<{ licenseKey: string }>("/api/admin/license", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "issue",
-          requestCode: code,
-          tier: vendorTier || undefined,
-          years: 1,
-          customer: vendorCustomer
-        })
-      });
-      setIssuedKey(res.licenseKey);
-      onMessage("Yanıt lisansı üretildi — müşteriye iletin.");
-    } catch (error) {
-      onMessage(error instanceof Error ? error.message : "Lisans üretilemedi");
-    } finally {
-      setIssuing(false);
-    }
-  }
-
-  async function activateLicense() {
-    const key = licenseKey.trim();
-    if (!key) {
-      onMessage("Lisans anahtarı girin.");
-      return;
-    }
-    setActivating(true);
-    try {
-      const next = await request<NonNullable<typeof license>>("/api/admin/license", {
-        method: "POST",
-        body: JSON.stringify({ action: "activate", key })
-      });
-      setLicense(next);
-      setLicenseKey("");
-      onMessage("Lisans etkinleştirildi.");
-    } catch (error) {
-      onMessage(error instanceof Error ? error.message : "Lisans etkinleştirilemedi");
-    } finally {
-      setActivating(false);
-    }
-  }
-
   async function saveBatchLimit() {
     const gigabytes = Number(batchLimitGB.replace(",", "."));
     if (!Number.isFinite(gigabytes) || gigabytes <= 0) {
@@ -310,6 +237,43 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     }
   }
 
+  async function saveDefaultQuota() {
+    const gigabytes = Number(defaultQuotaGB.replace(",", "."));
+    if (!Number.isFinite(gigabytes) || gigabytes < 0) {
+      onMessage("Varsayılan kota sıfır veya pozitif olmalı.");
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      await request("/api/admin/settings", {
+        method: "POST",
+        body: JSON.stringify({ defaultQuotaBytes: Math.round(gigabytes * 1024 ** 3) })
+      });
+      await load();
+      onMessage("Varsayılan kota güncellendi (yeni kullanıcılar için).");
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : "Varsayılan kota kaydedilemedi");
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
+  async function matchDefaultQuotaToDisk() {
+    setSavingSettings(true);
+    try {
+      await request("/api/admin/settings", {
+        method: "POST",
+        body: JSON.stringify({ matchDiskCapacity: true })
+      });
+      await load();
+      onMessage("Varsayılan kota disk kapasitesine ayarlandı.");
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : "Disk kotası ayarlanamadı");
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
   if (loading && !summary) {
     return <section className="admin-loading"><div className="spinner" /><p>Yönetim paneli hazırlanıyor…</p></section>;
   }
@@ -327,109 +291,54 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
       <section className="admin-settings">
         <div>
           <h2>Lisans</h2>
+          <p className="notice">
+            TR Driver <strong>tamamen ücretsiz</strong>dir. Kullanıcı limiti veya lisans satın alma yoktur;
+            depolama kotasını varsayılan ayardan veya kullanıcı bazında yönetebilirsiniz.
+          </p>
           <p>
-            Aktif: <strong>{license?.tier ?? "unlicensed"}</strong>
+            Kurulum: <strong>free</strong>
             {" · "}
-            Kullanıcı {license?.userCount ?? 0}
-            /
-            {license?.maxUsers === 0 ? "∞" : (license?.maxUsers ?? 1)}
-            {license?.customer ? ` · ${license.customer}` : ""}
+            Kullanıcı {license?.userCount ?? 0} / ∞
           </p>
           {license?.instanceId && (
             <p><small>Kurulum kimliği: <code>{license.instanceId}</code></small></p>
           )}
-          {license?.usingDefaultKey && (
-            <p className="notice error">Varsayılan geliştirme imza anahtarı kullanılıyor — satış için kendi anahtarlarınızı kullanın.</p>
-          )}
-          {!!license?.catalog?.length && (
-            <ul>
-              {license.catalog.map((t) => (
-                <li key={t.code}>{t.name}: {t.priceTlYear} TL / yıl ({t.maxUsers === 0 ? "sınırsız" : `${t.maxUsers} kullanıcı`})</li>
-              ))}
-            </ul>
-          )}
-          <p><strong>1)</strong> Paket seç → talep kodu üret → satıcıya gönder.</p>
-          <p><strong>2)</strong> Satıcının verdiği <code>TRD1...</code> yanıtını aşağıya yapıştır → etkinleştir.</p>
-        </div>
-        <div className="admin-settings-form">
-          <label>
-            Talep paketi
-            <select value={requestTier} onChange={(e) => setRequestTier(e.target.value)}>
-              {(license?.catalog || [
-                { code: "personal", name: "1 Kullanıcı" },
-                { code: "small", name: "2–20" },
-                { code: "medium", name: "21–100" },
-                { code: "unlimited", name: "1000+" }
-              ]).map((t) => (
-                <option key={t.code} value={t.code}>{t.name}</option>
-              ))}
-            </select>
-          </label>
-          <button type="button" disabled={creatingRequest} onClick={() => void createLicenseRequest()}>
-            {creatingRequest ? "Üretiliyor…" : "Talep kodu üret"}
-          </button>
-          {requestCode && (
-            <label>
-              Satıcıya gönderilecek talep kodu
-              <textarea readOnly rows={4} value={requestCode} onFocus={(e) => e.currentTarget.select()} />
-            </label>
-          )}
-          <label>
-            Satıcıdan gelen lisans anahtarı
-            <input value={licenseKey} onChange={(e) => setLicenseKey(e.target.value)} placeholder="TRD1...." />
-          </label>
-          <button type="button" disabled={activating} onClick={() => void activateLicense()}>
-            {activating ? "Etkinleştiriliyor…" : "Lisansı etkinleştir"}
-          </button>
         </div>
       </section>
-
-      {license?.vendorMode && (
-        <section className="admin-settings">
-          <div>
-            <h2>Satıcı: yanıt lisansı üret</h2>
-            <p>LICENSE_VENDOR_MODE açık. Müşterinin <code>TRDR1...</code> talebini yapıştırın; instance’a bağlı <code>TRD1...</code> üretin.</p>
-            {!license.canIssueLicenses && (
-              <p className="notice error">LICENSE_PRIVATE_KEY tanımlı değil — bu sunucuda imza atılamaz.</p>
-            )}
-          </div>
-          <div className="admin-settings-form">
-            <label>
-              Müşteri talep kodu
-              <textarea rows={4} value={vendorRequest} onChange={(e) => setVendorRequest(e.target.value)} placeholder="TRDR1...." />
-            </label>
-            <label>
-              Paket (boş = talepteki)
-              <select value={vendorTier} onChange={(e) => setVendorTier(e.target.value)}>
-                <option value="">Talepteki paket</option>
-                {(license.catalog || []).map((t) => (
-                  <option key={t.code} value={t.code}>{t.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Müşteri adı
-              <input value={vendorCustomer} onChange={(e) => setVendorCustomer(e.target.value)} />
-            </label>
-            <button type="button" disabled={issuing || !license.canIssueLicenses} onClick={() => void issueFromRequest()}>
-              {issuing ? "Üretiliyor…" : "Yanıt lisansı üret"}
-            </button>
-            {issuedKey && (
-              <label>
-                Müşteriye gönder
-                <textarea readOnly rows={3} value={issuedKey} onFocus={(e) => e.currentTarget.select()} />
-              </label>
-            )}
-          </div>
-        </section>
-      )}
 
       <div className="stats-grid">
         <article><span>Toplam kullanıcı</span><strong>{summary?.userCount ?? 0}</strong><small>{summary?.adminCount ?? 0} yönetici</small></article>
         <article><span>Toplam kullanım</span><strong>{formatBytes(summary?.usedBytes ?? 0)}</strong><small>{formatBytes(summary?.assignedBytes ?? 0)} atanmış</small></article>
-        <article><span>Aktif dosya</span><strong>{summary?.fileCount ?? 0}</strong><small>Silinmemiş dosyalar</small></article>
-        <article><span>Paylaşım linki</span><strong>{summary?.shareCount ?? 0}</strong><small>Oluşturulan bağlantılar</small></article>
+        <article><span>Disk (DATA_DIR)</span><strong>{formatBytes(settings?.diskFreeBytes || 0)}</strong><small>{formatBytes(settings?.diskTotalBytes || 0)} toplam · boş</small></article>
+        <article><span>Aktif dosya</span><strong>{summary?.fileCount ?? 0}</strong><small>{summary?.shareCount ?? 0} paylaşım</small></article>
       </div>
+
+      <section className="admin-settings">
+        <div>
+          <h2>Varsayılan kota</h2>
+          <p>
+            Yeni üyelere verilen depolama. İlk kurulumda <code>DATA_DIR</code> disk kapasitesine göre ayarlanır;
+            buradan istediğiniz GB değerine çekebilirsiniz. Kullanıcı bazında kota/bonus listeden ayrı ayarlanır.
+          </p>
+          {settings?.diskPath && (
+            <p><small>Depolama yolu: <code>{settings.diskPath}</code></small></p>
+          )}
+        </div>
+        <div className="admin-settings-form">
+          <label>
+            Varsayılan kota (GB)
+            <input value={defaultQuotaGB} onChange={(event) => setDefaultQuotaGB(event.target.value)} />
+          </label>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <button disabled={savingSettings} onClick={() => void saveDefaultQuota()}>
+              {savingSettings ? "Kaydediliyor…" : "Kaydet"}
+            </button>
+            <button type="button" disabled={savingSettings || !settings?.diskTotalBytes} onClick={() => void matchDefaultQuotaToDisk()}>
+              Disk kapasitesine eşle ({formatBytes(settings?.diskTotalBytes || 0)})
+            </button>
+          </div>
+        </div>
+      </section>
 
       <section className="admin-settings">
         <div>

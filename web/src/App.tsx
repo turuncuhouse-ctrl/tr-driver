@@ -56,23 +56,6 @@ type Plan = {
   billingTerm: string;
 };
 
-type LicenseTier = {
-  code: string;
-  name: string;
-  maxUsers: number;
-  priceTlYear: number;
-  description?: string;
-  free?: boolean;
-};
-
-type LicensePublic = {
-  tier: string;
-  maxUsers: number;
-  userCount: number;
-  seatsRemaining: number;
-  catalog: LicenseTier[];
-};
-
 type Crumb = { id: string | null; name: string };
 type LayoutMode = "list" | "grid";
 type ThemeMode = "light" | "dark";
@@ -158,8 +141,7 @@ export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [licenseInfo, setLicenseInfo] = useState<LicensePublic | null>(null);
-  const [view, setView] = useState<"files" | "admin" | "packages" | string>("files");
+  const [view, setView] = useState<"files" | "admin" | string>("files");
   const [layout, setLayout] = useState<LayoutMode>(readStoredLayout);
   const [theme, setTheme] = useState<ThemeMode>(readStoredTheme);
   const [crumbs, setCrumbs] = useState<Crumb[]>([{ id: null, name: "Dosyalarım" }]);
@@ -661,13 +643,6 @@ export function App() {
     void loadFiles(next[next.length - 1].id);
   }
 
-  function showPlans() {
-    setView("packages");
-    void request<LicensePublic>("/api/license")
-      .then(setLicenseInfo)
-      .catch(() => setLicenseInfo(null));
-  }
-
   function toggleTheme() {
     setTheme((current) => (current === "light" ? "dark" : "light"));
   }
@@ -898,7 +873,6 @@ export function App() {
           unread={unread}
         />
         <nav>
-          <button className={`nav-item ${view === "packages" ? "active" : ""}`} onClick={showPlans}>◇ Paketler</button>
           {user.role === "admin" && (
             <button className={`nav-item ${view === "admin" ? "active" : ""}`} onClick={() => setView("admin")}>⚙ Yönetim</button>
           )}
@@ -946,39 +920,6 @@ export function App() {
             onMessage={setMessage}
             onCurrentUserChanged={refreshUser}
           />
-        ) : view === "packages" ? (
-          <section className="plans packages-view">
-            <div>
-              <h2>Koltuk paketleri</h2>
-              <p>Kullanıcı sayısı lisansları. Depolama kotası yöneticiniz tarafından ayarlanır.</p>
-            </div>
-            {licenseInfo && (
-              <div className="license-status notice">
-                Aktif lisans: <strong>{licenseInfo.tier}</strong>
-                {" · "}
-                Kullanıcı {licenseInfo.userCount}/{licenseInfo.maxUsers === 0 ? "∞" : licenseInfo.maxUsers}
-                {" · "}
-                Kalan koltuk: {licenseInfo.maxUsers === 0 ? "∞" : licenseInfo.seatsRemaining}
-              </div>
-            )}
-            <div className="plan-grid">
-              {(licenseInfo?.catalog || []).map((tier) => (
-                <article className={`plan-card ${tier.code === licenseInfo?.tier ? "current" : ""}`} key={tier.code}>
-                  <div>
-                    <strong>{tier.name}</strong>
-                    {tier.code === licenseInfo?.tier && <span>Aktif</span>}
-                  </div>
-                  <h3>{tier.maxUsers === 0 ? "Sınırsız" : `${tier.maxUsers} kullanıcı`}</h3>
-                  <p>{tier.free || tier.priceTlYear === 0 ? "Ücretsiz bireysel" : `${tier.priceTlYear} ₺ / yıl`}</p>
-                  <small>{tier.description || ""}</small>
-                </article>
-              ))}
-              {!licenseInfo?.catalog?.length && (
-                <div className="empty-state"><p>Lisans kataloğu yüklenemedi.</p></div>
-              )}
-            </div>
-            <p className="muted-note">Satın alma: Yönetici panelinden talep kodu (TRDR1) üretip satıcıya iletin; gelen TRD1 yanıtını etkinleştirin.</p>
-          </section>
         ) : view === "drives" ? (
           <DrivesPanel request={request} onOpenFolder={openDriveRoot} />
         ) : view === "trash" ? (

@@ -100,6 +100,7 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 		}
 	}
 
+	quotaBytes := s.defaultQuotaBytes(ctx)
 	var user domain.User
 	err = tx.QueryRow(ctx, `
 		insert into users (email, password_hash, display_name, role, plan_code, quota_bytes)
@@ -109,7 +110,7 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 			'free', $4
 		)
 		returning id::text, email, display_name, role, plan_code, quota_bytes, used_bytes, reserved_bytes, created_at, last_login_at`,
-		email, passwordHash, displayName, s.cfg.FreeQuotaBytes,
+		email, passwordHash, displayName, quotaBytes,
 	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.QuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.CreatedAt, &user.LastLoginAt)
 	if err != nil {
 		return nil, "", err
@@ -159,6 +160,20 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 	}
 
 	return &user, sessionToken, nil
+}
+
+func (s *Service) defaultQuotaBytes(ctx context.Context) int64 {
+	var raw string
+	err := s.db.QueryRow(ctx, `select value from app_settings where key = 'default_quota_bytes'`).Scan(&raw)
+	if err == nil {
+		if n, parseErr := strconv.ParseInt(strings.TrimSpace(raw), 10, 64); parseErr == nil && n >= 0 {
+			return n
+		}
+	}
+	if s.cfg.FreeQuotaBytes > 0 {
+		return s.cfg.FreeQuotaBytes
+	}
+	return 5 * 1024 * 1024 * 1024
 }
 
 func (s *Service) Login(ctx context.Context, remoteAddr, email, password string) (*LoginResult, error) {
