@@ -13,6 +13,7 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -39,6 +40,11 @@
         <activity
             android:name=".MediaPreviewActivity"
             android:exported="false"
+            android:theme="@style/Theme.TRDriver" />
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.TRDriver" />
         <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"

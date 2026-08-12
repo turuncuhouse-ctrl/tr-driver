@@ -10,7 +10,6 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import coil.imageLoader
 import coil.request.ImageRequest
 import net.neciparmagan.trdriver.data.SessionStore
@@ -69,17 +68,11 @@ class MediaPreviewActivity : AppCompatActivity() {
                 video.requestFocus()
             }
             mime.startsWith("audio/") -> {
-                audioHint.visibility = View.VISIBLE
-                audioHint.text = "Müzik çalınıyor…\nEkran kapalıyken devam için bildirim kullanılır."
-                val service = Intent(this, MusicService::class.java).apply {
-                    action = MusicService.ACTION_PLAY
-                    putExtra(MusicService.EXTRA_URL, url)
-                    putExtra(MusicService.EXTRA_TITLE, name)
-                    putExtra(MusicService.EXTRA_TOKEN, session.token)
-                }
-                ContextCompat.startForegroundService(this, service)
+                // Full player with lock-screen controls
+                PlayerActivity.start(this, name, url, token)
+                finish()
             }
-            else -> Toast.makeText(this, "Bu tür önizlenemiyor", Toast.LENGTH_SHORT).show()
+            else -> Toast.makeText(this, "Bu tür önizlenemiyor — indirip açmayı deneyin", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -114,6 +107,16 @@ class MediaPreviewActivity : AppCompatActivity() {
                 "m4a", "aac" -> "audio/mp4"
                 "wav" -> "audio/wav"
                 "ogg", "oga" -> "audio/ogg"
+                "flac" -> "audio/flac"
+                "pdf" -> "application/pdf"
+                "doc" -> "application/msword"
+                "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                "xls" -> "application/vnd.ms-excel"
+                "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                "ppt" -> "application/vnd.ms-powerpoint"
+                "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                "txt" -> "text/plain"
+                "zip" -> "application/zip"
                 else -> "application/octet-stream"
             }
         }

@@ -199,6 +199,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(busy = true, message = null) }
             try {
                 val files = api.listFiles(parent)
+                    .sortedWith(compareBy({ it.kind != "folder" }, { it.name.lowercase() }))
                 _state.update { it.copy(busy = false, files = files) }
             } catch (e: Exception) {
                 _state.update { it.copy(busy = false, message = e.message ?: "Liste alınamadı") }

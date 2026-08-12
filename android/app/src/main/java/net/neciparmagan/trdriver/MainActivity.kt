@@ -1,6 +1,7 @@
 package net.neciparmagan.trdriver
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -316,6 +317,7 @@ class MainActivity : AppCompatActivity() {
             arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO,
                 Manifest.permission.POST_NOTIFICATIONS,
             )
         } else {
@@ -325,7 +327,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun hasMediaPermission(): Boolean {
         val required = if (Build.VERSION.SDK_INT >= 33) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+            arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO,
+            )
         } else {
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
@@ -339,21 +345,60 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDownloaded(file: File) {
-        val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, contentResolver.getType(uri) ?: "*/*")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (!file.exists() || file.length() == 0L) {
+            Toast.makeText(this, "İndirilen dosya boş veya bulunamadı", Toast.LENGTH_LONG).show()
+            return
         }
-        runCatching { startActivity(Intent.createChooser(intent, "Dosyayı aç")) }
+        val uri = try {
+            FileProvider.getUriForFile(this, "$packageName.files", file)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Dosya paylaşımı başarısız: ${e.message}", Toast.LENGTH_LONG).show()
+            return
+        }
+        val mime = mimeFromFileName(file.name)
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        // Grant read permission to all apps that can open this type (fixes "doküman açılamadı").
+        val matches = packageManager.queryIntentActivities(view, PackageManager.MATCH_DEFAULT_ONLY)
+        for (info in matches) {
+            grantUriPermission(
+                info.activityInfo.packageName,
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        try {
+            val chooser = Intent.createChooser(view, "Dosyayı aç").apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(chooser)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(
+                this,
+                "Bu dosya türünü ($mime) açacak uygulama yok. Dosya indirildi: ${file.name}",
+                Toast.LENGTH_LONG,
+            ).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Açılamadı: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     companion object {
         fun resolveMime(entry: FileEntry): String {
             val declared = entry.mimeType.trim()
             if (declared.isNotEmpty() && declared != "application/octet-stream") return declared
-            val ext = entry.name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
-            if (ext.isEmpty()) return declared
-            return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: declared
+            return mimeFromFileName(entry.name).takeIf { it != "application/octet-stream" }
+                ?: declared.ifBlank { "application/octet-stream" }
+        }
+
+        fun mimeFromFileName(name: String): String {
+            val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            if (ext.isEmpty()) return "application/octet-stream"
+            MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
+            return MediaPreviewActivity.guessMimeFromName(name)
         }
 
         fun isPreviewableMedia(mime: String): Boolean {

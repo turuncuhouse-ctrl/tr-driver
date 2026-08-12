@@ -299,7 +299,12 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
 
     suspend fun downloadToCache(entry: FileEntry): File = withContext(Dispatchers.IO) {
         val dir = File(appContext.cacheDir, "downloads").also { it.mkdirs() }
-        val dest = File(dir, entry.name)
+        val safeName = entry.name
+            .replace('/', '_')
+            .replace('\\', '_')
+            .replace('\u0000', '_')
+            .ifBlank { "download.bin" }
+        val dest = File(dir, safeName)
         val req = authed(Request.Builder().url("${base()}/api/files/download/${entry.id}")).get().build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
@@ -308,6 +313,9 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             resp.body?.byteStream()?.use { input ->
                 dest.outputStream().use { output -> input.copyTo(output) }
             } ?: throw IOException("Boş yanıt")
+        }
+        if (!dest.exists() || dest.length() == 0L) {
+            throw IOException("İndirilen dosya boş")
         }
         dest
     }
