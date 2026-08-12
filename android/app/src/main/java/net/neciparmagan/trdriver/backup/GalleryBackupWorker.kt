@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.MediaCatalog
@@ -36,7 +37,11 @@ class GalleryBackupWorker(
             var skipped = 0
             var pendingLeft = 0
             for (item in media) {
-                if (isStopped) break
+                if (isStopped) {
+                    session.lastBackupMessage = "Yedek duraklatıldı; kısa süre sonra devam"
+                    scheduleContinue(applicationContext, delayMinutes = 1)
+                    return Result.success()
+                }
                 if (db.isUploaded(item.mediaKey)) {
                     skipped++
                     continue
@@ -56,16 +61,20 @@ class GalleryBackupWorker(
                     val entry = api.uploadMedia(parent, item)
                     db.markUploaded(item.mediaKey, entry.id, item.sizeBytes)
                     uploaded++
-                    delay(1500)
+                    delay(800)
+                } catch (e: CancellationException) {
+                    session.lastBackupMessage = "Yedek duraklatıldı; devam edecek"
+                    if (session.galleryBackupEnabled) {
+                        scheduleContinue(applicationContext, delayMinutes = 1)
+                    }
+                    throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "upload failed ${item.displayName}: ${e.message}")
                     session.lastBackupMessage = "Yedek hata (${item.displayName}): ${e.message}"
-                    // Soft backoff; try again later.
                     scheduleContinue(applicationContext, delayMinutes = 2)
                     return Result.success()
                 }
             }
-            // Count remaining after first success
             if (uploaded == 1) {
                 pendingLeft = media.count { !db.isUploaded(it.mediaKey) && it.sizeBytes !in 1 until 1024 }
             }
@@ -81,6 +90,13 @@ class GalleryBackupWorker(
                 scheduleContinue(applicationContext, delayMinutes = 1)
             }
             Result.success()
+        } catch (e: CancellationException) {
+            // WorkManager replaced/stopped this job (not a real upload failure).
+            session.lastBackupMessage = "Yedek duraklatıldı; devam edecek"
+            if (session.galleryBackupEnabled && session.isLoggedIn) {
+                scheduleContinue(applicationContext, delayMinutes = 1)
+            }
+            throw e
         } catch (e: Exception) {
             session.lastBackupMessage = "Yedek hata: ${e.message}"
             Log.e(TAG, "backup failed", e)
@@ -112,17 +128,16 @@ class GalleryBackupWorker(
                 ExistingPeriodicWorkPolicy.UPDATE,
                 periodic,
             )
-            runNow(context)
+            // KEEP: do not cancel an in-flight upload when UI refreshes / app restarts.
+            enqueueOnce(context, ExistingWorkPolicy.KEEP)
         }
 
         fun runNow(context: Context) {
             val session = SessionStore(context)
-            if (!session.isLoggedIn) return
-            val once = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
-                .setConstraints(constraints(session))
-                .build()
-            WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(UNIQUE_ONCE, ExistingWorkPolicy.REPLACE, once)
+            if (!session.isLoggedIn || !session.galleryBackupEnabled) return
+            session.lastBackupMessage = "Yedek kuyruğa alındı…"
+            // KEEP: running upload'ı iptal etme ("Job was cancelled" önlenir).
+            enqueueOnce(context, ExistingWorkPolicy.KEEP)
         }
 
         fun scheduleContinue(context: Context, delayMinutes: Long = 1) {
@@ -130,17 +145,26 @@ class GalleryBackupWorker(
             if (!session.galleryBackupEnabled || !session.isLoggedIn) return
             val once = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
                 .setConstraints(constraints(session))
-                .setInitialDelay(delayMinutes, TimeUnit.MINUTES)
+                .setInitialDelay(delayMinutes.coerceAtLeast(0), TimeUnit.MINUTES)
                 .build()
             WorkManager.getInstance(context.applicationContext)
                 .enqueueUniqueWork(UNIQUE_CONTINUE, ExistingWorkPolicy.REPLACE, once)
+        }
+
+        private fun enqueueOnce(context: Context, policy: ExistingWorkPolicy) {
+            val session = SessionStore(context)
+            val once = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
+                .setConstraints(constraints(session))
+                .build()
+            WorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork(UNIQUE_ONCE, policy, once)
         }
 
         private fun constraints(session: SessionStore) = Constraints.Builder()
             .setRequiredNetworkType(
                 if (session.wifiOnlyBackup) NetworkType.UNMETERED else NetworkType.CONNECTED
             )
-            .setRequiresBatteryNotLow(true)
+            // Battery-not-low cancelled mid-upload on many phones; rely on network only.
             .build()
     }
 }
