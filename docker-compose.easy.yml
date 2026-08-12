@@ -8,10 +8,12 @@ services:
     image: golang:1.24-alpine
     working_dir: /app
     command: >
-      sh -c "apk add --no-cache nodejs npm &&
+      sh -c "apk add --no-cache nodejs npm wget &&
       cd /app/web &&
       npm ci --no-audit --no-fund &&
       npm run build &&
+      test -f /app/web/dist/apps/TRDriver.apk || test -f /app/web/public/apps/TRDriver.apk || (echo 'ERROR: TRDriver.apk missing' && exit 1) &&
+      ls -la /app/web/dist/apps/TRDriver.apk /app/web/public/apps/TRDriver.apk 2>/dev/null || true &&
       cd /app &&
       go build -ldflags='-X necipdrive/internal/version.Version=0.5.0' -o /tmp/trdriver ./cmd/server &&
       echo Built TR Driver 0.5.0 &&

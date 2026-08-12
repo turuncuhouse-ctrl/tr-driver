@@ -137,6 +137,11 @@ func NewRouter(
 	if err == nil {
 		fileServer := http.FileServer(http.FS(staticFiles))
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Never SPA-fallback APK routes to index.html (causes 1KB fake installers).
+			if isAPKRequest(r.URL.Path) {
+				serveAndroidAPK(w, r)
+				return
+			}
 			// Unmatched /api/* must never look like a generic Go 404; force redeploy messages.
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				httpx.Error(w, http.StatusNotFound, "api route not found: "+r.URL.Path+" — sunucu binary eski olabilir; container'ı yeniden build/redeploy edin")
@@ -157,6 +162,10 @@ func NewRouter(
 	} else {
 		log.Printf("static UI not found (web/dist); API-only mode")
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if isAPKRequest(r.URL.Path) {
+				serveAndroidAPK(w, r)
+				return
+			}
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				httpx.Error(w, http.StatusNotFound, "api route not found: "+r.URL.Path)
 				return
