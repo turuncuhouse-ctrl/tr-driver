@@ -130,6 +130,9 @@ func NewRouter(
 	mux.Handle("/dav", davHandler)
 	mux.Handle("/dav/", davHandler)
 
+	mux.HandleFunc("/download/TRDriver.apk", serveAndroidAPK)
+	mux.HandleFunc("/apps/TRDriver.apk", serveAndroidAPK)
+
 	staticFiles, err := staticFS()
 	if err == nil {
 		fileServer := http.FileServer(http.FS(staticFiles))

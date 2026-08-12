@@ -880,34 +880,36 @@ export function App() {
             {theme === "light" ? "◐ Açık" : "◑ Koyu"}
           </button>
         </nav>
-        <div className="quota-card">
-          <div><span>Depolama</span><strong>{usageRate}%</strong></div>
-          <div className="quota-bar"><span style={{ width: `${usageRate}%` }} /></div>
-          <small>{formatBytes(user.usedBytes)} / {formatBytes(user.quotaBytes)}</small>
-        </div>
-        <a className="mobile-apps-card" href="/apps/TRDriver.apk" download="TRDriver.apk">
-          <span className="android-mark" aria-hidden>▶</span>
-          <div>
-            <strong>Android uygulaması</strong>
-            <small>APK indir · galeri yedekleme &amp; medya</small>
+        <div className="sidebar-footer">
+          <div className="quota-card">
+            <div><span>Depolama</span><strong>{usageRate}%</strong></div>
+            <div className="quota-bar"><span style={{ width: `${usageRate}%` }} /></div>
+            <small>{formatBytes(user.usedBytes)} / {formatBytes(user.quotaBytes)}</small>
           </div>
-        </a>
-        <button
-          type="button"
-          className="mobile-apps-card"
-          style={{ width: "100%", cursor: "pointer", border: "1px solid #d7e3f5" }}
-          onClick={() => void openQRLogin()}
-        >
-          <span className="android-mark" aria-hidden>QR</span>
-          <div style={{ textAlign: "left" }}>
-            <strong>QR ile telefona giriş</strong>
-            <small>3 dakika geçerli kod oluştur</small>
+          <a className="mobile-apps-card" href="/download/TRDriver.apk" download="TRDriver.apk" type="application/vnd.android.package-archive">
+            <span className="android-mark" aria-hidden>▶</span>
+            <div>
+              <strong>Android APK</strong>
+              <small>İndir ve yükle · v0.4</small>
+            </div>
+          </a>
+          <button
+            type="button"
+            className="mobile-apps-card"
+            style={{ width: "100%", cursor: "pointer", border: "1px solid #d7e3f5" }}
+            onClick={() => void openQRLogin()}
+          >
+            <span className="android-mark" aria-hidden>QR</span>
+            <div style={{ textAlign: "left" }}>
+              <strong>QR giriş</strong>
+              <small>Telefona oturum aç</small>
+            </div>
+          </button>
+          <div className="profile">
+            <span className="avatar">{user.displayName.slice(0, 1).toUpperCase()}</span>
+            <div><strong>{user.displayName}</strong><small>{user.email}</small></div>
+            <button title="Çıkış yap" onClick={logout}>↪</button>
           </div>
-        </button>
-        <div className="profile">
-          <span className="avatar">{user.displayName.slice(0, 1).toUpperCase()}</span>
-          <div><strong>{user.displayName}</strong><small>{user.email}</small></div>
-          <button title="Çıkış yap" onClick={logout}>↪</button>
         </div>
       </aside>
 

@@ -1,12 +1,11 @@
 package net.neciparmagan.trdriver
 
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.ImageView
+import android.widget.MediaController
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
@@ -15,12 +14,9 @@ import androidx.core.content.ContextCompat
 import coil.imageLoader
 import coil.request.ImageRequest
 import net.neciparmagan.trdriver.data.SessionStore
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 class MediaPreviewActivity : AppCompatActivity() {
-    private var player: MediaPlayer? = null
+    private var videoView: VideoView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,9 +24,13 @@ class MediaPreviewActivity : AppCompatActivity() {
 
         val id = intent.getStringExtra(EXTRA_ID).orEmpty()
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty()
-        val mime = intent.getStringExtra(EXTRA_MIME).orEmpty()
+        var mime = intent.getStringExtra(EXTRA_MIME).orEmpty()
+        if (mime.isBlank() || mime == "application/octet-stream") {
+            mime = guessMimeFromName(name)
+        }
         val session = SessionStore(this)
         val url = session.serverUrl.trimEnd('/') + "/api/files/download/$id?inline=1"
+        val token = session.token.orEmpty()
 
         findViewById<TextView>(R.id.previewTitle).text = name
         findViewById<View>(R.id.btnClosePreview).setOnClickListener { finish() }
@@ -38,11 +38,11 @@ class MediaPreviewActivity : AppCompatActivity() {
         val image = findViewById<ImageView>(R.id.previewImage)
         val video = findViewById<VideoView>(R.id.previewVideo)
         val audioHint = findViewById<TextView>(R.id.previewAudioHint)
+        videoView = video
 
         when {
             mime.startsWith("image/") -> {
                 image.visibility = View.VISIBLE
-                val token = session.token.orEmpty()
                 imageLoader.enqueue(
                     ImageRequest.Builder(this)
                         .data(url)
@@ -53,11 +53,20 @@ class MediaPreviewActivity : AppCompatActivity() {
             }
             mime.startsWith("video/") -> {
                 video.visibility = View.VISIBLE
-                // VideoView can't easily set Authorization; stream via temp redirect using headers proxy.
-                playAuthorizedStream(url, session.token.orEmpty()) { local ->
-                    video.setVideoURI(Uri.parse(local))
-                    video.setOnPreparedListener { it.isLooping = false; video.start() }
+                val headers = mapOf("Authorization" to "Bearer $token")
+                val controller = MediaController(this)
+                controller.setAnchorView(video)
+                video.setMediaController(controller)
+                video.setOnPreparedListener { mp ->
+                    mp.isLooping = false
+                    video.start()
                 }
+                video.setOnErrorListener { _, what, extra ->
+                    Toast.makeText(this, "Video oynatılamadı ($what/$extra)", Toast.LENGTH_LONG).show()
+                    true
+                }
+                video.setVideoURI(Uri.parse(url), headers)
+                video.requestFocus()
             }
             mime.startsWith("audio/") -> {
                 audioHint.visibility = View.VISIBLE
@@ -74,31 +83,14 @@ class MediaPreviewActivity : AppCompatActivity() {
         }
     }
 
-    private fun playAuthorizedStream(url: String, token: String, onReady: (String) -> Unit) {
-        Thread {
-            try {
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(5, TimeUnit.MINUTES)
-                    .build()
-                val req = Request.Builder().url(url).header("Authorization", "Bearer $token").build()
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw IllegalStateException(resp.message)
-                    val file = cacheDir.resolve("preview-${System.currentTimeMillis()}.bin")
-                    resp.body!!.byteStream().use { input -> file.outputStream().use { input.copyTo(it) } }
-                    runOnUiThread { onReady(file.toURI().toString()) }
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Önizleme açılamadı: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }.start()
+    override fun onPause() {
+        videoView?.pause()
+        super.onPause()
     }
 
     override fun onDestroy() {
-        player?.release()
-        player = null
+        videoView?.stopPlayback()
+        videoView = null
         super.onDestroy()
     }
 
@@ -106,5 +98,24 @@ class MediaPreviewActivity : AppCompatActivity() {
         const val EXTRA_ID = "id"
         const val EXTRA_NAME = "name"
         const val EXTRA_MIME = "mime"
+
+        fun guessMimeFromName(name: String): String {
+            val ext = name.substringAfterLast('.', "").lowercase()
+            return when (ext) {
+                "jpg", "jpeg" -> "image/jpeg"
+                "png" -> "image/png"
+                "gif" -> "image/gif"
+                "webp" -> "image/webp"
+                "mp4", "m4v" -> "video/mp4"
+                "webm" -> "video/webm"
+                "mkv" -> "video/x-matroska"
+                "3gp" -> "video/3gpp"
+                "mp3" -> "audio/mpeg"
+                "m4a", "aac" -> "audio/mp4"
+                "wav" -> "audio/wav"
+                "ogg", "oga" -> "audio/ogg"
+                else -> "application/octet-stream"
+            }
+        }
     }
 }
