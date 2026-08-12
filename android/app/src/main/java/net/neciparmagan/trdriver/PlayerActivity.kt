@@ -25,14 +25,14 @@ class PlayerActivity : AppCompatActivity() {
 
     private val tick = object : Runnable {
         override fun run() {
-            // Progress is approximate until we bind; status text is enough for v1.
-            handler.postDelayed(this, 1000)
+            refreshUi()
+            handler.postDelayed(this, 800)
         }
     }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            statusView.text = "Bildirim / kilit ekranından da kontrol edebilirsiniz"
+            refreshUi()
         }
     }
 
@@ -47,13 +47,22 @@ class PlayerActivity : AppCompatActivity() {
         durView = findViewById(R.id.playerDuration)
         toggle = findViewById(R.id.btnPlayerToggle)
 
-        val title = intent.getStringExtra(MusicService.EXTRA_TITLE).orEmpty().ifBlank { "Müzik" }
-        val url = intent.getStringExtra(MusicService.EXTRA_URL).orEmpty()
-        val token = intent.getStringExtra(MusicService.EXTRA_TOKEN).orEmpty()
+        val title = intent.getStringExtra(MusicService.EXTRA_TITLE).orEmpty().ifBlank {
+            MusicService.currentTitle.ifBlank { "Müzik" }
+        }
+        val url = intent.getStringExtra(MusicService.EXTRA_URL).orEmpty().ifBlank { MusicService.currentUrl }
+        val token = intent.getStringExtra(MusicService.EXTRA_TOKEN).orEmpty().ifBlank { MusicService.currentToken }
         titleView.text = title
-        statusView.text = "Çalınıyor · bildirimden kontrol edin"
 
-        if (url.isNotBlank()) {
+        if (url.isNotBlank() && url != MusicService.currentUrl) {
+            val play = Intent(this, MusicService::class.java).apply {
+                action = MusicService.ACTION_PLAY
+                putExtra(MusicService.EXTRA_URL, url)
+                putExtra(MusicService.EXTRA_TITLE, title)
+                putExtra(MusicService.EXTRA_TOKEN, token)
+            }
+            ContextCompat.startForegroundService(this, play)
+        } else if (url.isNotBlank() && !MusicService.isSessionActive) {
             val play = Intent(this, MusicService::class.java).apply {
                 action = MusicService.ACTION_PLAY
                 putExtra(MusicService.EXTRA_URL, url)
@@ -73,6 +82,20 @@ class PlayerActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnPlayerClose).setOnClickListener { finish() }
 
         seek.isEnabled = false
+        refreshUi()
+    }
+
+    private fun refreshUi() {
+        if (!::titleView.isInitialized) return
+        if (MusicService.currentTitle.isNotBlank()) {
+            titleView.text = MusicService.currentTitle
+        }
+        toggle.text = if (MusicService.isPlaying) "Duraklat" else "Çal"
+        statusView.text = when {
+            !MusicService.isSessionActive -> "Durdu"
+            MusicService.isPlaying -> "Çalıyor · bildirim / kilit ekranından kontrol"
+            else -> "Duraklatıldı"
+        }
     }
 
     override fun onStart() {

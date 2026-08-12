@@ -38,6 +38,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".BackupSettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TRDriver" />
+        <activity
             android:name=".MediaPreviewActivity"
             android:exported="false"
             android:theme="@style/Theme.TRDriver" />

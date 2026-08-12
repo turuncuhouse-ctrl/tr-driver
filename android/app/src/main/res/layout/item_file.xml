@@ -26,6 +26,7 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="10dp"
+        android:layout_marginEnd="4dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
@@ -33,6 +34,8 @@
             android:id="@+id/itemName"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:textColor="@color/tr_ink"
             android:textStyle="bold" />
 
@@ -40,6 +43,8 @@
             android:id="@+id/itemMeta"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:textColor="@color/tr_ink" />
 
         <TextView
@@ -51,29 +56,12 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <Button
-        android:id="@+id/itemStar"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:minWidth="0dp"
-        android:text="☆" />
-
-    <Button
-        android:id="@+id/itemShare"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:minWidth="0dp"
-        android:text="↗" />
-
-    <Button
-        android:id="@+id/itemDownload"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="İndir" />
-
-    <Button
-        android:id="@+id/itemDelete"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Sil" />
+    <ImageButton
+        android:id="@+id/itemMenu"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Dosya menüsü"
+        android:padding="8dp"
+        android:src="@android:drawable/ic_menu_more" />
 </LinearLayout>

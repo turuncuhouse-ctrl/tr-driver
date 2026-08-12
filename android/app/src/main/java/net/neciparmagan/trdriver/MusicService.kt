@@ -33,6 +33,14 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCo
     private var token: String = ""
     private val preparing = AtomicBoolean(false)
 
+    private fun publishNowPlaying(playing: Boolean) {
+        currentTitle = title
+        currentUrl = url
+        currentToken = token
+        isPlaying = playing
+        isSessionActive = true
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -70,6 +78,7 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCo
                 url = intent.getStringExtra(EXTRA_URL).orEmpty()
                 token = intent.getStringExtra(EXTRA_TOKEN).orEmpty()
                 title = intent.getStringExtra(EXTRA_TITLE)?.ifBlank { "TR Driver" } ?: "TR Driver"
+                publishNowPlaying(playing = false)
                 startForeground(NOTIF_ID, buildNotification(playing = false, text = "Hazırlanıyor…"))
                 startStream()
             }
@@ -121,6 +130,7 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCo
                 .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, mp?.duration?.toLong() ?: 0L)
                 .build(),
         )
+        publishNowPlaying(playing = true)
         updateState()
         notifyPlaying()
         broadcast(ACTION_STATE)
@@ -133,15 +143,19 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCo
 
     override fun onError(mp: MediaPlayer?, what: Int, extra: Int): Boolean {
         preparing.set(false)
+        isPlaying = false
+        isSessionActive = false
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIF_ID, buildNotification(playing = false, text = "Çalınamadı ($what/$extra)"))
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+        broadcast(ACTION_STATE)
         return true
     }
 
     private fun pause() {
         runCatching { if (player?.isPlaying == true) player?.pause() }
+        publishNowPlaying(playing = false)
         updateState()
         notifyPlaying()
         broadcast(ACTION_STATE)
@@ -154,6 +168,7 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCo
             return
         }
         runCatching { p.start() }
+        publishNowPlaying(playing = true)
         updateState()
         notifyPlaying()
         broadcast(ACTION_STATE)
@@ -169,6 +184,8 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCo
         session?.isActive = false
         session?.release()
         session = null
+        isPlaying = false
+        isSessionActive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         broadcast(ACTION_STATE)
@@ -289,5 +306,20 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCo
         const val EXTRA_TOKEN = "token"
         private const val NOTIF_ID = 42
         private const val CHANNEL_ID = "trdriver_music"
+
+        @Volatile
+        var currentTitle: String = ""
+
+        @Volatile
+        var currentUrl: String = ""
+
+        @Volatile
+        var currentToken: String = ""
+
+        @Volatile
+        var isPlaying: Boolean = false
+
+        @Volatile
+        var isSessionActive: Boolean = false
     }
 }

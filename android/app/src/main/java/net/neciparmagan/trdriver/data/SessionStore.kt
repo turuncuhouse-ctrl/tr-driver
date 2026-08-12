@@ -2,6 +2,7 @@ package net.neciparmagan.trdriver.data
 
 import android.content.Context
 import net.neciparmagan.trdriver.BuildConfig
+import org.json.JSONArray
 
 class SessionStore(context: Context) {
     private val prefs = context.getSharedPreferences("trdriver_prefs", Context.MODE_PRIVATE)
@@ -50,6 +51,35 @@ class SessionStore(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_DEVICE, value).apply()
 
+    /** Persistable SAF tree URIs for extra backup folders. */
+    var backupFolderUris: List<String>
+        get() {
+            val raw = prefs.getString(KEY_BACKUP_FOLDERS, "[]") ?: "[]"
+            return runCatching {
+                val arr = JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val s = arr.optString(i)
+                        if (s.isNotBlank()) add(s)
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+        set(value) {
+            val arr = JSONArray()
+            value.distinct().forEach { arr.put(it) }
+            prefs.edit().putString(KEY_BACKUP_FOLDERS, arr.toString()).apply()
+        }
+
+    fun addBackupFolderUri(uri: String) {
+        if (uri.isBlank()) return
+        backupFolderUris = backupFolderUris + uri
+    }
+
+    fun removeBackupFolderUri(uri: String) {
+        backupFolderUris = backupFolderUris.filterNot { it == uri }
+    }
+
     val isLoggedIn: Boolean get() = !token.isNullOrBlank()
 
     fun clearAuth() {
@@ -70,5 +100,6 @@ class SessionStore(context: Context) {
         private const val KEY_WIFI_ONLY = "wifi_only"
         private const val KEY_LAST_MSG = "last_backup_msg"
         private const val KEY_DEVICE = "device_name"
+        private const val KEY_BACKUP_FOLDERS = "backup_folders"
     }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0 — Android UI sadeleştirme
+
+### Added
+- Ana ekran: profil hesabı, tek **İşlemler** menüsü, pull-to-refresh, mini müzik çalar
+- Yedekleme ayarları ekranı + SAF ile ek klasör yedekleme (`TR Backup / cihaz / klasör`)
+- QR bağlantı formu doldurma (`server` / `email` / `password`)
+- Upload throttle: aynı anda 1 yükleme, dosyalar arası 1.5–3 sn
+
+### Changed
+- Dosya satırında tek ⋮ menü; dosya adları geniş alan
+- Galeri yedek paneli ana ekrandan ayrıldı
+
 ## Free edition — ücretlendirme kaldırıldı
 
 ### Changed

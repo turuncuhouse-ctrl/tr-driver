@@ -248,6 +248,14 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         return ensureChildFolder(yearId, "%02d".format(media.month))
     }
 
+    /** TR Backup / {device} / {folderName} */
+    suspend fun ensureBackupFolder(folderName: String): String {
+        val device = sanitizeFolder(session.deviceName.ifBlank { android.os.Build.MODEL ?: "Android" })
+        val root = ensureChildFolder(null, "TR Backup")
+        val deviceId = ensureChildFolder(root, device)
+        return ensureChildFolder(deviceId, sanitizeFolder(folderName))
+    }
+
     private fun sanitizeFolder(name: String): String {
         val cleaned = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(60)
         return cleaned.ifBlank { "Android" }
@@ -294,28 +302,32 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
 
     fun downloadUrl(fileId: String): String = "${base()}/api/files/download/$fileId"
 
-    suspend fun upload(parentId: String?, uri: Uri): FileEntry = withContext(Dispatchers.IO) {
-        val resolver = appContext.contentResolver
-        var name = "upload.bin"
-        var size = -1L
-        resolver.query(uri, null, null, null, null)?.use { cursor ->
-            val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-            if (cursor.moveToFirst()) {
-                if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
-                if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+    suspend fun upload(parentId: String?, uri: Uri): FileEntry = UploadThrottle.run {
+        withContext(Dispatchers.IO) {
+            val resolver = appContext.contentResolver
+            var name = "upload.bin"
+            var size = -1L
+            resolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (cursor.moveToFirst()) {
+                    if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
+                    if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                }
             }
-        }
-        val mime = resolver.getType(uri) ?: "application/octet-stream"
-        uploadStream(parentId, name, mime, size) {
-            resolver.openInputStream(uri) ?: throw IOException("Dosya okunamadı")
+            val mime = resolver.getType(uri) ?: "application/octet-stream"
+            uploadStream(parentId, name, mime, size) {
+                resolver.openInputStream(uri) ?: throw IOException("Dosya okunamadı")
+            }
         }
     }
 
-    suspend fun uploadMedia(parentId: String?, media: LocalMedia): FileEntry = withContext(Dispatchers.IO) {
-        val resolver = appContext.contentResolver
-        uploadStream(parentId, media.displayName, media.mimeType, media.sizeBytes) {
-            resolver.openInputStream(media.uri) ?: throw IOException("Medya okunamadı")
+    suspend fun uploadMedia(parentId: String?, media: LocalMedia): FileEntry = UploadThrottle.run {
+        withContext(Dispatchers.IO) {
+            val resolver = appContext.contentResolver
+            uploadStream(parentId, media.displayName, media.mimeType, media.sizeBytes) {
+                resolver.openInputStream(media.uri) ?: throw IOException("Medya okunamadı")
+            }
         }
     }
 

@@ -12,8 +12,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import net.neciparmagan.trdriver.data.DriveApi
+import net.neciparmagan.trdriver.data.LocalMedia
 import net.neciparmagan.trdriver.data.MediaCatalog
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadedMediaDb
@@ -32,7 +32,13 @@ class GalleryBackupWorker(
         val db = UploadedMediaDb(applicationContext)
         val api = DriveApi(session, applicationContext)
         return try {
-            val media = MediaCatalog.scan(applicationContext, limit = 1000)
+            val gallery = MediaCatalog.scan(applicationContext, limit = 1000)
+            val folders = MediaCatalog.scanDocumentTrees(
+                applicationContext,
+                session.backupFolderUris,
+                limitPerTree = 400,
+            )
+            val media = gallery + folders
             var uploaded = 0
             var skipped = 0
             var pendingLeft = 0
@@ -57,11 +63,10 @@ class GalleryBackupWorker(
                 }
                 try {
                     session.lastBackupMessage = "Yedekleniyor: ${item.displayName}"
-                    val parent = api.ensurePhotosAlbumFolder(item)
+                    val parent = resolveParent(api, item)
                     val entry = api.uploadMedia(parent, item)
                     db.markUploaded(item.mediaKey, entry.id, item.sizeBytes)
                     uploaded++
-                    delay(800)
                 } catch (e: CancellationException) {
                     session.lastBackupMessage = "Yedek duraklatıldı; devam edecek"
                     if (session.galleryBackupEnabled) {
@@ -91,7 +96,6 @@ class GalleryBackupWorker(
             }
             Result.success()
         } catch (e: CancellationException) {
-            // WorkManager replaced/stopped this job (not a real upload failure).
             session.lastBackupMessage = "Yedek duraklatıldı; devam edecek"
             if (session.galleryBackupEnabled && session.isLoggedIn) {
                 scheduleContinue(applicationContext, delayMinutes = 1)
@@ -101,6 +105,15 @@ class GalleryBackupWorker(
             session.lastBackupMessage = "Yedek hata: ${e.message}"
             Log.e(TAG, "backup failed", e)
             Result.retry()
+        }
+    }
+
+    private suspend fun resolveParent(api: DriveApi, item: LocalMedia): String {
+        val label = item.backupFolderLabel
+        return if (!label.isNullOrBlank()) {
+            api.ensureBackupFolder(label)
+        } else {
+            api.ensurePhotosAlbumFolder(item)
         }
     }
 
@@ -128,7 +141,6 @@ class GalleryBackupWorker(
                 ExistingPeriodicWorkPolicy.UPDATE,
                 periodic,
             )
-            // KEEP: do not cancel an in-flight upload when UI refreshes / app restarts.
             enqueueOnce(context, ExistingWorkPolicy.KEEP)
         }
 
@@ -136,7 +148,6 @@ class GalleryBackupWorker(
             val session = SessionStore(context)
             if (!session.isLoggedIn || !session.galleryBackupEnabled) return
             session.lastBackupMessage = "Yedek kuyruğa alındı…"
-            // KEEP: running upload'ı iptal etme ("Job was cancelled" önlenir).
             enqueueOnce(context, ExistingWorkPolicy.KEEP)
         }
 
@@ -164,7 +175,6 @@ class GalleryBackupWorker(
             .setRequiredNetworkType(
                 if (session.wifiOnlyBackup) NetworkType.UNMETERED else NetworkType.CONNECTED
             )
-            // Battery-not-low cancelled mid-upload on many phones; rely on network only.
             .build()
     }
 }
