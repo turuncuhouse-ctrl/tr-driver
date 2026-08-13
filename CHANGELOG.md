@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1 — Android in-app APK güncelleme
+
+### Added
+- `GET /api/android/version` + `web/public/apps/android-version.json`
+- Android: açılışta soft güncelleme diyaloğu; İşlemler → Güncellemeyi kontrol et
+- `android/scripts/publish-apk.ps1` — APK + sürüm JSON yayınlama
+- Web APK kartı sürümü API’den okur
+
 ## Web UI polish — yükleme çubuğu, paylaşım, kart aksiyonları
 
 ### Added

@@ -132,6 +132,7 @@ func NewRouter(
 
 	mux.HandleFunc("/download/TRDriver.apk", serveAndroidAPK)
 	mux.HandleFunc("/apps/TRDriver.apk", serveAndroidAPK)
+	mux.HandleFunc("/api/android/version", serveAndroidVersion)
 
 	staticFiles, err := staticFS()
 	if err == nil {

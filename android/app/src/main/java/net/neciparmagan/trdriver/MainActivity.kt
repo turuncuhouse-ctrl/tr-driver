@@ -336,6 +336,9 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (::backupChip.isInitialized) refreshBackupChip()
         refreshMiniPlayer()
+        if (session.isLoggedIn) {
+            AppUpdateHelper.check(this, force = false, silentIfCurrent = true)
+        }
     }
 
     private fun showAccountSheet() {
@@ -365,6 +368,7 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, 6, 5, "Yeni klasör")
             menu.add(0, 7, 6, "Yedekleme ayarları")
             menu.add(0, 8, 7, "Müzik")
+            menu.add(0, 9, 8, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> vm.showStarred()
@@ -389,6 +393,7 @@ class MainActivity : AppCompatActivity() {
                             ).show()
                         }
                     }
+                    9 -> AppUpdateHelper.check(this@MainActivity, force = true, silentIfCurrent = false)
                 }
                 true
             }

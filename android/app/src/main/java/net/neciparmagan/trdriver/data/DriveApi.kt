@@ -386,4 +386,41 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
         dest
     }
+
+    suspend fun fetchAndroidVersion(): AndroidVersionInfo = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("${base()}/api/android/version")
+            .get()
+            .header("Cache-Control", "no-cache")
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(AndroidVersionInfo.serializer(), text)
+        }
+    }
+
+    suspend fun downloadApkUpdate(downloadURL: String): File = withContext(Dispatchers.IO) {
+        val path = when {
+            downloadURL.startsWith("http://") || downloadURL.startsWith("https://") -> downloadURL
+            downloadURL.startsWith("/") -> "${base()}$downloadURL"
+            else -> "${base()}/$downloadURL"
+        }
+        val dir = File(appContext.cacheDir, "updates").also { it.mkdirs() }
+        val dest = File(dir, "TRDriver-update.apk")
+        if (dest.exists()) dest.delete()
+        val req = Request.Builder().url(path).get().build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw IOException(parseError(resp.body?.string()))
+            }
+            resp.body?.byteStream()?.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw IOException("Boş APK yanıtı")
+        }
+        if (!dest.exists() || dest.length() < 512 * 1024) {
+            throw IOException("APK indirilemedi veya çok küçük")
+        }
+        dest
+    }
 }

@@ -95,3 +95,14 @@ data class StarRequest(
     @SerialName("entryId") val entryId: String,
     val starred: Boolean,
 )
+
+@Serializable
+data class AndroidVersionInfo(
+    val versionCode: Int = 0,
+    val versionName: String = "",
+    val minSupportedCode: Int = 1,
+    val releaseNotes: String = "",
+    val apkPath: String = "/download/TRDriver.apk",
+    val downloadURL: String = "/download/TRDriver.apk",
+    val apkAvailable: Boolean = false,
+)

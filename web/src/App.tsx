@@ -164,6 +164,10 @@ export function App() {
   const [detailEntry, setDetailEntry] = useState<FileEntry | null>(null);
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const [uploadDockOpen, setUploadDockOpen] = useState(false);
+  const [androidApk, setAndroidApk] = useState<{ versionName: string; versionCode: number }>({
+    versionName: "…",
+    versionCode: 0
+  });
   const [qrLogin, setQrLogin] = useState<{ token: string; expiresAt: string; payload: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -275,6 +279,21 @@ export function App() {
       /* ignore */
     }
   }, [layout]);
+
+  useEffect(() => {
+    void fetch("/api/android/version", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = await res.json() as { versionName?: string; versionCode?: number };
+        if (data.versionName || data.versionCode) {
+          setAndroidApk({
+            versionName: data.versionName || String(data.versionCode || ""),
+            versionCode: Number(data.versionCode) || 0
+          });
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (!preview) return;
@@ -959,11 +978,16 @@ export function App() {
             <div className="quota-bar"><span style={{ width: `${usageRate}%` }} /></div>
             <small>{formatBytes(user.usedBytes)} / {formatBytes(user.quotaBytes)}</small>
           </div>
-          <a className="mobile-apps-card" href="/download/TRDriver.apk?v=0.7.0" download="TRDriver.apk" type="application/vnd.android.package-archive">
+          <a
+            className="mobile-apps-card"
+            href={`/download/TRDriver.apk?v=${androidApk.versionCode || androidApk.versionName}`}
+            download="TRDriver.apk"
+            type="application/vnd.android.package-archive"
+          >
             <span className="android-mark" aria-hidden>▶</span>
             <div>
               <strong>Android APK</strong>
-              <small>İndir ve yükle · v0.7.0</small>
+              <small>İndir ve yükle · v{androidApk.versionName}</small>
             </div>
           </a>
           <button
