@@ -12,6 +12,8 @@ Kendi sunucunda çalışan, Google Drive’a para ödemeden dosya bulutu. Go + P
 - Admin paneli (kullanıcı ve kota yönetimi)
 - Merkezi güncelleme kontrolü (`UPDATE_MANIFEST_URL`)
 - Android istemci + QR giriş; kota varsayılanı disk kapasitesine göre
+- Yedekleme işlemi sunucunuzu çok yormayacak şekilde güvenli teker teker yapılmaktadır.
+- Sunucu işlemciniz düşükde olsa sunucunuzu dar boğaz yapmayacak şekilde yavaş ve tek tek yapmaktadır.
 
 ## Kota
 
