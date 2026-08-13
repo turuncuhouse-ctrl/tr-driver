@@ -87,14 +87,11 @@ func serveAndroidVersion(w http.ResponseWriter, r *http.Request) {
 		DownloadURL:      "/download/TRDriver.apk",
 	}
 
-	if path, err := findAndroidAppsFile("android-version.json"); err == nil {
-		raw, readErr := os.ReadFile(path)
-		if readErr == nil {
-			var parsed androidVersionInfo
-			if json.Unmarshal(raw, &parsed) == nil {
-				info = parsed
-			}
-		}
+	if parsed, path, ok := loadAndroidVersionJSON(); ok {
+		info = parsed
+		log.Printf("android version json loaded from %s (code=%d name=%s)", path, info.VersionCode, info.VersionName)
+	} else {
+		log.Printf("android version json not found or invalid")
 	}
 
 	if info.ApkPath == "" {
@@ -124,6 +121,33 @@ func serveAndroidVersion(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, info)
 }
 
+func loadAndroidVersionJSON() (androidVersionInfo, string, bool) {
+	for _, path := range androidAppsCandidates("android-version.json") {
+		raw, err := os.ReadFile(path)
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		raw = stripUTF8BOM(raw)
+		var parsed androidVersionInfo
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			log.Printf("android version json parse failed at %s: %v", path, err)
+			continue
+		}
+		if parsed.VersionCode <= 0 && strings.TrimSpace(parsed.VersionName) == "" {
+			continue
+		}
+		return parsed, path, true
+	}
+	return androidVersionInfo{}, "", false
+}
+
+func stripUTF8BOM(b []byte) []byte {
+	if len(b) >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
+		return b[3:]
+	}
+	return b
+}
+
 func findAndroidAPK() (path string, size int64, mod time.Time, err error) {
 	path, err = findAndroidAppsFile("TRDriver.apk")
 	if err != nil {
@@ -137,6 +161,20 @@ func findAndroidAPK() (path string, size int64, mod time.Time, err error) {
 }
 
 func findAndroidAppsFile(name string) (string, error) {
+	for _, c := range androidAppsCandidates(name) {
+		st, statErr := os.Stat(c)
+		if statErr != nil || st.IsDir() || st.Size() <= 0 {
+			continue
+		}
+		return c, nil
+	}
+	wd, _ := os.Getwd()
+	exe, _ := os.Executable()
+	return "", fmt.Errorf("%s not found (cwd=%s exe=%s)", name, wd, exe)
+}
+
+// Prefer public/apps (sideload drop folder) over dist/apps (npm build copy).
+func androidAppsCandidates(name string) []string {
 	wd, _ := os.Getwd()
 	exe, _ := os.Executable()
 	exeDir := ""
@@ -145,8 +183,8 @@ func findAndroidAppsFile(name string) (string, error) {
 	}
 
 	rel := []string{
-		filepath.Join("web", "dist", "apps", name),
 		filepath.Join("web", "public", "apps", name),
+		filepath.Join("web", "dist", "apps", name),
 		filepath.Join("dist", "android", name),
 	}
 	var candidates []string
@@ -161,25 +199,22 @@ func findAndroidAppsFile(name string) (string, error) {
 		}
 	}
 	candidates = append(candidates,
-		"/app/web/dist/apps/"+name,
 		"/app/web/public/apps/"+name,
+		"/app/web/dist/apps/"+name,
 		"/app/dist/android/"+name,
 	)
 
 	seen := map[string]bool{}
+	out := make([]string, 0, len(candidates))
 	for _, c := range candidates {
 		c = filepath.Clean(c)
 		if seen[c] {
 			continue
 		}
 		seen[c] = true
-		st, statErr := os.Stat(c)
-		if statErr != nil || st.IsDir() || st.Size() <= 0 {
-			continue
-		}
-		return c, nil
+		out = append(out, c)
 	}
-	return "", fmt.Errorf("%s not found (cwd=%s exe=%s)", name, wd, exe)
+	return out
 }
 
 func isAPKRequest(path string) bool {
