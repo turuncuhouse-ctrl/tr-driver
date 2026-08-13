@@ -12,6 +12,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
+import net.neciparmagan.trdriver.widget.BackupStatusWidget
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.LocalMedia
 import net.neciparmagan.trdriver.data.MediaCatalog
@@ -27,6 +28,8 @@ class GalleryBackupWorker(
     override suspend fun doWork(): Result {
         val session = SessionStore(applicationContext)
         if (!session.isLoggedIn || !session.galleryBackupEnabled) {
+            session.clearBackupProgress()
+            BackupStatusWidget.refreshAll(applicationContext)
             return Result.success()
         }
         val db = UploadedMediaDb(applicationContext)
@@ -39,70 +42,115 @@ class GalleryBackupWorker(
                 limitPerTree = 400,
             )
             val media = gallery + folders
-            var uploaded = 0
-            var skipped = 0
-            var pendingLeft = 0
-            for (item in media) {
-                if (isStopped) {
-                    session.lastBackupMessage = "Yedek duraklatıldı; kısa süre sonra devam"
-                    scheduleContinue(applicationContext, delayMinutes = 1)
-                    return Result.success()
-                }
-                if (db.isUploaded(item.mediaKey)) {
-                    skipped++
-                    continue
-                }
-                if (item.sizeBytes in 1 until 1024) {
-                    skipped++
-                    continue
-                }
-                // One file per run keeps the server and mobile radio calm.
-                if (uploaded >= 1) {
-                    pendingLeft++
-                    continue
-                }
-                try {
-                    session.lastBackupMessage = "Yedekleniyor: ${item.displayName}"
-                    val parent = resolveParent(api, item)
-                    val entry = api.uploadMedia(parent, item)
-                    db.markUploaded(item.mediaKey, entry.id, item.sizeBytes)
-                    uploaded++
-                } catch (e: CancellationException) {
-                    session.lastBackupMessage = "Yedek duraklatıldı; devam edecek"
-                    if (session.galleryBackupEnabled) {
-                        scheduleContinue(applicationContext, delayMinutes = 1)
-                    }
-                    throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "upload failed ${item.displayName}: ${e.message}")
-                    session.lastBackupMessage = "Yedek hata (${item.displayName}): ${e.message}"
-                    scheduleContinue(applicationContext, delayMinutes = 2)
-                    return Result.success()
-                }
+            val eligible = media.filter { it.sizeBytes !in 1 until 1024 }
+            val pendingList = eligible.filter { !db.isUploaded(it.mediaKey) }
+            val alreadyDone = (eligible.size - pendingList.size).coerceAtLeast(0)
+
+            if (pendingList.isEmpty()) {
+                session.updateBackupProgress(
+                    active = false,
+                    currentFile = "",
+                    doneCount = alreadyDone,
+                    pendingCount = 0,
+                    message = "Yedek: yeni öğe yok (${eligible.size} tarandı)",
+                )
+                BackupStatusWidget.refreshAll(applicationContext)
+                return Result.success()
             }
-            if (uploaded == 1) {
-                pendingLeft = media.count { !db.isUploaded(it.mediaKey) && it.sizeBytes !in 1 until 1024 }
-            }
-            session.lastBackupMessage = when {
-                uploaded > 0 && pendingLeft > 0 ->
-                    "Yedek OK (+1). Kalan ~$pendingLeft · cihaz: ${session.deviceName}"
-                uploaded > 0 ->
-                    "Yedek tamam (+1). Toplam işaretli: ${db.countUploaded()}"
-                else ->
-                    "Yedek: yeni öğe yok ($skipped zaten vardı)"
-            }
-            if (pendingLeft > 0 && session.galleryBackupEnabled) {
+
+            session.updateBackupProgress(
+                active = true,
+                currentFile = pendingList.first().displayName,
+                doneCount = alreadyDone,
+                pendingCount = pendingList.size,
+                message = "Yedekleniyor: ${pendingList.first().displayName}",
+            )
+            BackupStatusWidget.refreshAll(applicationContext)
+
+            val item = pendingList.first()
+            if (isStopped) {
+                session.updateBackupProgress(
+                    active = false,
+                    currentFile = "",
+                    doneCount = alreadyDone,
+                    pendingCount = pendingList.size,
+                    message = "Yedek duraklatıldı; kısa süre sonra devam",
+                )
+                BackupStatusWidget.refreshAll(applicationContext)
                 scheduleContinue(applicationContext, delayMinutes = 1)
+                return Result.success()
             }
-            Result.success()
+
+            try {
+                val parent = resolveParent(api, item)
+                val entry = api.uploadMedia(parent, item)
+                db.markUploaded(item.mediaKey, entry.id, item.sizeBytes)
+                val pendingLeft = pendingList.size - 1
+                val doneAfter = alreadyDone + 1
+                session.updateBackupProgress(
+                    active = pendingLeft > 0,
+                    currentFile = if (pendingLeft > 0) "" else item.displayName,
+                    doneCount = doneAfter,
+                    pendingCount = pendingLeft,
+                    message = if (pendingLeft > 0) {
+                        "Yedek OK (+1). Kalan ~$pendingLeft · cihaz: ${session.deviceName}"
+                    } else {
+                        "Yedek tamam. Toplam işaretli: ${db.countUploaded()}"
+                    },
+                )
+                BackupStatusWidget.refreshAll(applicationContext)
+                if (pendingLeft > 0 && session.galleryBackupEnabled) {
+                    scheduleContinue(applicationContext, delayMinutes = 1)
+                }
+                Result.success()
+            } catch (e: CancellationException) {
+                session.updateBackupProgress(
+                    active = false,
+                    currentFile = "",
+                    doneCount = alreadyDone,
+                    pendingCount = pendingList.size,
+                    message = "Yedek duraklatıldı; devam edecek",
+                )
+                BackupStatusWidget.refreshAll(applicationContext)
+                if (session.galleryBackupEnabled) {
+                    scheduleContinue(applicationContext, delayMinutes = 1)
+                }
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "upload failed ${item.displayName}: ${e.message}")
+                session.updateBackupProgress(
+                    active = false,
+                    currentFile = item.displayName,
+                    doneCount = alreadyDone,
+                    pendingCount = pendingList.size,
+                    message = "Yedek hata (${item.displayName}): ${e.message}",
+                )
+                BackupStatusWidget.refreshAll(applicationContext)
+                scheduleContinue(applicationContext, delayMinutes = 2)
+                Result.success()
+            }
         } catch (e: CancellationException) {
-            session.lastBackupMessage = "Yedek duraklatıldı; devam edecek"
+            session.updateBackupProgress(
+                active = false,
+                currentFile = "",
+                doneCount = session.backupDoneCount,
+                pendingCount = session.backupPendingCount,
+                message = "Yedek duraklatıldı; devam edecek",
+            )
+            BackupStatusWidget.refreshAll(applicationContext)
             if (session.galleryBackupEnabled && session.isLoggedIn) {
                 scheduleContinue(applicationContext, delayMinutes = 1)
             }
             throw e
         } catch (e: Exception) {
-            session.lastBackupMessage = "Yedek hata: ${e.message}"
+            session.updateBackupProgress(
+                active = false,
+                currentFile = "",
+                doneCount = session.backupDoneCount,
+                pendingCount = session.backupPendingCount,
+                message = "Yedek hata: ${e.message}",
+            )
+            BackupStatusWidget.refreshAll(applicationContext)
             Log.e(TAG, "backup failed", e)
             Result.retry()
         }
@@ -130,6 +178,8 @@ class GalleryBackupWorker(
                 wm.cancelUniqueWork(UNIQUE_PERIODIC)
                 wm.cancelUniqueWork(UNIQUE_ONCE)
                 wm.cancelUniqueWork(UNIQUE_CONTINUE)
+                session.clearBackupProgress(message = session.lastBackupMessage.ifBlank { "Yedek kapalı" })
+                BackupStatusWidget.refreshAll(context)
                 return
             }
             val constraints = constraints(session)
@@ -147,7 +197,14 @@ class GalleryBackupWorker(
         fun runNow(context: Context) {
             val session = SessionStore(context)
             if (!session.isLoggedIn || !session.galleryBackupEnabled) return
-            session.lastBackupMessage = "Yedek kuyruğa alındı…"
+            session.updateBackupProgress(
+                active = true,
+                currentFile = "",
+                doneCount = session.backupDoneCount,
+                pendingCount = session.backupPendingCount.coerceAtLeast(1),
+                message = "Yedek kuyruğa alındı…",
+            )
+            BackupStatusWidget.refreshAll(context)
             enqueueOnce(context, ExistingWorkPolicy.KEEP)
         }
 

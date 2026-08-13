@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2 — Android yedek progress + widget
+
+### Added
+- Ana ekranda ince yedekleme progress bar (aktif dosya + kalan)
+- Ana ekran widget: TR Driver Yedek durumu
+
 ## 0.7.1 — Android in-app APK güncelleme
 
 ### Added

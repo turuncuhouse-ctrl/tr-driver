@@ -5,11 +5,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,6 +21,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -57,6 +61,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var titleEmail: TextView
     private lateinit var avatarBadge: TextView
     private lateinit var backupChip: TextView
+    private lateinit var backupInline: LinearLayout
+    private lateinit var backupInlineBar: ProgressBar
+    private lateinit var backupInlineText: TextView
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var miniPlayer: View
     private lateinit var miniPlayerTitle: TextView
@@ -67,6 +74,26 @@ class MainActivity : AppCompatActivity() {
     private lateinit var inputPassword: EditText
 
     private var registerNameVisible = false
+    private val backupPollHandler = Handler(Looper.getMainLooper())
+    private val backupPollRunnable = object : Runnable {
+        override fun run() {
+            refreshBackupUi()
+            backupPollHandler.postDelayed(this, 2_000L)
+        }
+    }
+    private val backupPrefsListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            when (key) {
+                SessionStore.KEY_BACKUP_ACTIVE,
+                SessionStore.KEY_BACKUP_CURRENT,
+                SessionStore.KEY_BACKUP_DONE,
+                SessionStore.KEY_BACKUP_PENDING,
+                SessionStore.KEY_BACKUP_PERCENT,
+                SessionStore.KEY_LAST_MSG,
+                SessionStore.KEY_GALLERY_ON,
+                -> runOnUiThread { refreshBackupUi() }
+            }
+        }
 
     private val adapter = FileAdapter(
         onOpen = { entry ->
@@ -151,6 +178,9 @@ class MainActivity : AppCompatActivity() {
         titleEmail = findViewById(R.id.titleEmail)
         avatarBadge = findViewById(R.id.avatarBadge)
         backupChip = findViewById(R.id.backupChip)
+        backupInline = findViewById(R.id.backupInline)
+        backupInlineBar = findViewById(R.id.backupInlineBar)
+        backupInlineText = findViewById(R.id.backupInlineText)
         swipeRefresh = findViewById(R.id.swipeRefresh)
         miniPlayer = findViewById(R.id.miniPlayer)
         miniPlayerTitle = findViewById(R.id.miniPlayerTitle)
@@ -290,7 +320,7 @@ class MainActivity : AppCompatActivity() {
                     if (session.galleryBackupEnabled) {
                         GalleryBackupWorker.schedule(this@MainActivity)
                     }
-                    refreshBackupChip()
+                    refreshBackupUi()
                     refreshMiniPlayer()
                 }
 
@@ -325,19 +355,45 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(musicReceiver, filter)
         }
         refreshMiniPlayer()
+        session.registerBackupListener(backupPrefsListener)
+        backupPollHandler.post(backupPollRunnable)
     }
 
     override fun onStop() {
+        backupPollHandler.removeCallbacks(backupPollRunnable)
+        session.unregisterBackupListener(backupPrefsListener)
         runCatching { unregisterReceiver(musicReceiver) }
         super.onStop()
     }
 
     override fun onResume() {
         super.onResume()
-        if (::backupChip.isInitialized) refreshBackupChip()
+        if (::backupChip.isInitialized) refreshBackupUi()
         refreshMiniPlayer()
         if (session.isLoggedIn) {
             AppUpdateHelper.check(this, force = false, silentIfCurrent = true)
+        }
+    }
+
+    private fun refreshBackupUi() {
+        if (!::backupChip.isInitialized) return
+        val line = session.backupStatusLine()
+        backupChip.text = if (line.length > 42) line.take(39) + "…" else line
+        val showBar = session.isLoggedIn && session.galleryBackupEnabled &&
+            (session.backupActive || session.backupPendingCount > 0)
+        if (!showBar) {
+            backupInline.visibility = View.GONE
+            return
+        }
+        backupInline.visibility = View.VISIBLE
+        backupInlineBar.progress = session.backupPercent
+        backupInlineText.text = when {
+            session.backupActive && session.backupCurrentFile.isNotBlank() ->
+                "Yedekleniyor · ${session.backupCurrentFile} · %${session.backupPercent}" +
+                    if (session.backupPendingCount > 0) " · kalan ${session.backupPendingCount}" else ""
+            session.backupPendingCount > 0 ->
+                "Yedek bekliyor · kalan ${session.backupPendingCount} · %${session.backupPercent}"
+            else -> session.lastBackupMessage.ifBlank { "Yedek hazır" }
         }
     }
 
@@ -412,11 +468,6 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("İptal", null)
             .show()
-    }
-
-    private fun refreshBackupChip() {
-        val on = if (session.galleryBackupEnabled) "açık" else "kapalı"
-        backupChip.text = "Yedek: $on · ayarlar"
     }
 
     private fun refreshMiniPlayer() {

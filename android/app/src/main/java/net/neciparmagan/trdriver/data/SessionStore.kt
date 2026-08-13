@@ -1,11 +1,13 @@
 package net.neciparmagan.trdriver.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import net.neciparmagan.trdriver.BuildConfig
 import org.json.JSONArray
 
 class SessionStore(context: Context) {
-    private val prefs = context.getSharedPreferences("trdriver_prefs", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     var serverUrl: String
         get() = prefs.getString(KEY_SERVER, BuildConfig.DEFAULT_SERVER)?.trimEnd('/')
@@ -40,6 +42,26 @@ class SessionStore(context: Context) {
     var lastBackupMessage: String
         get() = prefs.getString(KEY_LAST_MSG, "") ?: ""
         set(value) = prefs.edit().putString(KEY_LAST_MSG, value).apply()
+
+    var backupActive: Boolean
+        get() = prefs.getBoolean(KEY_BACKUP_ACTIVE, false)
+        set(value) = prefs.edit().putBoolean(KEY_BACKUP_ACTIVE, value).apply()
+
+    var backupCurrentFile: String
+        get() = prefs.getString(KEY_BACKUP_CURRENT, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_BACKUP_CURRENT, value).apply()
+
+    var backupDoneCount: Int
+        get() = prefs.getInt(KEY_BACKUP_DONE, 0)
+        set(value) = prefs.edit().putInt(KEY_BACKUP_DONE, value).apply()
+
+    var backupPendingCount: Int
+        get() = prefs.getInt(KEY_BACKUP_PENDING, 0)
+        set(value) = prefs.edit().putInt(KEY_BACKUP_PENDING, value).apply()
+
+    var backupPercent: Int
+        get() = prefs.getInt(KEY_BACKUP_PERCENT, 0)
+        set(value) = prefs.edit().putInt(KEY_BACKUP_PERCENT, value.coerceIn(0, 100)).apply()
 
     var deviceName: String
         get() {
@@ -80,6 +102,56 @@ class SessionStore(context: Context) {
         backupFolderUris = backupFolderUris.filterNot { it == uri }
     }
 
+    fun updateBackupProgress(
+        active: Boolean,
+        currentFile: String = "",
+        doneCount: Int = 0,
+        pendingCount: Int = 0,
+        message: String? = null,
+    ) {
+        val total = doneCount + pendingCount
+        val percent = when {
+            total <= 0 -> if (!active) 0 else 0
+            else -> ((doneCount * 100) / total).coerceIn(0, 100)
+        }
+        val editor = prefs.edit()
+            .putBoolean(KEY_BACKUP_ACTIVE, active)
+            .putString(KEY_BACKUP_CURRENT, currentFile)
+            .putInt(KEY_BACKUP_DONE, doneCount.coerceAtLeast(0))
+            .putInt(KEY_BACKUP_PENDING, pendingCount.coerceAtLeast(0))
+            .putInt(KEY_BACKUP_PERCENT, percent)
+        if (message != null) {
+            editor.putString(KEY_LAST_MSG, message)
+        }
+        editor.apply()
+    }
+
+    fun clearBackupProgress(message: String? = null) {
+        updateBackupProgress(active = false, currentFile = "", doneCount = 0, pendingCount = 0, message = message)
+    }
+
+    fun registerBackupListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    fun unregisterBackupListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.unregisterOnSharedPreferenceChangeListener(listener)
+    }
+
+    fun backupStatusLine(): String {
+        if (!galleryBackupEnabled) return "Yedek: kapalı"
+        if (backupActive) {
+            val name = backupCurrentFile.ifBlank { "dosya" }
+            val left = backupPendingCount
+            return "Yedekleniyor · $name · %$backupPercent" + if (left > 0) " · kalan $left" else ""
+        }
+        if (backupPendingCount > 0) {
+            return "Yedek: bekliyor · kalan $backupPendingCount · %$backupPercent"
+        }
+        val last = lastBackupMessage.ifBlank { "hazır" }
+        return "Yedek: açık · $last"
+    }
+
     val isLoggedIn: Boolean get() = !token.isNullOrBlank()
 
     fun clearAuth() {
@@ -91,14 +163,21 @@ class SessionStore(context: Context) {
     }
 
     companion object {
+        const val PREFS_NAME = "trdriver_prefs"
+        const val KEY_BACKUP_ACTIVE = "backup_active"
+        const val KEY_BACKUP_CURRENT = "backup_current"
+        const val KEY_BACKUP_DONE = "backup_done"
+        const val KEY_BACKUP_PENDING = "backup_pending"
+        const val KEY_BACKUP_PERCENT = "backup_percent"
+        const val KEY_LAST_MSG = "last_backup_msg"
+        const val KEY_GALLERY_ON = "gallery_on"
+
         private const val KEY_SERVER = "server"
         private const val KEY_TOKEN = "token"
         private const val KEY_EMAIL = "email"
         private const val KEY_ROOT = "root"
         private const val KEY_PHOTOS_ROOT = "photos_root"
-        private const val KEY_GALLERY_ON = "gallery_on"
         private const val KEY_WIFI_ONLY = "wifi_only"
-        private const val KEY_LAST_MSG = "last_backup_msg"
         private const val KEY_DEVICE = "device_name"
         private const val KEY_BACKUP_FOLDERS = "backup_folders"
     }

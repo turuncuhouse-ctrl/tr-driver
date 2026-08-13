@@ -1,7 +1,7 @@
 ﻿{
-  "versionCode": 9,
-  "versionName": "0.7.1",
+  "versionCode": 10,
+  "versionName": "0.7.2",
   "minSupportedCode": 1,
-  "releaseNotes": "Uygulama ici APK guncelleme kontrolu",
+  "releaseNotes": "Yedekleme progress bar ve ana ekran widget",
   "apkPath": "/download/TRDriver.apk"
 }
