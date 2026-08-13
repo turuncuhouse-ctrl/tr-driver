@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -191,9 +192,10 @@ func (s *Service) sendWith(ctx context.Context, st Settings, to, subject, body s
 		return err
 	}
 	addr := fmt.Sprintf("%s:%d", st.Host, st.Port)
+	encodedSubject := mime.QEncoding.Encode("utf-8", subject)
 	msg := []byte("From: " + st.From + "\r\n" +
 		"To: " + to + "\r\n" +
-		"Subject: " + subject + "\r\n" +
+		"Subject: " + encodedSubject + "\r\n" +
 		"MIME-Version: 1.0\r\n" +
 		"Content-Type: text/plain; charset=UTF-8\r\n" +
 		"\r\n" + body + "\r\n")

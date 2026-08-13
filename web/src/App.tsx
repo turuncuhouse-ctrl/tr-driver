@@ -162,6 +162,8 @@ export function App() {
   const [searchQ, setSearchQ] = useState("");
   const [shareTarget, setShareTarget] = useState<FileEntry | null>(null);
   const [detailEntry, setDetailEntry] = useState<FileEntry | null>(null);
+  const [actionMenuId, setActionMenuId] = useState<string | null>(null);
+  const [uploadDockOpen, setUploadDockOpen] = useState(false);
   const [qrLogin, setQrLogin] = useState<{ token: string; expiresAt: string; payload: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -282,6 +284,35 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [preview]);
+
+  useEffect(() => {
+    if (!actionMenuId && !detailEntry) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setActionMenuId(null);
+      setDetailEntry(null);
+    };
+    const onPointer = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".row-actions")) setActionMenuId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onPointer);
+    };
+  }, [actionMenuId, detailEntry]);
+
+  const uploadLive = !!(
+    uploadProgress &&
+    uploadProgress.status !== "idle" &&
+    uploadProgress.status !== "done"
+  );
+
+  useEffect(() => {
+    if (uploadLive) setUploadDockOpen(false);
+  }, [uploadLive]);
 
   // Keep file list fresh so WebDAV / sync / other device changes appear without full reload.
   useEffect(() => {
@@ -610,11 +641,15 @@ export function App() {
   function openDriveRoot(id: string, name: string) {
     setView("files");
     setCrumbs([{ id, name }]);
+    setDetailEntry(null);
+    setActionMenuId(null);
     void loadFiles(id);
   }
 
   function openFolder(entry: FileEntry) {
     setCrumbs((current) => [...current, { id: entry.id, name: entry.name }]);
+    setDetailEntry(null);
+    setActionMenuId(null);
     void loadFiles(entry.id);
   }
 
@@ -640,6 +675,8 @@ export function App() {
   function navigateTo(index: number) {
     const next = crumbs.slice(0, index + 1);
     setCrumbs(next);
+    setDetailEntry(null);
+    setActionMenuId(null);
     void loadFiles(next[next.length - 1].id);
   }
 
@@ -678,19 +715,55 @@ export function App() {
 
   function renderActions(entry: FileEntry) {
     const kind = previewKindOf(entry);
+    const menuOpen = actionMenuId === entry.id;
     return (
       <div className="row-actions" onClick={(event) => event.stopPropagation()}>
         {entry.kind === "file" && kind && (
-          <button title="Önizle" onClick={() => openPreview(entry)}>◎</button>
+          <button type="button" title="Önizle" onClick={() => openPreview(entry)}>◎</button>
         )}
-        {entry.kind === "file" && <a title="İndir" href={`/api/files/download/${entry.id}`}>↓</a>}
-        <button title="Paylaş" onClick={() => createShare(entry)}>↗</button>
-        <button title="Yıldız" onClick={() => void request("/api/files/starred", { method: "POST", body: JSON.stringify({ entryId: entry.id, starred: !entry.starred }) }).then(() => loadFiles(currentFolder))}>{entry.starred ? "★" : "☆"}</button>
-        <button title="Detay" onClick={() => setDetailEntry(entry)}>⋯</button>
-        <button title="Yeniden adlandır" onClick={() => renameEntry(entry)}>✎</button>
-        <button className="danger" title="Sil" onClick={() => deleteEntry(entry)}>×</button>
+        {entry.kind === "file" && !kind && (
+          <a title="İndir" href={`/api/files/download/${entry.id}`}>↓</a>
+        )}
+        <button
+          type="button"
+          title="Yıldız"
+          onClick={() => void request("/api/files/starred", {
+            method: "POST",
+            body: JSON.stringify({ entryId: entry.id, starred: !entry.starred })
+          }).then(() => loadFiles(currentFolder))}
+        >
+          {entry.starred ? "★" : "☆"}
+        </button>
+        <button
+          type="button"
+          title="Diğer"
+          aria-expanded={menuOpen}
+          onClick={() => setActionMenuId(menuOpen ? null : entry.id)}
+        >
+          ⋮
+        </button>
+        {menuOpen && (
+          <div className="row-menu" role="menu">
+            {entry.kind === "file" && kind && (
+              <a href={`/api/files/download/${entry.id}`}>İndir</a>
+            )}
+            <button type="button" onClick={() => { setActionMenuId(null); createShare(entry); }}>Paylaş</button>
+            <button type="button" onClick={() => { setActionMenuId(null); setDetailEntry(entry); }}>Yorumlar / sürümler</button>
+            <button type="button" onClick={() => { setActionMenuId(null); renameEntry(entry); }}>Yeniden adlandır</button>
+            <button type="button" className="danger" onClick={() => { setActionMenuId(null); deleteEntry(entry); }}>Sil</button>
+          </div>
+        )}
       </div>
     );
+  }
+
+  function uploadInlineLabel(progress: QueueProgress) {
+    const pending = progress.files.filter((f) => f.status === "pending").length;
+    if (progress.status === "paused") return `Duraklatıldı · %${progress.percent}`;
+    if (progress.status === "waiting") return pending ? `Bekliyor: ${pending} dosya` : "Bekliyor…";
+    if (progress.status === "error") return progress.message || "Yükleme hatası";
+    if (progress.currentFile) return `Yükleniyor · ${progress.currentFile} · %${progress.percent}`;
+    return `Yükleniyor · %${progress.percent}`;
   }
 
   function renderFileItem(entry: FileEntry) {
@@ -967,7 +1040,24 @@ export function App() {
           </div>
         </header>
 
-        {pendingResume && !(uploadProgress?.hasLiveFiles || (uploadProgress && uploadProgress.status !== "idle" && uploadProgress.status !== "done")) && (
+        {uploadLive && uploadProgress && (
+          <div className="upload-inline" aria-live="polite">
+            <div className="upload-inline-bar">
+              <span style={{ width: `${uploadProgress.percent}%` }} />
+            </div>
+            <div className="upload-inline-meta">
+              <strong title={uploadInlineLabel(uploadProgress)}>{uploadInlineLabel(uploadProgress)}</strong>
+              <small>
+                {formatBytes(uploadProgress.sentBytes)} / {formatBytes(uploadProgress.totalBytes)}
+                {uploadProgress.files.filter((f) => f.status === "pending").length
+                  ? ` · ${uploadProgress.files.filter((f) => f.status === "pending").length} bekliyor`
+                  : ""}
+              </small>
+            </div>
+          </div>
+        )}
+
+        {pendingResume && !uploadLive && (
           <div className="notice">
             Yarım kalan bir yükleme var ({pendingResume.files.length} dosya). Sayfa yenilendiği için aynı klasörü yeniden seçmeniz gerekir.
             <button type="button" onClick={continuePendingUpload}>Klasörü yeniden seç</button>
@@ -1013,7 +1103,26 @@ export function App() {
         </section>
 
         {detailEntry && (
-          <CommentsVersionsPanel request={request} entryId={detailEntry.id} />
+          <div
+            className="detail-backdrop"
+            onClick={() => setDetailEntry(null)}
+            role="presentation"
+          >
+            <div
+              className="detail-modal"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Yorumlar ve sürümler"
+            >
+              <CommentsVersionsPanel
+                request={request}
+                entryId={detailEntry.id}
+                entryName={detailEntry.name}
+                onClose={() => setDetailEntry(null)}
+              />
+            </div>
+          </div>
         )}
           </>
         )}
@@ -1024,39 +1133,52 @@ export function App() {
         <ShareModal request={request} entryId={shareTarget.id} entryName={shareTarget.name} onClose={() => setShareTarget(null)} />
       )}
 
-      {uploadProgress && uploadProgress.status !== "idle" && uploadProgress.status !== "done" && (
-        <aside className="upload-dock" aria-live="polite">
+      {uploadLive && uploadProgress && (
+        <aside className={`upload-dock ${uploadDockOpen ? "" : "collapsed"}`} aria-live="polite">
           <header className="upload-dock-head">
             <div>
               <strong>Yüklemeler</strong>
               <small>{uploadProgress.percent}% · {uploadProgress.message}</small>
             </div>
             <div className="upload-actions">
+              <button type="button" onClick={() => setUploadDockOpen((v) => !v)}>
+                {uploadDockOpen ? "Gizle" : "Detay"}
+              </button>
               {uploadProgress.status === "paused"
                 ? <button type="button" onClick={() => queueRef.current?.resume()}>Devam</button>
                 : <button type="button" onClick={() => queueRef.current?.pause()}>Duraklat</button>}
               <button type="button" onClick={() => void queueRef.current?.cancel(uploadProgress.batchId)}>İptal</button>
             </div>
           </header>
-          <div className="upload-status-bar"><span style={{ width: `${uploadProgress.percent}%` }} /></div>
-          <small className="upload-dock-meta">
-            {formatBytes(uploadProgress.sentBytes)} / {formatBytes(uploadProgress.totalBytes)}
-            {uploadProgress.currentFile ? ` · ${uploadProgress.currentFile}` : ""}
-          </small>
-          {!!uploadProgress.files?.length && (
-            <ul className="upload-dock-list">
-              {uploadProgress.files.map((file) => {
-                const filePct = file.expectedSize
-                  ? Math.min(100, Math.round((file.receivedBytes / file.expectedSize) * 100))
-                  : 0;
-                return (
-                  <li key={file.relativePath} data-status={file.status}>
-                    <span title={file.relativePath}>{file.fileName}</span>
-                    <em>{file.status === "complete" ? "Tamam" : `${filePct}%`}</em>
-                  </li>
-                );
-              })}
-            </ul>
+          {uploadDockOpen && (
+            <>
+              <div className="upload-status-bar"><span style={{ width: `${uploadProgress.percent}%` }} /></div>
+              <small className="upload-dock-meta">
+                {formatBytes(uploadProgress.sentBytes)} / {formatBytes(uploadProgress.totalBytes)}
+                {uploadProgress.currentFile ? ` · ${uploadProgress.currentFile}` : ""}
+              </small>
+              {!!uploadProgress.files?.length && (
+                <ul className="upload-dock-list">
+                  {uploadProgress.files.slice(0, 3).map((file) => {
+                    const filePct = file.expectedSize
+                      ? Math.min(100, Math.round((file.receivedBytes / file.expectedSize) * 100))
+                      : 0;
+                    return (
+                      <li key={file.relativePath} data-status={file.status}>
+                        <span title={file.relativePath}>{file.fileName}</span>
+                        <em>{file.status === "complete" ? "Tamam" : `${filePct}%`}</em>
+                      </li>
+                    );
+                  })}
+                  {uploadProgress.files.length > 3 && (
+                    <li>
+                      <span>+{uploadProgress.files.length - 3} dosya daha</span>
+                      <em />
+                    </li>
+                  )}
+                </ul>
+              )}
+            </>
           )}
         </aside>
       )}

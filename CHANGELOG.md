@@ -1,5 +1,17 @@
 # Changelog
 
+## Web UI polish — yükleme çubuğu, paylaşım, kart aksiyonları
+
+### Added
+- Topbar altında minimal yükleme ilerleme çubuğu; kompakt yükleme dock’u
+- Paylaşım: e-posta veya görünen ad ile kullanıcı bulma; SMTP kapalıysa net uyarı
+
+### Fixed
+- Sidebar alt (APK/QR/profil) kısa pencerede kırpılma
+- Yorumlar paneli dış tık / Escape / Kapat ile kapanır
+- Dosya kartlarında ⋮ menü; ayırıcı çizgiler netleştirildi
+- Paylaşım e-posta konu satırı UTF-8 encoding
+
 ## 0.7.0 — Android UI sadeleştirme
 
 ### Added

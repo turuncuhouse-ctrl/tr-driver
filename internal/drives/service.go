@@ -189,9 +189,14 @@ func (s *Service) AddMember(ctx context.Context, actorID, actorRole, driveID, em
 		return errors.New("invalid role")
 	}
 	var userID string
-	err = s.db.QueryRow(ctx, `select id::text from users where email = $1`, strings.ToLower(strings.TrimSpace(email))).Scan(&userID)
+	query := strings.ToLower(strings.TrimSpace(email))
+	err = s.db.QueryRow(ctx, `
+		select id::text from users
+		where lower(email) = $1 or lower(display_name) = $1
+		order by case when lower(email) = $1 then 0 else 1 end
+		limit 1`, query).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errors.New("user not found")
+		return errors.New("kullanıcı bulunamadı (kayıtlı e-posta veya görünen ad girin)")
 	}
 	if err != nil {
 		return err

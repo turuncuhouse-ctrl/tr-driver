@@ -103,12 +103,16 @@ func (h *Handler) EmailLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.mail == nil {
-		httpx.Error(w, http.StatusBadRequest, "mail not configured")
+		httpx.Error(w, http.StatusBadRequest, "E-posta servisi yapılandırılmamış")
 		return
 	}
 	st, err := h.mail.Get(r.Context())
 	if err != nil || !st.Enabled {
-		httpx.Error(w, http.StatusBadRequest, "mail disabled")
+		httpx.Error(w, http.StatusBadRequest, "E-posta gönderimi kapalı. Admin → Mail ayarlarından SMTP’yi açın.")
+		return
+	}
+	if strings.TrimSpace(st.Host) == "" || strings.TrimSpace(st.From) == "" {
+		httpx.Error(w, http.StatusBadRequest, "SMTP ayarları eksik (host / gönderen adresi)")
 		return
 	}
 	user := auth.UserFromContext(r.Context())
@@ -119,20 +123,20 @@ func (h *Handler) EmailLink(w http.ResponseWriter, r *http.Request) {
 		Message string `json:"message"`
 	}
 	if err := httpx.ReadJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid request")
+		httpx.Error(w, http.StatusBadRequest, "geçersiz istek")
 		return
 	}
 	to := strings.TrimSpace(req.To)
 	link := strings.TrimSpace(req.URL)
 	if to == "" || link == "" {
-		httpx.Error(w, http.StatusBadRequest, "to and url required")
+		httpx.Error(w, http.StatusBadRequest, "alıcı e-posta ve paylaşım linki gerekli")
 		return
 	}
 	if !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") {
 		if strings.HasPrefix(link, "/") {
 			link = strings.TrimRight(h.cfg.PublicBaseURL, "/") + link
 		} else {
-			httpx.Error(w, http.StatusBadRequest, "invalid url")
+			httpx.Error(w, http.StatusBadRequest, "geçersiz link")
 			return
 		}
 	}
@@ -147,7 +151,17 @@ func (h *Handler) EmailLink(w http.ResponseWriter, r *http.Request) {
 		body = body + "\n\n" + link + "\n"
 	}
 	if err := h.mail.Send(r.Context(), to, subject, body); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err.Error())
+		msg := err.Error()
+		low := strings.ToLower(msg)
+		switch {
+		case strings.Contains(low, "mail disabled"):
+			msg = "E-posta gönderimi kapalı. Admin → Mail ayarlarından SMTP’yi açın."
+		case strings.Contains(low, "incomplete"):
+			msg = "SMTP ayarları eksik (host / gönderen adresi)"
+		case strings.Contains(low, "smtp connect"), strings.Contains(low, "smtp auth"), strings.Contains(low, "smtp tls"):
+			msg = "E-posta sunucusuna bağlanılamadı: " + err.Error()
+		}
+		httpx.Error(w, http.StatusBadRequest, msg)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "sent"})

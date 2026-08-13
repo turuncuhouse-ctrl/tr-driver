@@ -35,16 +35,23 @@ func (s *Service) Grant(ctx context.Context, actorID, actorRole, entryID, email,
 		return nil, errors.New("invalid role")
 	}
 	var grantee domain.User
-	err := s.db.QueryRow(ctx, `select id::text, email, display_name from users where email = $1`,
-		strings.ToLower(strings.TrimSpace(email))).Scan(&grantee.ID, &grantee.Email, &grantee.DisplayName)
+	query := strings.ToLower(strings.TrimSpace(email))
+	if query == "" {
+		return nil, errors.New("e-posta veya görünen ad gerekli")
+	}
+	err := s.db.QueryRow(ctx, `
+		select id::text, email, display_name from users
+		where lower(email) = $1 or lower(display_name) = $1
+		order by case when lower(email) = $1 then 0 else 1 end
+		limit 1`, query).Scan(&grantee.ID, &grantee.Email, &grantee.DisplayName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errors.New("user not found")
+		return nil, errors.New("kullanıcı bulunamadı (kayıtlı e-posta veya görünen ad girin)")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if grantee.ID == actorID {
-		return nil, errors.New("cannot share with yourself")
+		return nil, errors.New("kendinizle paylaşamazsınız")
 	}
 	var p domain.FilePermission
 	err = s.db.QueryRow(ctx, `

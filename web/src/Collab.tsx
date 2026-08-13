@@ -146,8 +146,32 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
   const [maxDownloads, setMaxDownloads] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
   const [mailEnabled, setMailEnabled] = useState(false);
+  const [mailChecked, setMailChecked] = useState(false);
   const [mailTo, setMailTo] = useState("");
   const [msg, setMsg] = useState("");
+
+  function friendlyShareError(raw: string) {
+    const t = raw.toLowerCase();
+    if (t.includes("user not found") || t.includes("kullanıcı bulunamadı")) {
+      return "Kullanıcı bulunamadı (kayıtlı e-posta veya görünen ad girin)";
+    }
+    if (t.includes("cannot share with yourself") || t.includes("kendiniz")) {
+      return "Kendinizle paylaşamazsınız";
+    }
+    if (t.includes("mail not configured") || t.includes("mail disabled")) {
+      return "E-posta gönderimi kapalı. Admin → Mail ayarlarından SMTP’yi açın.";
+    }
+    if (t.includes("mail settings incomplete")) {
+      return "SMTP ayarları eksik (host / gönderen adresi).";
+    }
+    if (t.includes("smtp connect") || t.includes("smtp auth") || t.includes("smtp tls")) {
+      return `E-posta sunucusuna bağlanılamadı: ${raw}`;
+    }
+    if (t.includes("to and url required")) {
+      return "Alıcı e-posta ve paylaşım linki gerekli.";
+    }
+    return raw;
+  }
 
   async function refresh() {
     setPerms(await request<Permission[]>(`/api/permissions?entryId=${encodeURIComponent(entryId)}`));
@@ -155,8 +179,14 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
   useEffect(() => {
     void refresh();
     void request<{ enabled: boolean }>("/api/mail/status")
-      .then((s) => setMailEnabled(!!s.enabled))
-      .catch(() => setMailEnabled(false));
+      .then((s) => {
+        setMailEnabled(!!s.enabled);
+        setMailChecked(true);
+      })
+      .catch(() => {
+        setMailEnabled(false);
+        setMailChecked(true);
+      });
   }, [entryId]);
 
   async function grant(e: FormEvent) {
@@ -167,35 +197,51 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
       await refresh();
       setMsg("Kullanıcıya paylaşıldı");
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : "Paylaşılamadı");
+      setMsg(friendlyShareError(err instanceof Error ? err.message : "Paylaşılamadı"));
     }
   }
 
-  async function createLink(e: FormEvent) {
-    e.preventDefault();
+  async function ensureLink() {
+    if (linkUrl) return linkUrl;
     const body: Record<string, unknown> = { entryId, password, expiresInDays: days, permission: "download" };
     if (maxDownloads) body.maxDownloads = Number(maxDownloads);
     const res = await request<{ url: string }>("/api/shares", { method: "POST", body: JSON.stringify(body) });
     const full = location.origin + res.url;
     setLinkUrl(full);
     await navigator.clipboard.writeText(full).catch(() => undefined);
-    setMsg("Link oluşturuldu ve kopyalandı");
+    return full;
+  }
+
+  async function createLink(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const body: Record<string, unknown> = { entryId, password, expiresInDays: days, permission: "download" };
+      if (maxDownloads) body.maxDownloads = Number(maxDownloads);
+      const res = await request<{ url: string }>("/api/shares", { method: "POST", body: JSON.stringify(body) });
+      const full = location.origin + res.url;
+      setLinkUrl(full);
+      await navigator.clipboard.writeText(full).catch(() => undefined);
+      setMsg("Link oluşturuldu ve kopyalandı");
+    } catch (err) {
+      setMsg(friendlyShareError(err instanceof Error ? err.message : "Link oluşturulamadı"));
+    }
   }
 
   async function emailLink(e: FormEvent) {
     e.preventDefault();
-    if (!linkUrl) {
-      setMsg("Önce bir link oluşturun.");
-      return;
-    }
     try {
+      const url = await ensureLink();
+      if (!url) {
+        setMsg("Önce bir link oluşturun.");
+        return;
+      }
       await request("/api/shares/email", {
         method: "POST",
-        body: JSON.stringify({ to: mailTo, url: linkUrl, subject: `Paylaşım: ${entryName}` })
+        body: JSON.stringify({ to: mailTo, url, subject: `Paylaşım: ${entryName}` })
       });
       setMsg("Link e-posta ile gönderildi.");
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : "E-posta gönderilemedi");
+      setMsg(friendlyShareError(err instanceof Error ? err.message : "E-posta gönderilemedi"));
     }
   }
 
@@ -205,7 +251,13 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
         <header className="row between"><h2>Paylaş: {entryName}</h2><button onClick={onClose}>Kapat</button></header>
         <form className="stack" onSubmit={grant}>
           <h3>Kullanıcıya paylaş</h3>
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="e-posta" required />
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Kayıtlı e-posta veya görünen ad"
+            required
+          />
+          <small>Yalnızca sistemde hesabı olan kullanıcılar. Tam e-posta veya görünen ad yazın.</small>
           <select value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="viewer">Görüntüle</option>
             <option value="commenter">Yorum</option>
@@ -229,12 +281,17 @@ export function ShareModal({ request, entryId, entryName, onClose }: { request: 
           <button className="primary" type="submit">Link oluştur</button>
           {linkUrl && <code>{linkUrl}</code>}
         </form>
-        {mailEnabled && (
+        {mailChecked && mailEnabled && (
           <form className="stack" onSubmit={emailLink}>
             <h3>Linki e-posta ile gönder</h3>
             <input type="email" required value={mailTo} onChange={(e) => setMailTo(e.target.value)} placeholder="alıcı@ornek.com" />
-            <button className="primary" type="submit" disabled={!linkUrl}>Gönder</button>
+            <button className="primary" type="submit">
+              {linkUrl ? "Gönder" : "Link oluştur ve gönder"}
+            </button>
           </form>
+        )}
+        {mailChecked && !mailEnabled && (
+          <p className="mail-hint">E-posta ile link göndermek için Admin → Mail’den SMTP ayarlarını açın.</p>
         )}
         {msg && <p>{msg}</p>}
       </div>
@@ -407,7 +464,17 @@ export function NotificationsPanel({ request }: Props) {
   );
 }
 
-export function CommentsVersionsPanel({ request, entryId }: { request: Props["request"]; entryId: string }) {
+export function CommentsVersionsPanel({
+  request,
+  entryId,
+  entryName,
+  onClose
+}: {
+  request: Props["request"];
+  entryId: string;
+  entryName?: string;
+  onClose?: () => void;
+}) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
   const [body, setBody] = useState("");
@@ -418,7 +485,12 @@ export function CommentsVersionsPanel({ request, entryId }: { request: Props["re
   useEffect(() => { void refresh(); }, [entryId]);
   return (
     <div className="collab-panel">
-      <h3>Yorumlar</h3>
+      <div className="collab-panel-header">
+        <h3>Yorumlar{entryName ? ` · ${entryName}` : ""}</h3>
+        {onClose && (
+          <button type="button" onClick={onClose} title="Kapat">Kapat</button>
+        )}
+      </div>
       <ul className="plain-list">{comments.map((c) => <li key={c.id}><strong>{c.displayName}</strong>: {c.body}</li>)}</ul>
       <form className="row" onSubmit={(e) => { e.preventDefault(); void request("/api/files/comments", { method: "POST", body: JSON.stringify({ entryId, body }) }).then(() => { setBody(""); return refresh(); }); }}>
         <input value={body} onChange={(e) => setBody(e.target.value)} placeholder="Yorum yaz" required />
