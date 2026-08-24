@@ -22,6 +22,7 @@ type Config struct {
 	UploadSessionTTL    time.Duration
 	MaxBatchFiles       int
 	MaxConcurrentChunks int
+	MaxConcurrentUploads int
 	SessionTTL          time.Duration
 	DeviceTokenTTL      time.Duration
 	TrashRetention      time.Duration
@@ -47,9 +48,10 @@ func Load() (Config, error) {
 		MaxUploadBatchBytes: getEnvInt64("MAX_UPLOAD_BATCH_BYTES", 10*1024*1024*1024),
 		UploadChunkBytes:    getEnvInt64("UPLOAD_CHUNK_BYTES", 8*1024*1024),
 		UploadSessionTTL:    getEnvDuration("UPLOAD_SESSION_TTL", 48*time.Hour),
-		MaxBatchFiles:       getEnvInt("MAX_BATCH_FILES", 2000),
-		MaxConcurrentChunks: getEnvInt("MAX_CONCURRENT_CHUNKS", 2),
-		SessionTTL:          getEnvDuration("SESSION_TTL", 24*time.Hour),
+		MaxBatchFiles:        getEnvInt("MAX_BATCH_FILES", 2000),
+		MaxConcurrentChunks:  getEnvInt("MAX_CONCURRENT_CHUNKS", 2),
+		MaxConcurrentUploads: getEnvInt("MAX_CONCURRENT_UPLOADS", 3),
+		SessionTTL:           getEnvDuration("SESSION_TTL", 24*time.Hour),
 		DeviceTokenTTL:      getEnvDuration("DEVICE_TOKEN_TTL", 720*time.Hour),
 		TrashRetention:      getEnvDuration("TRASH_RETENTION", 720*time.Hour),
 		ShareTokenBytes:     getEnvInt("SHARE_TOKEN_BYTES", 24),

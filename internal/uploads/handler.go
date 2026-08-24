@@ -1,6 +1,7 @@
 package uploads
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 
 	"necipdrive/internal/auth"
 	"necipdrive/internal/httpx"
+	"necipdrive/internal/loadpace"
 )
 
 type Handler struct {
@@ -101,6 +103,11 @@ func (h *Handler) AppendChunk(w http.ResponseWriter, r *http.Request) {
 
 	newOffset, err := h.service.AppendChunk(r.Context(), user.ID, sessionID, offset, r.Body, length)
 	if err != nil {
+		if errors.Is(err, loadpace.ErrOverloaded) {
+			w.Header().Set("Retry-After", "5")
+			httpx.Error(w, http.StatusTooManyRequests, "Sunucu yoğun, lütfen biraz bekleyin")
+			return
+		}
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "unexpected offset") {
 			w.Header().Set("Upload-Offset", strconv.FormatInt(newOffset, 10))

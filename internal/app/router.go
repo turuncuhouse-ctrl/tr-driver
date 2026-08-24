@@ -90,6 +90,7 @@ func NewRouter(
 	mux.Handle("/api/mail/status", authHandler.RequireAuth(http.HandlerFunc(mailHandler.Status)))
 	mux.Handle("/api/files", authHandler.RequireAuth(http.HandlerFunc(fileHandler.ListOrCreateFolder)))
 	mux.Handle("/api/files/upload", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Upload)))
+	mux.Handle("/api/files/upload-pace", authHandler.RequireAuth(http.HandlerFunc(fileHandler.UploadPace)))
 	mux.Handle("/api/files/move", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Move)))
 	mux.Handle("/api/files/rename", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Rename)))
 	mux.Handle("/api/files/delete", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Delete)))

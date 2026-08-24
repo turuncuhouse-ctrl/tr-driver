@@ -106,3 +106,15 @@ data class AndroidVersionInfo(
     val downloadURL: String = "/download/TRDriver.apk",
     val apkAvailable: Boolean = false,
 )
+
+@Serializable
+data class UploadPace(
+    val cpuPercent: Double = 0.0,
+    val activeUploads: Int = 0,
+    val maxConcurrent: Int = 3,
+    val delayMs: Int = 350,
+    val mode: String = "normal",
+    val acceptUploads: Boolean = true,
+    val retryAfterSec: Int = 0,
+    val recommendedBatch: Int = 8,
+)

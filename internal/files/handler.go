@@ -1,6 +1,7 @@
 package files
 
 import (
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"necipdrive/internal/auth"
 	"necipdrive/internal/domain"
 	"necipdrive/internal/httpx"
+	"necipdrive/internal/loadpace"
 )
 
 type Handler struct {
@@ -83,10 +85,28 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	entry, err := h.service.Upload(r.Context(), *user, parentID, auth.DeviceIDFromContext(r.Context()), file, header)
 	if err != nil {
+		if errors.Is(err, loadpace.ErrOverloaded) {
+			snap := h.service.UploadPace()
+			retry := snap.RetryAfterSec
+			if retry < 1 {
+				retry = 5
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
+			httpx.Error(w, http.StatusTooManyRequests, "Sunucu yoğun, lütfen biraz bekleyin")
+			return
+		}
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, entry)
+}
+
+func (h *Handler) UploadPace(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, h.service.UploadPace())
 }
 
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {

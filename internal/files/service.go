@@ -15,6 +15,7 @@ import (
 	"necipdrive/internal/changelog"
 	"necipdrive/internal/config"
 	"necipdrive/internal/domain"
+	"necipdrive/internal/loadpace"
 	"necipdrive/internal/storage"
 
 	"github.com/google/uuid"
@@ -27,10 +28,18 @@ type Service struct {
 	storage *storage.Local
 	cfg     config.Config
 	access  *access.Service
+	pace    *loadpace.Controller
 }
 
-func NewService(db *pgxpool.Pool, fileStorage *storage.Local, cfg config.Config, accessSvc *access.Service) *Service {
-	return &Service{db: db, storage: fileStorage, cfg: cfg, access: accessSvc}
+func NewService(db *pgxpool.Pool, fileStorage *storage.Local, cfg config.Config, accessSvc *access.Service, pace *loadpace.Controller) *Service {
+	return &Service{db: db, storage: fileStorage, cfg: cfg, access: accessSvc, pace: pace}
+}
+
+func (s *Service) UploadPace() loadpace.Snapshot {
+	if s.pace == nil {
+		return loadpace.Snapshot{Mode: "normal", DelayMs: 350, AcceptUploads: true, MaxConcurrent: 3, RecommendedBatch: 8}
+	}
+	return s.pace.Snapshot()
 }
 
 func (s *Service) List(ctx context.Context, userID, userRole, parentID string) ([]domain.FileEntry, error) {
@@ -155,6 +164,13 @@ func (s *Service) CreateFolder(ctx context.Context, userID, userRole, parentID, 
 
 func (s *Service) Upload(ctx context.Context, user domain.User, parentID, deviceID string, file multipart.File, header *multipart.FileHeader) (*domain.FileEntry, error) {
 	defer file.Close()
+	if s.pace != nil {
+		release, err := s.pace.Acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	if err := s.access.Require(ctx, user.ID, user.Role, parentID, access.ActionEdit); err != nil {
 		return nil, err
 	}

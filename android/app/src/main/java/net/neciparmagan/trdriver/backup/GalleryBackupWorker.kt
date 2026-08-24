@@ -60,7 +60,9 @@ class GalleryBackupWorker(
                 return Result.success()
             }
 
-            val batch = pendingList.take(FILES_PER_RUN)
+            val pace = runCatching { api.refreshUploadPace() }.getOrNull()
+            val filesPerRun = pace?.recommendedBatch?.coerceIn(1, 20) ?: FILES_PER_RUN
+            val batch = pendingList.take(filesPerRun)
             var pendingLeft = pendingList.size
             var lastWidgetRefresh = 0L
 

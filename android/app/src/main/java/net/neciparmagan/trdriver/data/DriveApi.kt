@@ -329,6 +329,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
         onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
     ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
+        refreshUploadPace()
         UploadThrottle.run {
             withContext(Dispatchers.IO) {
                 val resolver = appContext.contentResolver
@@ -356,6 +357,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
         onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
     ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
+        refreshUploadPace()
         UploadThrottle.run {
             withContext(Dispatchers.IO) {
                 val resolver = appContext.contentResolver
@@ -363,6 +365,21 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                     resolver.openInputStream(media.uri) ?: throw IOException("Medya okunamadı")
                 }
             }
+        }
+    }
+
+    suspend fun refreshUploadPace(): UploadPace = withContext(Dispatchers.IO) {
+        try {
+            val req = authed(Request.Builder().url("${base()}/api/files/upload-pace")).get().build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext UploadPace()
+                val pace = json.decodeFromString(UploadPace.serializer(), text)
+                UploadThrottle.applyPace(pace)
+                pace
+            }
+        } catch (_: Exception) {
+            UploadPace()
         }
     }
 
@@ -417,7 +434,17 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             .build()
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw IOException(parseError(text))
+            if (!resp.isSuccessful) {
+                val retryAfter = resp.header("Retry-After")?.toIntOrNull() ?: 0
+                if (resp.code == 429) {
+                    throw HttpStatusIOException(
+                        code = 429,
+                        message = parseError(text).ifBlank { "Sunucu yoğun" },
+                        retryAfterSec = retryAfter.coerceAtLeast(2),
+                    )
+                }
+                throw IOException(parseError(text))
+            }
             return json.decodeFromString(FileEntry.serializer(), text)
         }
     }

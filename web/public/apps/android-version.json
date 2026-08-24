@@ -1,7 +1,7 @@
 ﻿{
     "minSupportedCode":  1,
-    "versionCode":  13,
-    "versionName":  "0.7.5",
+    "versionCode":  14,
+    "versionName":  "0.7.6",
     "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "Yükleme ağ değişiminde yeniden dener. Yıldızlı klasörler üstte. Araç kabul Kapat butonu."
+    "releaseNotes":  "Sunucu yüküne göre otomatik yükleme hızı (CPU/pace). Yoğunlukta yavaşlar, boşken hızlanır."
 }

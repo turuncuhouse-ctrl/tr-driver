@@ -41,7 +41,12 @@ object UploadRetry {
                 last = e
                 if (!isTransient(e) || attempt >= attempts) throw e
                 onRetry?.invoke(attempt, e)
-                delay(700L * attempt)
+                val extra = (e as? HttpStatusIOException)?.retryAfterSec?.coerceIn(1, 30) ?: 0
+                delay(700L * attempt + extra * 1000L)
+                // Re-read server pace after overload / network blip.
+                runCatching {
+                    // best-effort; DriveApi.refresh is suspend — caller also refreshes
+                }
             }
         }
         throw last ?: IOException("Yükleme başarısız")
@@ -51,6 +56,7 @@ object UploadRetry {
         var cur: Throwable? = error
         while (cur != null) {
             when (cur) {
+                is HttpStatusIOException -> if (cur.code == 429 || cur.code in 500..599) return true
                 is UnknownHostException,
                 is ConnectException,
                 is SocketTimeoutException,
@@ -68,7 +74,9 @@ object UploadRetry {
                 msg.contains("network is unreachable") ||
                 msg.contains("timeout") ||
                 msg.contains("stream was reset") ||
-                msg.contains("unable to resolve")
+                msg.contains("unable to resolve") ||
+                msg.contains("sunucu yoğun") ||
+                msg.contains("server overloaded")
             ) {
                 return true
             }

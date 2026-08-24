@@ -15,6 +15,7 @@ import (
 	"necipdrive/internal/changelog"
 	"necipdrive/internal/config"
 	"necipdrive/internal/domain"
+	"necipdrive/internal/loadpace"
 	"necipdrive/internal/storage"
 
 	"github.com/google/uuid"
@@ -23,28 +24,29 @@ import (
 )
 
 type ManifestFile struct {
-	RelativePath   string `json:"relativePath"`
-	FileName       string `json:"fileName"`
-	MimeType       string `json:"mimeType"`
-	ExpectedSize   int64  `json:"expectedSize"`
-	LastModifiedMs int64  `json:"lastModifiedMs"`
-	TargetEntryID  *string `json:"targetEntryId,omitempty"`
-	ExpectedVersion *int64 `json:"expectedVersion,omitempty"`
-	ContentHash    string `json:"contentHash"`
+	RelativePath     string     `json:"relativePath"`
+	FileName         string     `json:"fileName"`
+	MimeType         string     `json:"mimeType"`
+	ExpectedSize     int64      `json:"expectedSize"`
+	LastModifiedMs   int64      `json:"lastModifiedMs"`
+	TargetEntryID    *string    `json:"targetEntryId,omitempty"`
+	ExpectedVersion  *int64     `json:"expectedVersion,omitempty"`
+	ContentHash      string     `json:"contentHash"`
 	ClientModifiedAt *time.Time `json:"clientModifiedAt,omitempty"`
-	DeviceID       *string `json:"deviceId,omitempty"`
+	DeviceID         *string    `json:"deviceId,omitempty"`
 }
 
 type Service struct {
 	db      *pgxpool.Pool
 	storage *storage.Local
 	cfg     config.Config
+	pace    *loadpace.Controller
 
 	globalSem chan struct{}
 	userLocks sync.Map
 }
 
-func NewService(db *pgxpool.Pool, fileStorage *storage.Local, cfg config.Config) *Service {
+func NewService(db *pgxpool.Pool, fileStorage *storage.Local, cfg config.Config, pace *loadpace.Controller) *Service {
 	slots := cfg.MaxConcurrentChunks
 	if slots < 1 {
 		slots = 2
@@ -53,6 +55,7 @@ func NewService(db *pgxpool.Pool, fileStorage *storage.Local, cfg config.Config)
 		db:        db,
 		storage:   fileStorage,
 		cfg:       cfg,
+		pace:      pace,
 		globalSem: make(chan struct{}, slots),
 	}
 }
@@ -238,11 +241,19 @@ func (s *Service) AppendChunk(ctx context.Context, userID, sessionID string, off
 	unlock := s.lockUser(userID)
 	defer unlock()
 
-	select {
-	case s.globalSem <- struct{}{}:
-		defer func() { <-s.globalSem }()
-	case <-ctx.Done():
-		return 0, ctx.Err()
+	if s.pace != nil {
+		release, err := s.pace.Acquire(ctx)
+		if err != nil {
+			return 0, err
+		}
+		defer release()
+	} else {
+		select {
+		case s.globalSem <- struct{}{}:
+			defer func() { <-s.globalSem }()
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
 	}
 
 	tx, err := s.db.Begin(ctx)

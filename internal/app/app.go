@@ -16,6 +16,7 @@ import (
 	"necipdrive/internal/drives"
 	"necipdrive/internal/files"
 	"necipdrive/internal/license"
+	"necipdrive/internal/loadpace"
 	"necipdrive/internal/mailer"
 	"necipdrive/internal/plans"
 	"necipdrive/internal/shares"
@@ -50,10 +51,11 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	adminService := admin.NewService(db, cfg.DataDir, cfg.FreeQuotaBytes)
 	mailService := mailer.New(db)
 	authService.SetMailer(mailService)
-	fileService := files.NewService(db, fileStorage, cfg, accessSvc)
+	pace := loadpace.New(cfg.MaxConcurrentUploads)
+	fileService := files.NewService(db, fileStorage, cfg, accessSvc, pace)
 	planService := plans.NewService(db)
 	shareService := shares.NewService(db, cfg, accessSvc)
-	uploadService := uploads.NewService(db, fileStorage, cfg)
+	uploadService := uploads.NewService(db, fileStorage, cfg, pace)
 	syncService := syncapi.NewService(db, fileService)
 	driveService := drives.NewService(db, accessSvc)
 	collabService := collab.NewService(db, accessSvc, fileStorage)
