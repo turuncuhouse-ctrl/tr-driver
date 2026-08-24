@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -44,15 +46,34 @@ func (s *Service) WriteFolderZip(ctx context.Context, userID, userRole, folderID
 	if err != nil {
 		return err
 	}
+	if len(items) == 0 {
+		return errors.New("folder is empty")
+	}
+
+	// Resolve on-disk files before committing response headers.
+	ready := make([]zipFileItem, 0, len(items))
 	var total int64
 	for _, item := range items {
-		total += item.sizeBytes
+		if item.storageKey == "" || strings.HasPrefix(item.storageKey, "folder/") {
+			continue
+		}
+		size, err := s.storage.Size(item.storageKey)
+		if err != nil || size <= 0 {
+			log.Printf("zip skip missing blob %s (%s)", item.relPath, item.storageKey)
+			continue
+		}
+		item.sizeBytes = size
+		total += size
 		if total > maxZipBytes {
 			return fmt.Errorf("folder exceeds max zip size (%d bytes)", maxZipBytes)
 		}
+		ready = append(ready, item)
+		if len(ready) > maxZipFiles {
+			return fmt.Errorf("folder exceeds max zip file count (%d)", maxZipFiles)
+		}
 	}
-	if len(items) > maxZipFiles {
-		return fmt.Errorf("folder exceeds max zip file count (%d)", maxZipFiles)
+	if len(ready) == 0 {
+		return errors.New("no downloadable files found in folder")
 	}
 
 	zipName := entry.Name + ".zip"
@@ -63,7 +84,7 @@ func (s *Service) WriteFolderZip(ctx context.Context, userID, userRole, folderID
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
-	for _, item := range items {
+	for _, item := range ready {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -71,6 +92,10 @@ func (s *Service) WriteFolderZip(ctx context.Context, userID, userRole, folderID
 		}
 		reader, err := s.storage.Open(item.storageKey)
 		if err != nil {
+			if os.IsNotExist(err) {
+				log.Printf("zip skip vanished blob %s (%s)", item.relPath, item.storageKey)
+				continue
+			}
 			return fmt.Errorf("open %s: %w", item.relPath, err)
 		}
 		header := &zip.FileHeader{
@@ -109,7 +134,9 @@ func (s *Service) collectZipFiles(ctx context.Context, folderID string) ([]zipFi
 		)
 		select rel_path, storage_key, size_bytes, updated_at
 		from tree
-		where kind = 'file' and storage_key <> ''
+		where kind = 'file'
+		  and storage_key <> ''
+		  and storage_key not like 'folder/%'
 		order by rel_path asc`,
 		folderID,
 	)

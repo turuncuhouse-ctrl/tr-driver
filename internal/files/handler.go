@@ -122,13 +122,19 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Query().Get("zip") == "1" {
+	wantZip := r.URL.Query().Get("zip") == "1"
+	if wantZip {
 		h.downloadFolderZip(w, r, user, fileID)
 		return
 	}
 
 	entry, reader, err := h.service.Download(r.Context(), user.ID, user.Role, fileID)
 	if err != nil {
+		// Folders have no blob on disk — stream as ZIP automatically.
+		if errors.Is(err, ErrIsFolder) {
+			h.downloadFolderZip(w, r, user, fileID)
+			return
+		}
 		httpx.Error(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -157,6 +163,7 @@ func (h *Handler) downloadFolderZip(w http.ResponseWriter, r *http.Request, user
 		if strings.Contains(msg, "not found") || strings.Contains(msg, "denied") || strings.Contains(msg, "permission") {
 			status = http.StatusNotFound
 		}
+		// Headers may already be committed if streaming started; best-effort JSON.
 		httpx.Error(w, status, msg)
 	}
 }

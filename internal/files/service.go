@@ -370,6 +370,8 @@ func (s *Service) FindChildFile(ctx context.Context, parentID, name string) (*do
 	return &entry, nil
 }
 
+var ErrIsFolder = errors.New("entry is a folder")
+
 func (s *Service) Download(ctx context.Context, userID, userRole, fileID string) (*domain.FileEntry, io.ReadCloser, error) {
 	if err := s.access.Require(ctx, userID, userRole, fileID, access.ActionView); err != nil {
 		return nil, nil, err
@@ -377,6 +379,9 @@ func (s *Service) Download(ctx context.Context, userID, userRole, fileID string)
 	entry, err := s.entryByID(ctx, fileID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if entry.Kind == "folder" || strings.HasPrefix(entry.StorageKey, "folder/") {
+		return entry, nil, ErrIsFolder
 	}
 	_, _ = s.db.Exec(ctx, `update file_entries set last_opened_at = now() where id = $1::uuid`, fileID)
 	reader, err := s.storage.Open(entry.StorageKey)
