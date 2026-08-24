@@ -737,6 +737,9 @@ export function App() {
     const menuOpen = actionMenuId === entry.id;
     return (
       <div className="row-actions" onClick={(event) => event.stopPropagation()}>
+        {entry.kind === "folder" && (
+          <a title="ZIP indir" href={`/api/files/download/${entry.id}?zip=1`}>↓</a>
+        )}
         {entry.kind === "file" && kind && (
           <button type="button" title="Önizle" onClick={() => openPreview(entry)}>◎</button>
         )}
@@ -763,6 +766,9 @@ export function App() {
         </button>
         {menuOpen && (
           <div className="row-menu" role="menu">
+            {entry.kind === "folder" && (
+              <a href={`/api/files/download/${entry.id}?zip=1`}>ZIP indir</a>
+            )}
             {entry.kind === "file" && kind && (
               <a href={`/api/files/download/${entry.id}`}>İndir</a>
             )}

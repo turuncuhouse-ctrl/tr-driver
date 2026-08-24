@@ -116,6 +116,17 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	user := auth.UserFromContext(r.Context())
 	fileID := strings.TrimPrefix(r.URL.Path, "/api/files/download/")
+	fileID = strings.Trim(fileID, "/")
+	if fileID == "" || strings.Contains(fileID, "/") {
+		httpx.Error(w, http.StatusBadRequest, "file id required")
+		return
+	}
+
+	if r.URL.Query().Get("zip") == "1" {
+		h.downloadFolderZip(w, r, user, fileID)
+		return
+	}
+
 	entry, reader, err := h.service.Download(r.Context(), user.ID, user.Role, fileID)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, err.Error())
@@ -137,6 +148,17 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(entry.SizeBytes, 10))
 	_, _ = io.Copy(w, reader)
+}
+
+func (h *Handler) downloadFolderZip(w http.ResponseWriter, r *http.Request, user *domain.User, folderID string) {
+	if err := h.service.WriteFolderZip(r.Context(), user.ID, user.Role, folderID, w); err != nil {
+		status := http.StatusBadRequest
+		msg := err.Error()
+		if strings.Contains(msg, "not found") || strings.Contains(msg, "denied") || strings.Contains(msg, "permission") {
+			status = http.StatusNotFound
+		}
+		httpx.Error(w, status, msg)
+	}
 }
 
 func (h *Handler) Move(w http.ResponseWriter, r *http.Request) {
