@@ -221,6 +221,19 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
     }
 
     private val folderCache = ConcurrentHashMap<String, String>()
+    private val photosMonthCache = ConcurrentHashMap<String, String>()
+
+    @Volatile
+    private var cachedPace: UploadPace? = null
+
+    @Volatile
+    private var lastPaceFetchMs: Long = 0L
+
+    private companion object {
+        const val PACE_TTL_MS = 45_000L
+        /** Client-side ~25% speed boost on server-advised delays (backup/manual upload). */
+        const val PACE_DELAY_FACTOR = 0.75
+    }
 
     suspend fun ensureChildFolder(parentId: String?, name: String): String = withContext(Dispatchers.IO) {
         val cacheKey = (parentId ?: "root") + "/" + name
@@ -237,6 +250,8 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
     }
 
     suspend fun ensurePhotosAlbumFolder(media: LocalMedia): String {
+        val monthKey = "${media.year}/${"%02d".format(media.month)}"
+        photosMonthCache[monthKey]?.let { return it }
         val device = sanitizeFolder(session.deviceName.ifBlank { android.os.Build.MODEL ?: "Android" })
         val root = if (session.photosRootId.isNotBlank()) {
             session.photosRootId
@@ -247,7 +262,9 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
         val deviceId = ensureChildFolder(root, device)
         val yearId = ensureChildFolder(deviceId, media.year.toString())
-        return ensureChildFolder(yearId, "%02d".format(media.month))
+        val monthId = ensureChildFolder(yearId, "%02d".format(media.month))
+        photosMonthCache[monthKey] = monthId
+        return monthId
     }
 
     /** TR Backup / {device} / {folderName} */
@@ -329,7 +346,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
         onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
     ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
-        refreshUploadPace()
+        refreshUploadPaceIfStale()
         UploadThrottle.run {
             withContext(Dispatchers.IO) {
                 val resolver = appContext.contentResolver
@@ -357,7 +374,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
         onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
     ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
-        refreshUploadPace()
+        refreshUploadPaceIfStale()
         UploadThrottle.run {
             withContext(Dispatchers.IO) {
                 val resolver = appContext.contentResolver
@@ -368,19 +385,43 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
     }
 
-    suspend fun refreshUploadPace(): UploadPace = withContext(Dispatchers.IO) {
+    /** Force refresh at backup batch start; uploads use TTL cache to avoid per-file round-trips. */
+    suspend fun refreshUploadPace(force: Boolean = false): UploadPace = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (!force) {
+            cachedPace?.let { pace ->
+                if (now - lastPaceFetchMs < PACE_TTL_MS) return@withContext pace
+            }
+        }
         try {
             val req = authed(Request.Builder().url("${base()}/api/files/upload-pace")).get().build()
             http.newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) return@withContext UploadPace()
+                if (!resp.isSuccessful) return@withContext cachedPace ?: UploadPace()
                 val pace = json.decodeFromString(UploadPace.serializer(), text)
-                UploadThrottle.applyPace(pace)
+                applyPaceToThrottle(pace)
+                cachedPace = pace
+                lastPaceFetchMs = now
                 pace
             }
         } catch (_: Exception) {
-            UploadPace()
+            cachedPace ?: UploadPace()
         }
+    }
+
+    private suspend fun refreshUploadPaceIfStale() {
+        refreshUploadPace(force = false)
+    }
+
+    private fun applyPaceToThrottle(pace: UploadPace) {
+        val boostedBatch = (pace.recommendedBatch * 1.25).toInt().coerceIn(1, 25)
+        val boostedDelay = (pace.delayMs * PACE_DELAY_FACTOR).toInt().coerceIn(40, 8_000)
+        UploadThrottle.applyPace(
+            pace.copy(
+                recommendedBatch = boostedBatch,
+                delayMs = boostedDelay,
+            ),
+        )
     }
 
     private fun uploadStream(
@@ -398,7 +439,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             override fun isOneShot(): Boolean = true
             override fun writeTo(sink: BufferedSink) {
                 open().use { input ->
-                    val buffer = ByteArray(64 * 1024)
+                    val buffer = ByteArray(128 * 1024)
                     var sent = 0L
                     var lastEmit = -1L
                     while (true) {

@@ -85,12 +85,12 @@ func (c *Controller) Snapshot() Snapshot {
 		retryAfter = 2
 	case cpu <= 50 && occupancy < 0.5:
 		mode = "fast"
-		delayMs = 80
-		batch = 15
+		delayMs = 60
+		batch = 19
 	default:
 		mode = "normal"
-		delayMs = 400
-		batch = 8
+		delayMs = 300
+		batch = 10
 	}
 
 	return Snapshot{

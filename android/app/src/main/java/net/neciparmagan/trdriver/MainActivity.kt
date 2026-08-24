@@ -93,8 +93,6 @@ class MainActivity : AppCompatActivity() {
                 SessionStore.KEY_BACKUP_BYTES_TOTAL,
                 SessionStore.KEY_LAST_MSG,
                 SessionStore.KEY_GALLERY_ON,
-                SessionStore.KEY_LAST_MSG,
-                SessionStore.KEY_GALLERY_ON,
                 -> runOnUiThread { refreshBackupUi() }
             }
         }
@@ -119,6 +117,7 @@ class MainActivity : AppCompatActivity() {
         onShare = { vm.shareEntry(it) },
         onStar = { vm.toggleStar(it) },
         onToggleCheck = { vm.toggleSelection(it.id) },
+        onAddIntakePhotos = { entry -> openIntakeForPlate(entry.name, entry.id) },
     )
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -437,10 +436,13 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, 4, 3, "Seç")
             menu.add(0, 5, 4, "Yükle")
             menu.add(0, 6, 5, "Yeni klasör")
-            menu.add(0, 10, 6, "Araç kabul")
-            menu.add(0, 7, 7, "Yedekleme ayarları")
-            menu.add(0, 8, 8, "Müzik")
-            menu.add(0, 9, 9, "Güncellemeyi kontrol et")
+            currentIntakePlate()?.let { plate ->
+                menu.add(0, 11, 6, "Fotoğraf ekle · $plate")
+            }
+            menu.add(0, 10, 7, "Araç kabul")
+            menu.add(0, 7, 8, "Yedekleme ayarları")
+            menu.add(0, 8, 9, "Müzik")
+            menu.add(0, 9, 10, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> vm.showStarred()
@@ -453,7 +455,13 @@ class MainActivity : AppCompatActivity() {
                     }
                     5 -> picker.launch("*/*")
                     6 -> promptNewFolder()
-                    10 -> startActivity(Intent(this@MainActivity, VehicleIntakeActivity::class.java))
+                    11 -> {
+                        val plate = currentIntakePlate()
+                        if (plate != null) {
+                            openIntakeForPlate(plate, vm.state.value.crumbs.last().id)
+                        }
+                    }
+                    10 -> openVehicleIntake()
                     7 -> startActivity(Intent(this@MainActivity, BackupSettingsActivity::class.java))
                     8 -> {
                         if (MusicService.isSessionActive) {
@@ -472,6 +480,33 @@ class MainActivity : AppCompatActivity() {
             }
             show()
         }
+    }
+
+    private fun openVehicleIntake() {
+        val plate = session.lastIntakePlate
+        if (plate.isNotBlank()) {
+            startActivity(
+                VehicleIntakeActivity.intent(
+                    this,
+                    plate,
+                    session.lastIntakeFolderId.takeIf { it.isNotBlank() },
+                ),
+            )
+        } else {
+            startActivity(Intent(this, VehicleIntakeActivity::class.java))
+        }
+    }
+
+    private fun openIntakeForPlate(plate: String, folderId: String? = null) {
+        startActivity(VehicleIntakeActivity.intent(this, plate, folderId))
+    }
+
+    /** Plaka klasörü içindeyken (TR Araç Kabul / PLAKA) plaka adını döner. */
+    private fun currentIntakePlate(): String? {
+        val c = vm.state.value.crumbs
+        if (c.size < 2) return null
+        if (!c[c.size - 2].name.equals(INTAKE_ROOT, ignoreCase = true)) return null
+        return c.last().name
     }
 
     private fun promptNewFolder() {
@@ -586,6 +621,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val INTAKE_ROOT = "TR Araç Kabul"
+
         fun resolveMime(entry: FileEntry): String {
             val declared = entry.mimeType.trim()
             if (declared.isNotEmpty() && declared != "application/octet-stream") return declared
@@ -616,6 +653,7 @@ private class FileAdapter(
     private val onShare: (FileEntry) -> Unit,
     private val onStar: (FileEntry) -> Unit,
     private val onToggleCheck: (FileEntry) -> Unit,
+    private val onAddIntakePhotos: (FileEntry) -> Unit,
 ) : RecyclerView.Adapter<FileAdapter.VH>() {
     private var items: List<FileEntry> = emptyList()
     private var selectionMode: Boolean = false
@@ -667,12 +705,16 @@ private class FileAdapter(
         holder.menu.visibility = if (selectionMode) View.GONE else View.VISIBLE
         holder.menu.setOnClickListener { anchor ->
             PopupMenu(anchor.context, anchor).apply {
-                if (item.kind == "file") menu.add(0, 1, 0, "İndir")
-                menu.add(0, 2, 1, "Paylaş")
-                menu.add(0, 3, 2, if (item.starred) "Yıldızı kaldır" else "Yıldızla")
-                menu.add(0, 4, 3, "Sil")
+                if (item.kind == "folder" && isIntakePlateFolderRow(pathHint)) {
+                    menu.add(0, 10, 0, "Fotoğraf ekle")
+                }
+                if (item.kind == "file") menu.add(0, 1, 1, "İndir")
+                menu.add(0, 2, 2, "Paylaş")
+                menu.add(0, 3, 3, if (item.starred) "Yıldızı kaldır" else "Yıldızla")
+                menu.add(0, 4, 4, "Sil")
                 setOnMenuItemClickListener { mi ->
                     when (mi.itemId) {
+                        10 -> onAddIntakePhotos(item)
                         1 -> onDownload(item)
                         2 -> onShare(item)
                         3 -> onStar(item)
@@ -701,6 +743,7 @@ private class FileAdapter(
 
         val badge = when {
             item.starred -> "Yıldızlı"
+            item.kind == "folder" && isIntakePlateFolderRow(pathHint) -> "Araç kabul"
             MainActivity.isPreviewableMedia(mime) -> "Medya"
             pathHint.contains("TR Photos", ignoreCase = true) -> "Yedek"
             pathHint.contains("TR Backup", ignoreCase = true) -> "Yedek"
@@ -722,6 +765,10 @@ private class FileAdapter(
         val mb = kb / 1024.0
         if (mb < 1024) return String.format("%.1f MB", mb)
         return String.format("%.1f GB", mb / 1024.0)
+    }
+
+    private fun isIntakePlateFolderRow(pathHint: String): Boolean {
+        return pathHint.endsWith(MainActivity.INTAKE_ROOT, ignoreCase = true)
     }
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {

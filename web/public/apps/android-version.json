@@ -1,7 +1,7 @@
 ﻿{
     "minSupportedCode":  1,
-    "versionCode":  14,
-    "versionName":  "0.7.6",
+    "versionCode":  15,
+    "versionName":  "0.7.7",
     "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "Sunucu yüküne göre otomatik yükleme hızı (CPU/pace). Yoğunlukta yavaşlar, boşken hızlanır."
+    "releaseNotes":  "Galeri yedek ~%25 hizlandirildi. Araç kabul: mevcut plaka klasörüne tekrar fotoğraf ekleme, son plaka hatırlama."
 }

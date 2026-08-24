@@ -1,6 +1,8 @@
 package net.neciparmagan.trdriver.backup
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -35,6 +37,7 @@ class GalleryBackupWorker(
         }
         val db = UploadedMediaDb(applicationContext)
         val api = DriveApi(session, applicationContext)
+        val continueDelaySec = continueDelaySeconds(applicationContext, session)
         return try {
             val gallery = MediaCatalog.scan(applicationContext, limit = 1000)
             val folders = MediaCatalog.scanDocumentTrees(
@@ -60,11 +63,13 @@ class GalleryBackupWorker(
                 return Result.success()
             }
 
-            val pace = runCatching { api.refreshUploadPace() }.getOrNull()
-            val filesPerRun = pace?.recommendedBatch?.coerceIn(1, 20) ?: FILES_PER_RUN
+            val pace = runCatching { api.refreshUploadPace(force = true) }.getOrNull()
+            val boosted = ((pace?.recommendedBatch ?: FILES_PER_RUN) * 1.25).toInt()
+            val filesPerRun = boosted.coerceIn(1, 25)
             val batch = pendingList.take(filesPerRun)
             var pendingLeft = pendingList.size
             var lastWidgetRefresh = 0L
+            val parentCache = mutableMapOf<String, String>()
 
             for (item in batch) {
                 if (isStopped) {
@@ -77,7 +82,7 @@ class GalleryBackupWorker(
                         clearFileBytes = true,
                     )
                     BackupStatusWidget.refreshAll(applicationContext)
-                    scheduleContinue(applicationContext, delaySeconds = 2)
+                    scheduleContinue(applicationContext, delaySeconds = continueDelaySec)
                     return Result.success()
                 }
 
@@ -89,17 +94,20 @@ class GalleryBackupWorker(
                     message = "Yedekleniyor: ${item.displayName}",
                 )
                 session.updateBackupFileBytes(0L, item.sizeBytes.coerceAtLeast(0L))
-                BackupStatusWidget.refreshAll(applicationContext)
+                if (lastWidgetRefresh == 0L) {
+                    BackupStatusWidget.refreshAll(applicationContext)
+                }
 
                 try {
-                    val parent = resolveParent(api, item)
+                    val parentKey = parentCacheKey(item)
+                    val parent = parentCache.getOrPut(parentKey) { resolveParent(api, item) }
                     val lastEmitMs = AtomicLong(0L)
                     val entry = api.uploadMedia(parent, item, onProgress = { sent, total ->
                         session.updateBackupFileBytes(sent, total)
                         val now = System.currentTimeMillis()
-                        if (now - lastEmitMs.get() >= 400L || sent >= total) {
+                        if (now - lastEmitMs.get() >= 500L || sent >= total) {
                             lastEmitMs.set(now)
-                            if (now - lastWidgetRefresh >= 1_000L || sent >= total) {
+                            if (now - lastWidgetRefresh >= 1_500L || sent >= total) {
                                 lastWidgetRefresh = now
                                 BackupStatusWidget.refreshAll(applicationContext)
                             }
@@ -120,7 +128,6 @@ class GalleryBackupWorker(
                         },
                         clearFileBytes = true,
                     )
-                    BackupStatusWidget.refreshAll(applicationContext)
                 } catch (e: CancellationException) {
                     session.updateBackupProgress(
                         active = false,
@@ -132,7 +139,7 @@ class GalleryBackupWorker(
                     )
                     BackupStatusWidget.refreshAll(applicationContext)
                     if (session.galleryBackupEnabled) {
-                        scheduleContinue(applicationContext, delaySeconds = 2)
+                        scheduleContinue(applicationContext, delaySeconds = continueDelaySec)
                     }
                     throw e
                 } catch (e: Exception) {
@@ -152,8 +159,9 @@ class GalleryBackupWorker(
             }
 
             if (pendingLeft > 0 && session.galleryBackupEnabled) {
-                scheduleContinue(applicationContext, delaySeconds = 2)
+                scheduleContinue(applicationContext, delaySeconds = continueDelaySec)
             }
+            BackupStatusWidget.refreshAll(applicationContext)
             Result.success()
         } catch (e: CancellationException) {
             session.updateBackupProgress(
@@ -166,7 +174,7 @@ class GalleryBackupWorker(
             )
             BackupStatusWidget.refreshAll(applicationContext)
             if (session.galleryBackupEnabled && session.isLoggedIn) {
-                scheduleContinue(applicationContext, delaySeconds = 2)
+                scheduleContinue(applicationContext, delaySeconds = continueDelaySec)
             }
             throw e
         } catch (e: Exception) {
@@ -184,6 +192,15 @@ class GalleryBackupWorker(
         }
     }
 
+    private fun parentCacheKey(item: LocalMedia): String {
+        val label = item.backupFolderLabel
+        return if (!label.isNullOrBlank()) {
+            "saf:$label"
+        } else {
+            "photo:${item.year}-${item.month}"
+        }
+    }
+
     private suspend fun resolveParent(api: DriveApi, item: LocalMedia): String {
         val label = item.backupFolderLabel
         return if (!label.isNullOrBlank()) {
@@ -195,11 +212,19 @@ class GalleryBackupWorker(
 
     companion object {
         private const val TAG = "GalleryBackup"
-        /** How many files to upload in one WorkManager run before a short pause. */
-        private const val FILES_PER_RUN = 15
+        private const val FILES_PER_RUN = 19
         const val UNIQUE_PERIODIC = "trdriver_gallery_periodic"
         const val UNIQUE_ONCE = "trdriver_gallery_once"
         const val UNIQUE_CONTINUE = "trdriver_gallery_continue"
+
+        private fun continueDelaySeconds(context: Context, session: SessionStore): Long {
+            if (!session.wifiOnlyBackup) return 2L
+            val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return 1L
+            val network = cm.activeNetwork ?: return 1L
+            val caps = cm.getNetworkCapabilities(network) ?: return 1L
+            return if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) 1L else 2L
+        }
 
         fun schedule(context: Context) {
             val session = SessionStore(context)
@@ -238,7 +263,7 @@ class GalleryBackupWorker(
             enqueueOnce(context, ExistingWorkPolicy.REPLACE)
         }
 
-        fun scheduleContinue(context: Context, delaySeconds: Long = 2) {
+        fun scheduleContinue(context: Context, delaySeconds: Long = 1) {
             val session = SessionStore(context)
             if (!session.galleryBackupEnabled || !session.isLoggedIn) return
             val once = OneTimeWorkRequestBuilder<GalleryBackupWorker>()

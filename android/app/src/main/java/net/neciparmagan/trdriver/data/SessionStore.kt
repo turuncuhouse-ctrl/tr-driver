@@ -123,6 +123,44 @@ class SessionStore(context: Context) {
         backupFolderUris = backupFolderUris.filterNot { it == uri }
     }
 
+    /** Last plate folder used in vehicle intake (for quick re-open). */
+    var lastIntakePlate: String
+        get() = prefs.getString(KEY_LAST_INTAKE_PLATE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAST_INTAKE_PLATE, value.trim()).apply()
+
+    var lastIntakeFolderId: String
+        get() = prefs.getString(KEY_LAST_INTAKE_FOLDER_ID, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAST_INTAKE_FOLDER_ID, value).apply()
+
+    /** Recently used intake plates, newest first (max 8). */
+    var recentIntakePlates: List<String>
+        get() {
+            val raw = prefs.getString(KEY_RECENT_INTAKE_PLATES, "[]") ?: "[]"
+            return runCatching {
+                val arr = JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val s = arr.optString(i)
+                        if (s.isNotBlank()) add(s)
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+        set(value) {
+            val arr = JSONArray()
+            value.map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.uppercase() }.take(8)
+                .forEach { arr.put(it) }
+            prefs.edit().putString(KEY_RECENT_INTAKE_PLATES, arr.toString()).apply()
+        }
+
+    fun rememberIntakePlate(plate: String, folderId: String) {
+        val p = plate.trim()
+        if (p.isBlank() || folderId.isBlank()) return
+        lastIntakePlate = p
+        lastIntakeFolderId = folderId
+        recentIntakePlates = listOf(p) + recentIntakePlates.filterNot { it.equals(p, ignoreCase = true) }
+    }
+
     fun updateBackupProgress(
         active: Boolean,
         currentFile: String = "",
@@ -243,5 +281,8 @@ class SessionStore(context: Context) {
         private const val KEY_WIFI_ONLY = "wifi_only"
         private const val KEY_DEVICE = "device_name"
         private const val KEY_BACKUP_FOLDERS = "backup_folders"
+        private const val KEY_LAST_INTAKE_PLATE = "last_intake_plate"
+        private const val KEY_LAST_INTAKE_FOLDER_ID = "last_intake_folder_id"
+        private const val KEY_RECENT_INTAKE_PLATES = "recent_intake_plates"
     }
 }

@@ -42,11 +42,7 @@ object UploadRetry {
                 if (!isTransient(e) || attempt >= attempts) throw e
                 onRetry?.invoke(attempt, e)
                 val extra = (e as? HttpStatusIOException)?.retryAfterSec?.coerceIn(1, 30) ?: 0
-                delay(700L * attempt + extra * 1000L)
-                // Re-read server pace after overload / network blip.
-                runCatching {
-                    // best-effort; DriveApi.refresh is suspend — caller also refreshes
-                }
+                delay(550L * attempt + extra * 1000L)
             }
         }
         throw last ?: IOException("Yükleme başarısız")
