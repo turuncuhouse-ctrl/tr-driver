@@ -219,16 +219,26 @@ class VehicleIntakeActivity : AppCompatActivity() {
                     uploadBar.progress = ((index * 100) / queue.size).coerceIn(0, 99)
                     try {
                         withContext(Dispatchers.IO) {
-                            api.upload(parent, photo.uri) { sent, total ->
-                                val filePct = if (total > 0) ((sent * 100) / total).toInt() else 0
-                                val overall = ((index * 100) + filePct) / queue.size
-                                runOnUiThread {
-                                    uploadBar.progress = overall.coerceIn(0, 99)
-                                    uploadStatus.text =
-                                        "$n / ${queue.size} · ${photo.displayName} · " +
-                                            "${SessionStore.formatBytes(sent)} / ${SessionStore.formatBytes(total)}"
-                                }
-                            }
+                            api.upload(
+                                parent,
+                                photo.uri,
+                                onProgress = { sent, total ->
+                                    val filePct = if (total > 0) ((sent * 100) / total).toInt() else 0
+                                    val overall = ((index * 100) + filePct) / queue.size
+                                    runOnUiThread {
+                                        uploadBar.progress = overall.coerceIn(0, 99)
+                                        uploadStatus.text =
+                                            "$n / ${queue.size} · ${photo.displayName} · " +
+                                                "${SessionStore.formatBytes(sent)} / ${SessionStore.formatBytes(total)}"
+                                    }
+                                },
+                                onRetry = { attempt, _ ->
+                                    runOnUiThread {
+                                        uploadStatus.text =
+                                            "Ağ değişti, yeniden deneniyor ($attempt) · ${photo.displayName}"
+                                    }
+                                },
+                            )
                         }
                         ok++
                         photo.localFile?.delete()

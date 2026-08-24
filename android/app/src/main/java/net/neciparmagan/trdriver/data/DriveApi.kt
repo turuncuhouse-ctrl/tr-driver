@@ -32,6 +32,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.MINUTES)
         .writeTimeout(30, TimeUnit.MINUTES)
+        .retryOnConnectionFailure(true)
         .build()
 
     private fun base() = session.serverUrl.trimEnd('/')
@@ -121,7 +122,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw IOException(parseError(text))
             json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
-                .sortedWith(compareBy({ it.kind != "folder" }, { it.name.lowercase() }))
+                .let { FileLists.sortDrive(it) }
         }
     }
 
@@ -132,7 +133,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw IOException(parseError(text))
             json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
-                .sortedWith(compareBy({ it.kind != "folder" }, { it.name.lowercase() }))
+                .let { FileLists.sortDrive(it) }
         }
     }
 
@@ -168,6 +169,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw IOException(parseError(text))
             json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
+                .let { FileLists.sortDrive(it) }
         }
     }
 
@@ -177,6 +179,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) throw IOException(parseError(text))
             json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
+                .let { FileLists.sortDrive(it) }
         }
     }
 
@@ -324,22 +327,25 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         parentId: String?,
         uri: Uri,
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
-    ): FileEntry = UploadThrottle.run {
-        withContext(Dispatchers.IO) {
-            val resolver = appContext.contentResolver
-            var name = "upload.bin"
-            var size = -1L
-            resolver.query(uri, null, null, null, null)?.use { cursor ->
-                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (cursor.moveToFirst()) {
-                    if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
-                    if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+        onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
+    ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
+        UploadThrottle.run {
+            withContext(Dispatchers.IO) {
+                val resolver = appContext.contentResolver
+                var name = "upload.bin"
+                var size = -1L
+                resolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
+                        if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                    }
                 }
-            }
-            val mime = resolver.getType(uri) ?: "application/octet-stream"
-            uploadStream(parentId, name, mime, size, onProgress) {
-                resolver.openInputStream(uri) ?: throw IOException("Dosya okunamadı")
+                val mime = resolver.getType(uri) ?: "application/octet-stream"
+                uploadStream(parentId, name, mime, size, onProgress) {
+                    resolver.openInputStream(uri) ?: throw IOException("Dosya okunamadı")
+                }
             }
         }
     }
@@ -348,11 +354,14 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         parentId: String?,
         media: LocalMedia,
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
-    ): FileEntry = UploadThrottle.run {
-        withContext(Dispatchers.IO) {
-            val resolver = appContext.contentResolver
-            uploadStream(parentId, media.displayName, media.mimeType, media.sizeBytes, onProgress) {
-                resolver.openInputStream(media.uri) ?: throw IOException("Medya okunamadı")
+        onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
+    ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
+        UploadThrottle.run {
+            withContext(Dispatchers.IO) {
+                val resolver = appContext.contentResolver
+                uploadStream(parentId, media.displayName, media.mimeType, media.sizeBytes, onProgress) {
+                    resolver.openInputStream(media.uri) ?: throw IOException("Medya okunamadı")
+                }
             }
         }
     }

@@ -92,7 +92,7 @@ class GalleryBackupWorker(
                 try {
                     val parent = resolveParent(api, item)
                     val lastEmitMs = AtomicLong(0L)
-                    val entry = api.uploadMedia(parent, item) { sent, total ->
+                    val entry = api.uploadMedia(parent, item, onProgress = { sent, total ->
                         session.updateBackupFileBytes(sent, total)
                         val now = System.currentTimeMillis()
                         if (now - lastEmitMs.get() >= 400L || sent >= total) {
@@ -102,7 +102,7 @@ class GalleryBackupWorker(
                                 BackupStatusWidget.refreshAll(applicationContext)
                             }
                         }
-                    }
+                    })
                     db.markUploaded(item.mediaKey, entry.id, item.sizeBytes)
                     alreadyDone += 1
                     pendingLeft -= 1

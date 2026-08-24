@@ -1,7 +1,7 @@
 ﻿{
     "minSupportedCode":  1,
-    "versionCode":  12,
-    "versionName":  "0.7.4",
+    "versionCode":  13,
+    "versionName":  "0.7.5",
     "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "Araç kabul: plaka klasörü + kamera/galeri + toplu sunucu yükleme (TR Araç Kabul)."
+    "releaseNotes":  "Yükleme ağ değişiminde yeniden dener. Yıldızlı klasörler üstte. Araç kabul Kapat butonu."
 }

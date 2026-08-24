@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.FileEntry
+import net.neciparmagan.trdriver.data.FileLists
 import net.neciparmagan.trdriver.data.OfflineCache
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.User
@@ -211,7 +212,6 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(busy = true, message = null, searching = false, searchQuery = "") }
             try {
                 val files = api.listFiles(parent)
-                    .sortedWith(compareBy({ it.kind != "folder" }, { it.name.lowercase() }))
                 offline.saveListing(parent, files)
                 _state.update {
                     it.copy(
@@ -223,7 +223,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             } catch (e: Exception) {
-                val cached = offline.loadListing(parent)
+                val cached = offline.loadListing(parent)?.let { FileLists.sortDrive(it) }
                 if (cached != null) {
                     _state.update {
                         it.copy(
@@ -373,11 +373,11 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             try {
-                api.upload(parent, uri) { sent, total ->
+                api.upload(parent, uri, onProgress = { sent, total ->
                     val pct = if (total > 0) ((sent * 100) / total).toInt().coerceIn(0, 100) else 0
                     val label = "Yükleniyor · ${SessionStore.formatBytes(sent)} / ${SessionStore.formatBytes(total)} · %$pct"
                     _state.update { it.copy(transferPercent = pct, transferLabel = label, busy = true) }
-                }
+                })
                 _state.update {
                     it.copy(
                         busy = false,
@@ -496,10 +496,11 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 api.setStarred(entry.id, !entry.starred)
                 _state.update { st ->
+                    val updated = st.files.map {
+                        if (it.id == entry.id) it.copy(starred = !entry.starred) else it
+                    }
                     st.copy(
-                        files = st.files.map {
-                            if (it.id == entry.id) it.copy(starred = !entry.starred) else it
-                        },
+                        files = FileLists.sortDrive(updated),
                         message = if (!entry.starred) "Yıldızlandı" else "Yıldız kaldırıldı",
                     )
                 }
