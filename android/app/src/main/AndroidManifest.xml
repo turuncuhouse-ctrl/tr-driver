@@ -43,6 +43,11 @@
             android:exported="false"
             android:theme="@style/Theme.TRDriver" />
         <activity
+            android:name=".VehicleIntakeActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.TRDriver" />
+        <activity
             android:name=".MediaPreviewActivity"
             android:exported="false"
             android:theme="@style/Theme.TRDriver" />

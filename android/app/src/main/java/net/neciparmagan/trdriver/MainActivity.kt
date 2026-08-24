@@ -437,9 +437,10 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, 4, 3, "Seç")
             menu.add(0, 5, 4, "Yükle")
             menu.add(0, 6, 5, "Yeni klasör")
-            menu.add(0, 7, 6, "Yedekleme ayarları")
-            menu.add(0, 8, 7, "Müzik")
-            menu.add(0, 9, 8, "Güncellemeyi kontrol et")
+            menu.add(0, 10, 6, "Araç kabul")
+            menu.add(0, 7, 7, "Yedekleme ayarları")
+            menu.add(0, 8, 8, "Müzik")
+            menu.add(0, 9, 9, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> vm.showStarred()
@@ -452,6 +453,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     5 -> picker.launch("*/*")
                     6 -> promptNewFolder()
+                    10 -> startActivity(Intent(this@MainActivity, VehicleIntakeActivity::class.java))
                     7 -> startActivity(Intent(this@MainActivity, BackupSettingsActivity::class.java))
                     8 -> {
                         if (MusicService.isSessionActive) {

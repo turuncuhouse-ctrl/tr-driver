@@ -255,6 +255,25 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         return ensureChildFolder(deviceId, sanitizeFolder(folderName))
     }
 
+    /** TR Araç Kabul / {PLAKA} — oto servis araç teslim klasörü */
+    suspend fun ensureVehicleIntakeFolder(plate: String): FileEntry {
+        val name = sanitizePlate(plate)
+        if (name.isBlank()) throw IOException("Plaka gerekli")
+        val root = ensureChildFolder(null, "TR Araç Kabul")
+        val id = ensureChildFolder(root, name)
+        return FileEntry(id = id, name = name, kind = "folder", parentId = root)
+    }
+
+    private fun sanitizePlate(plate: String): String {
+        val cleaned = plate
+            .uppercase(java.util.Locale("tr", "TR"))
+            .replace(Regex("[\\\\/:*?\"<>|]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(24)
+        return cleaned
+    }
+
     private fun sanitizeFolder(name: String): String {
         val cleaned = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().take(60)
         return cleaned.ifBlank { "Android" }
