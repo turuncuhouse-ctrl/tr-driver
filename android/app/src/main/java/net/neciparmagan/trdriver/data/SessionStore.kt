@@ -63,6 +63,27 @@ class SessionStore(context: Context) {
         get() = prefs.getInt(KEY_BACKUP_PERCENT, 0)
         set(value) = prefs.edit().putInt(KEY_BACKUP_PERCENT, value.coerceIn(0, 100)).apply()
 
+    /** Bytes sent for the file currently being uploaded (0 if idle). */
+    var backupFileBytesSent: Long
+        get() = prefs.getLong(KEY_BACKUP_BYTES_SENT, 0L)
+        set(value) = prefs.edit().putLong(KEY_BACKUP_BYTES_SENT, value.coerceAtLeast(0L)).apply()
+
+    var backupFileBytesTotal: Long
+        get() = prefs.getLong(KEY_BACKUP_BYTES_TOTAL, 0L)
+        set(value) = prefs.edit().putLong(KEY_BACKUP_BYTES_TOTAL, value.coerceAtLeast(0L)).apply()
+
+    /** 0–100 for the current file; falls back to overall backupPercent when unknown. */
+    val backupFilePercent: Int
+        get() {
+            val total = backupFileBytesTotal
+            if (total <= 0L) return 0
+            return ((backupFileBytesSent * 100L) / total).toInt().coerceIn(0, 100)
+        }
+
+    /** Prefer current-file byte progress while an upload is active. */
+    val backupDisplayPercent: Int
+        get() = if (backupActive && backupFileBytesTotal > 0L) backupFilePercent else backupPercent
+
     var deviceName: String
         get() {
             val stored = prefs.getString(KEY_DEVICE, "") ?: ""
@@ -108,10 +129,11 @@ class SessionStore(context: Context) {
         doneCount: Int = 0,
         pendingCount: Int = 0,
         message: String? = null,
+        clearFileBytes: Boolean = false,
     ) {
         val total = doneCount + pendingCount
         val percent = when {
-            total <= 0 -> if (!active) 0 else 0
+            total <= 0 -> 0
             else -> ((doneCount * 100) / total).coerceIn(0, 100)
         }
         val editor = prefs.edit()
@@ -120,14 +142,37 @@ class SessionStore(context: Context) {
             .putInt(KEY_BACKUP_DONE, doneCount.coerceAtLeast(0))
             .putInt(KEY_BACKUP_PENDING, pendingCount.coerceAtLeast(0))
             .putInt(KEY_BACKUP_PERCENT, percent)
+        if (clearFileBytes || !active) {
+            editor.putLong(KEY_BACKUP_BYTES_SENT, 0L).putLong(KEY_BACKUP_BYTES_TOTAL, 0L)
+        }
         if (message != null) {
             editor.putString(KEY_LAST_MSG, message)
         }
         editor.apply()
     }
 
+    fun updateBackupFileBytes(sent: Long, total: Long) {
+        prefs.edit()
+            .putLong(KEY_BACKUP_BYTES_SENT, sent.coerceAtLeast(0L))
+            .putLong(KEY_BACKUP_BYTES_TOTAL, total.coerceAtLeast(0L))
+            .apply()
+    }
+
     fun clearBackupProgress(message: String? = null) {
-        updateBackupProgress(active = false, currentFile = "", doneCount = 0, pendingCount = 0, message = message)
+        updateBackupProgress(
+            active = false,
+            currentFile = "",
+            doneCount = 0,
+            pendingCount = 0,
+            message = message,
+            clearFileBytes = true,
+        )
+    }
+
+    fun backupFileBytesLabel(): String {
+        val total = backupFileBytesTotal
+        if (total <= 0L) return ""
+        return "${formatBytes(backupFileBytesSent)} / ${formatBytes(total)}"
     }
 
     fun registerBackupListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
@@ -143,7 +188,14 @@ class SessionStore(context: Context) {
         if (backupActive) {
             val name = backupCurrentFile.ifBlank { "dosya" }
             val left = backupPendingCount
-            return "Yedekleniyor · $name · %$backupPercent" + if (left > 0) " · kalan $left" else ""
+            val bytes = backupFileBytesLabel()
+            val pct = backupDisplayPercent
+            return buildString {
+                append("Yedekleniyor · $name")
+                if (bytes.isNotBlank()) append(" · $bytes")
+                append(" · %$pct")
+                if (left > 0) append(" · kalan $left")
+            }
         }
         if (backupPendingCount > 0) {
             return "Yedek: bekliyor · kalan $backupPendingCount · %$backupPercent"
@@ -169,8 +221,19 @@ class SessionStore(context: Context) {
         const val KEY_BACKUP_DONE = "backup_done"
         const val KEY_BACKUP_PENDING = "backup_pending"
         const val KEY_BACKUP_PERCENT = "backup_percent"
+        const val KEY_BACKUP_BYTES_SENT = "backup_bytes_sent"
+        const val KEY_BACKUP_BYTES_TOTAL = "backup_bytes_total"
         const val KEY_LAST_MSG = "last_backup_msg"
         const val KEY_GALLERY_ON = "gallery_on"
+
+        fun formatBytes(bytes: Long): String {
+            if (bytes < 1024) return "$bytes B"
+            val kb = bytes / 1024.0
+            if (kb < 1024) return String.format("%.1f KB", kb)
+            val mb = kb / 1024.0
+            if (mb < 1024) return String.format("%.1f MB", mb)
+            return String.format("%.2f GB", mb / 1024.0)
+        }
 
         private const val KEY_SERVER = "server"
         private const val KEY_TOKEN = "token"

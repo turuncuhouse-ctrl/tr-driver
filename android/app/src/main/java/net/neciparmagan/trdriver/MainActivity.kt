@@ -89,6 +89,10 @@ class MainActivity : AppCompatActivity() {
                 SessionStore.KEY_BACKUP_DONE,
                 SessionStore.KEY_BACKUP_PENDING,
                 SessionStore.KEY_BACKUP_PERCENT,
+                SessionStore.KEY_BACKUP_BYTES_SENT,
+                SessionStore.KEY_BACKUP_BYTES_TOTAL,
+                SessionStore.KEY_LAST_MSG,
+                SessionStore.KEY_GALLERY_ON,
                 SessionStore.KEY_LAST_MSG,
                 SessionStore.KEY_GALLERY_ON,
                 -> runOnUiThread { refreshBackupUi() }
@@ -290,7 +294,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             vm.state.collectLatest { state ->
-                progress.visibility = if (state.busy) View.VISIBLE else View.GONE
+                progress.visibility = if (state.busy && state.transferLabel == null) View.VISIBLE else View.GONE
                 if (!state.busy) swipeRefresh.isRefreshing = false
                 if (!state.bootstrapped) return@collectLatest
 
@@ -320,7 +324,13 @@ class MainActivity : AppCompatActivity() {
                     if (session.galleryBackupEnabled) {
                         GalleryBackupWorker.schedule(this@MainActivity)
                     }
-                    refreshBackupUi()
+                    if (state.transferLabel != null) {
+                        backupInline.visibility = View.VISIBLE
+                        backupInlineBar.progress = state.transferPercent
+                        backupInlineText.text = state.transferLabel
+                    } else {
+                        refreshBackupUi()
+                    }
                     refreshMiniPlayer()
                 }
 
@@ -386,11 +396,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
         backupInline.visibility = View.VISIBLE
-        backupInlineBar.progress = session.backupPercent
+        backupInlineBar.progress = session.backupDisplayPercent
+        val bytes = session.backupFileBytesLabel()
         backupInlineText.text = when {
             session.backupActive && session.backupCurrentFile.isNotBlank() ->
-                "Yedekleniyor · ${session.backupCurrentFile} · %${session.backupPercent}" +
-                    if (session.backupPendingCount > 0) " · kalan ${session.backupPendingCount}" else ""
+                buildString {
+                    append("Yedekleniyor · ${session.backupCurrentFile}")
+                    if (bytes.isNotBlank()) append(" · $bytes")
+                    append(" · %${session.backupDisplayPercent}")
+                    if (session.backupPendingCount > 0) append(" · kalan ${session.backupPendingCount}")
+                }
             session.backupPendingCount > 0 ->
                 "Yedek bekliyor · kalan ${session.backupPendingCount} · %${session.backupPercent}"
             else -> session.lastBackupMessage.ifBlank { "Yedek hazır" }

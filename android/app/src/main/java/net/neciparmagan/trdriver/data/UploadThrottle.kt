@@ -7,14 +7,14 @@ import kotlin.random.Random
 
 /**
  * Global single-flight upload gate: at most one active upload,
- * then a short pause so the server is not flooded.
+ * then a very short pause so the server is not flooded.
  */
 object UploadThrottle {
     private val mutex = Mutex()
 
     suspend fun <T> run(block: suspend () -> T): T = mutex.withLock {
         val result = block()
-        delay(Random.nextLong(1_500L, 3_001L))
+        delay(Random.nextLong(100L, 401L))
         result
     }
 }

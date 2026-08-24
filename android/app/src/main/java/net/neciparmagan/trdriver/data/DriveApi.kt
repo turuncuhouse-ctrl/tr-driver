@@ -16,7 +16,6 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
-import okio.source
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -302,7 +301,11 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
 
     fun downloadUrl(fileId: String): String = "${base()}/api/files/download/$fileId"
 
-    suspend fun upload(parentId: String?, uri: Uri): FileEntry = UploadThrottle.run {
+    suspend fun upload(
+        parentId: String?,
+        uri: Uri,
+        onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
+    ): FileEntry = UploadThrottle.run {
         withContext(Dispatchers.IO) {
             val resolver = appContext.contentResolver
             var name = "upload.bin"
@@ -316,16 +319,20 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                 }
             }
             val mime = resolver.getType(uri) ?: "application/octet-stream"
-            uploadStream(parentId, name, mime, size) {
+            uploadStream(parentId, name, mime, size, onProgress) {
                 resolver.openInputStream(uri) ?: throw IOException("Dosya okunamadı")
             }
         }
     }
 
-    suspend fun uploadMedia(parentId: String?, media: LocalMedia): FileEntry = UploadThrottle.run {
+    suspend fun uploadMedia(
+        parentId: String?,
+        media: LocalMedia,
+        onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
+    ): FileEntry = UploadThrottle.run {
         withContext(Dispatchers.IO) {
             val resolver = appContext.contentResolver
-            uploadStream(parentId, media.displayName, media.mimeType, media.sizeBytes) {
+            uploadStream(parentId, media.displayName, media.mimeType, media.sizeBytes, onProgress) {
                 resolver.openInputStream(media.uri) ?: throw IOException("Medya okunamadı")
             }
         }
@@ -336,14 +343,37 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         name: String,
         mime: String,
         size: Long,
+        onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)?,
         open: () -> InputStream,
     ): FileEntry {
         val mediaType = mime.toMediaType()
         val fileBody = object : RequestBody() {
             override fun contentType(): MediaType = mediaType
             override fun contentLength(): Long = if (size >= 0) size else -1L
+            override fun isOneShot(): Boolean = true
             override fun writeTo(sink: BufferedSink) {
-                open().use { input -> sink.writeAll(input.source()) }
+                open().use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    var sent = 0L
+                    var lastEmit = -1L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        sink.write(buffer, 0, read)
+                        sent += read
+                        val total = if (size >= 0) size else sent
+                        if (onProgress != null) {
+                            val step = maxOf(256L * 1024L, total / 50L)
+                            if (lastEmit < 0L || sent - lastEmit >= step || sent >= total) {
+                                lastEmit = sent
+                                onProgress(sent, total)
+                            }
+                        }
+                    }
+                    if (onProgress != null) {
+                        onProgress(sent, if (size >= 0) size else sent)
+                    }
+                }
             }
         }
         val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)

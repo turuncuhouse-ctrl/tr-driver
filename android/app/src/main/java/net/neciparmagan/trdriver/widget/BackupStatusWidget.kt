@@ -33,13 +33,18 @@ class BackupStatusWidget : AppWidgetProvider() {
             val session = SessionStore(context)
             val views = RemoteViews(context.packageName, R.layout.widget_backup_status)
             views.setTextViewText(R.id.backupWidgetTitle, "TR Driver Yedek")
-            views.setProgressBar(R.id.backupWidgetBar, 100, session.backupPercent, false)
+            views.setProgressBar(R.id.backupWidgetBar, 100, session.backupDisplayPercent, false)
 
+            val bytes = session.backupFileBytesLabel()
             val text = when {
                 !session.galleryBackupEnabled -> "Kapalı · ayarlara dokunun"
                 session.backupActive && session.backupCurrentFile.isNotBlank() ->
-                    "%${session.backupPercent} · ${session.backupCurrentFile}" +
-                        if (session.backupPendingCount > 0) " · kalan ${session.backupPendingCount}" else ""
+                    buildString {
+                        append("%${session.backupDisplayPercent}")
+                        if (bytes.isNotBlank()) append(" · $bytes")
+                        append(" · ${session.backupCurrentFile}")
+                        if (session.backupPendingCount > 0) append(" · kalan ${session.backupPendingCount}")
+                    }
                 session.backupPendingCount > 0 ->
                     "Bekliyor · kalan ${session.backupPendingCount} · %${session.backupPercent}"
                 else -> session.lastBackupMessage.ifBlank { "Açık · güncel" }

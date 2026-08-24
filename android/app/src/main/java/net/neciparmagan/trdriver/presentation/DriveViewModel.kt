@@ -39,6 +39,9 @@ data class UiState(
     val selectionMode: Boolean = false,
     val selectedIds: Set<String> = emptySet(),
     val shareUrl: String? = null,
+    /** Manual upload / transfer progress (0–100). */
+    val transferPercent: Int = 0,
+    val transferLabel: String? = null,
 )
 
 class DriveViewModel(app: Application) : AndroidViewModel(app) {
@@ -361,13 +364,38 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
     fun upload(uri: Uri) {
         val parent = _state.value.crumbs.lastOrNull()?.id
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, message = "Yükleniyor…") }
+            _state.update {
+                it.copy(
+                    busy = true,
+                    message = null,
+                    transferPercent = 0,
+                    transferLabel = "Yükleniyor…",
+                )
+            }
             try {
-                api.upload(parent, uri)
-                _state.update { it.copy(busy = false, message = "Yükleme tamam") }
+                api.upload(parent, uri) { sent, total ->
+                    val pct = if (total > 0) ((sent * 100) / total).toInt().coerceIn(0, 100) else 0
+                    val label = "Yükleniyor · ${SessionStore.formatBytes(sent)} / ${SessionStore.formatBytes(total)} · %$pct"
+                    _state.update { it.copy(transferPercent = pct, transferLabel = label, busy = true) }
+                }
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        message = "Yükleme tamam",
+                        transferPercent = 0,
+                        transferLabel = null,
+                    )
+                }
                 loadFiles()
             } catch (e: Exception) {
-                _state.update { it.copy(busy = false, message = e.message ?: "Yükleme başarısız") }
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        message = e.message ?: "Yükleme başarısız",
+                        transferPercent = 0,
+                        transferLabel = null,
+                    )
+                }
             }
         }
     }

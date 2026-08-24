@@ -1,7 +1,7 @@
 ﻿{
-  "versionCode": 10,
-  "versionName": "0.7.2",
-  "minSupportedCode": 1,
-  "releaseNotes": "Yedekleme progress bar ve ana ekran widget",
-  "apkPath": "/download/TRDriver.apk"
+    "minSupportedCode":  1,
+    "versionCode":  11,
+    "versionName":  "0.7.3",
+    "apkPath":  "/download/TRDriver.apk",
+    "releaseNotes":  "Yedek/yükleme hızlandırıldı (15 dosya/batch, ~2sn aralık). Dosya bazlı MB progress bar."
 }
