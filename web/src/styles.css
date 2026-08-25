@@ -442,7 +442,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .file-scroll.list-view { display: block; }
 .file-scroll.grid-view {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
   gap: 14px;
   align-content: start;
   padding: 16px;
@@ -532,8 +532,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .file-card {
   min-width: 0;
   display: grid;
-  gap: 10px;
-  padding: 14px 12px 12px;
+  gap: 8px;
+  padding: 10px 10px 12px;
   border: 1px solid #d9dee8;
   border-radius: 14px;
   background: #fcfcfe;
@@ -545,12 +545,37 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   border: 0;
   padding: 0;
   display: grid;
-  justify-items: center;
-  gap: 10px;
+  justify-items: stretch;
+  gap: 8px;
   text-align: center;
   color: inherit;
   background: transparent;
 }
+.file-thumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #e8eefc;
+  color: #4f6df5;
+  font-size: 28px;
+  font-weight: 700;
+}
+.file-thumb.folder { background: #0b5cad; color: #fff; }
+.file-thumb.pdf { background: #fde8e8; color: #c23b3b; }
+.file-thumb.video { background: #1f2937; color: #fff; }
+.file-thumb.audio { background: #eef6ff; color: #2563eb; }
+.file-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #dbe4f5;
+}
+.file-thumb-fallback[hidden] { display: none !important; }
 .file-card-main .file-icon { width: 54px; height: 54px; border-radius: 16px; font-size: 22px; }
 .file-card-main strong {
   width: 100%;
@@ -791,7 +816,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .toolbar { display: grid; grid-template-columns: auto 1fr 1fr; }
   .layout-toggle { grid-column: 1 / -1; width: fit-content; }
   .file-panel { max-height: min(62vh, 560px); }
-  .file-scroll.grid-view { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 12px; }
+  .file-scroll.grid-view { grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 10px; padding: 12px; }
   .file-head { display: none; }
   .file-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 13px; }
   .file-meta { display: none; }

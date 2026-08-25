@@ -33,6 +33,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -119,6 +120,7 @@ class MainActivity : AppCompatActivity() {
         onToggleCheck = { vm.toggleSelection(it.id) },
         onAddIntakePhotos = { entry -> openIntakeForPlate(entry.name, entry.id) },
     )
+    private var gridLayout = false
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) vm.upload(uri)
@@ -195,6 +197,8 @@ class MainActivity : AppCompatActivity() {
 
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
+        gridLayout = session.filesGridLayout
+        applyFilesLayout()
 
         val otp = findViewById<EditText>(R.id.inputOtp)
         val otpLabel = findViewById<TextView>(R.id.otpLabel)
@@ -241,6 +245,11 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.headerProfile).setOnClickListener { showAccountSheet() }
         findViewById<Button>(R.id.btnActions).setOnClickListener { showActionsMenu(it) }
+        findViewById<Button>(R.id.btnLayout).setOnClickListener {
+            gridLayout = !gridLayout
+            session.filesGridLayout = gridLayout
+            applyFilesLayout()
+        }
         findViewById<Button>(R.id.btnSearch).setOnClickListener {
             vm.search(findViewById<EditText>(R.id.inputSearch).text.toString())
         }
@@ -314,6 +323,9 @@ class MainActivity : AppCompatActivity() {
                     titleEmail.text = mail
                     avatarBadge.text = mail.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
                     crumbs.text = state.crumbs.joinToString(" / ") { it.name }
+                    state.crumbs.lastOrNull()?.id?.takeIf { it.isNotBlank() }?.let {
+                        session.lastBrowseFolderId = it
+                    }
                     adapter.submit(state.files, state.selectionMode, state.selectedIds)
                     findViewById<View>(R.id.selectionBar).visibility =
                         if (state.selectionMode) View.VISIBLE else View.GONE
@@ -482,6 +494,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun applyFilesLayout() {
+        adapter.setGridMode(gridLayout)
+        list.layoutManager = if (gridLayout) {
+            GridLayoutManager(this, 3)
+        } else {
+            LinearLayoutManager(this)
+        }
+        findViewById<Button>(R.id.btnLayout).text = if (gridLayout) "☰" else "▦"
+    }
+
     private fun openVehicleIntake() {
         val plate = session.lastIntakePlate
         if (plate.isNotBlank()) {
@@ -634,7 +656,18 @@ class MainActivity : AppCompatActivity() {
             val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
             if (ext.isEmpty()) return "application/octet-stream"
             MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
-            return MediaPreviewActivity.guessMimeFromName(name)
+            return when (ext) {
+                "jpg", "jpeg" -> "image/jpeg"
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                "gif" -> "image/gif"
+                "bmp" -> "image/bmp"
+                "heic", "heif" -> "image/heic"
+                "pdf" -> "application/pdf"
+                "mp4", "m4v" -> "video/mp4"
+                "mov" -> "video/quicktime"
+                else -> MediaPreviewActivity.guessMimeFromName(name)
+            }
         }
 
         fun isPreviewableMedia(mime: String): Boolean {
@@ -661,6 +694,13 @@ private class FileAdapter(
     private var token: String = ""
     private var serverUrl: String = ""
     private var pathHint: String = ""
+    private var gridMode: Boolean = false
+
+    fun setGridMode(grid: Boolean) {
+        if (gridMode == grid) return
+        gridMode = grid
+        notifyDataSetChanged()
+    }
 
     fun submit(next: List<FileEntry>, selectionMode: Boolean = false, selectedIds: Set<String> = emptySet()) {
         items = next
@@ -678,8 +718,11 @@ private class FileAdapter(
         pathHint = path
     }
 
+    override fun getItemViewType(position: Int): Int = if (gridMode) 1 else 0
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_file, parent, false)
+        val layout = if (viewType == 1) R.layout.item_file_grid else R.layout.item_file
+        val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
         return VH(view)
     }
 
@@ -728,22 +771,44 @@ private class FileAdapter(
 
         holder.thumb.setImageDrawable(null)
         holder.thumb.setBackgroundColor(Color.parseColor("#E8F2FC"))
+        val thumbSize = if (gridMode) 480 else 96
+        val looksImage = mime.startsWith("image/") ||
+            MainActivity.mimeFromFileName(item.name).startsWith("image/")
         when {
             item.kind == "folder" -> {
                 holder.thumb.setBackgroundColor(Color.parseColor("#0B5CAD"))
+                if (gridMode) {
+                    holder.thumb.setImageResource(android.R.drawable.ic_menu_agenda)
+                    holder.thumb.setColorFilter(Color.WHITE)
+                } else {
+                    holder.thumb.clearColorFilter()
+                }
             }
-            mime.startsWith("image/") && token.isNotBlank() && serverUrl.isNotBlank() -> {
+            looksImage && token.isNotBlank() && serverUrl.isNotBlank() -> {
+                holder.thumb.clearColorFilter()
                 val url = "$serverUrl/api/files/download/${item.id}?inline=1"
                 holder.thumb.load(url) {
                     headers(Headers.headersOf("Authorization", "Bearer $token"))
-                    size(96, 96)
+                    size(thumbSize, thumbSize)
+                    crossfade(true)
+                    allowHardware(true)
                 }
             }
+            mime == "application/pdf" || item.name.endsWith(".pdf", ignoreCase = true) -> {
+                holder.thumb.clearColorFilter()
+                holder.thumb.setBackgroundColor(Color.parseColor("#FDE8E8"))
+            }
+            mime.startsWith("video/") -> {
+                holder.thumb.clearColorFilter()
+                holder.thumb.setBackgroundColor(Color.parseColor("#1F2937"))
+            }
+            else -> holder.thumb.clearColorFilter()
         }
 
         val badge = when {
             item.starred -> "Yıldızlı"
             item.kind == "folder" && isIntakePlateFolderRow(pathHint) -> "Araç kabul"
+            mime == "application/pdf" -> "PDF"
             MainActivity.isPreviewableMedia(mime) -> "Medya"
             pathHint.contains("TR Photos", ignoreCase = true) -> "Yedek"
             pathHint.contains("TR Backup", ignoreCase = true) -> "Yedek"

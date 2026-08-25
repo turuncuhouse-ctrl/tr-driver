@@ -30,6 +30,16 @@ class SessionStore(context: Context) {
         get() = prefs.getString(KEY_PHOTOS_ROOT, "") ?: ""
         set(value) = prefs.edit().putString(KEY_PHOTOS_ROOT, value).apply()
 
+    /** true = grid (Windows-like thumbs), false = list */
+    var filesGridLayout: Boolean
+        get() = prefs.getBoolean(KEY_FILES_GRID, false)
+        set(value) = prefs.edit().putBoolean(KEY_FILES_GRID, value).apply()
+
+    /** Last folder the user browsed (for share-import target). */
+    var lastBrowseFolderId: String
+        get() = prefs.getString(KEY_LAST_BROWSE_FOLDER, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAST_BROWSE_FOLDER, value).apply()
+
     var galleryBackupEnabled: Boolean
         get() = prefs.getBoolean(KEY_GALLERY_ON, false)
         set(value) = prefs.edit().putBoolean(KEY_GALLERY_ON, value).apply()
@@ -284,5 +294,7 @@ class SessionStore(context: Context) {
         private const val KEY_LAST_INTAKE_PLATE = "last_intake_plate"
         private const val KEY_LAST_INTAKE_FOLDER_ID = "last_intake_folder_id"
         private const val KEY_RECENT_INTAKE_PLATES = "recent_intake_plates"
+        private const val KEY_FILES_GRID = "files_grid_layout"
+        private const val KEY_LAST_BROWSE_FOLDER = "last_browse_folder"
     }
 }

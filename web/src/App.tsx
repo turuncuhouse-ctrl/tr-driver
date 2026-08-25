@@ -98,7 +98,7 @@ const previewKindOf = (entry: FileEntry): PreviewKind | null => {
   if (mime.startsWith("video/")) return "video";
   if (mime.startsWith("audio/")) return "audio";
   if (mime === "application/pdf") return "pdf";
-  if ([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp"].includes(ext)) return "image";
+  if ([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", ".heic", ".heif"].includes(ext)) return "image";
   if ([".mp4", ".webm", ".ogg", ".ogv"].includes(ext)) return "video";
   if ([".mp3", ".wav", ".m4a", ".aac", ".oga"].includes(ext)) return "audio";
   if (ext === ".pdf") return "pdf";
@@ -805,6 +805,9 @@ export function App() {
       : {};
 
     if (layout === "grid") {
+      const thumbUrl = previewKind === "image"
+        ? `/api/files/download/${entry.id}?inline=1`
+        : null;
       return (
         <article
           key={entry.id}
@@ -816,7 +819,22 @@ export function App() {
           {...commonProps}
         >
           <button className="file-card-main" type="button" onClick={() => activateEntry(entry)}>
-            <span className={`file-icon ${entry.kind} ${previewKind || ""}`}>{fileIconLabel(entry)}</span>
+            <span className={`file-thumb ${entry.kind} ${previewKind || ""}`}>
+              {thumbUrl ? (
+                <img
+                  src={thumbUrl}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                    const fallback = event.currentTarget.nextElementSibling as HTMLElement | null;
+                    if (fallback) fallback.hidden = false;
+                  }}
+                />
+              ) : null}
+              <span className="file-thumb-fallback" hidden={!!thumbUrl}>{fileIconLabel(entry)}</span>
+            </span>
             <strong title={entry.name}>{entry.name}</strong>
             <small>
               {entry.kind === "folder"

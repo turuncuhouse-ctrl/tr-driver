@@ -30,7 +30,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.SessionStore
+import net.neciparmagan.trdriver.data.UriCacheCopy
 import java.io.File
+import android.os.Build
 
 /**
  * Oto servis araç kabul: plaka klasörü + fotoğraf kuyruğu + hızlı sunucu yükleme.
@@ -87,21 +89,38 @@ class VehicleIntakeActivity : AppCompatActivity() {
         Toast.makeText(this, "Eklendi (${photos.size})", Toast.LENGTH_SHORT).show()
     }
 
-    private val pickImages = registerForActivityResult(
-        ActivityResultContracts.GetMultipleContents(),
+    private val pickDocuments = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
         if (uris.isEmpty()) return@registerForActivityResult
-        for (uri in uris) {
-            photos.add(
-                PendingPhoto(
-                    uri = uri,
-                    displayName = queryDisplayName(uri) ?: "galeri_${System.currentTimeMillis()}.jpg",
-                    localFile = null,
-                ),
-            )
+        lifecycleScope.launch {
+            var added = 0
+            var failed = 0
+            for (uri in uris) {
+                try {
+                    val cached = withContext(Dispatchers.IO) {
+                        UriCacheCopy.copyToCache(this@VehicleIntakeActivity, uri, "intake")
+                    }
+                    photos.add(
+                        PendingPhoto(
+                            uri = cached.uri,
+                            displayName = cached.displayName,
+                            localFile = cached.localFile,
+                        ),
+                    )
+                    added++
+                } catch (_: Exception) {
+                    failed++
+                }
+            }
+            refreshList()
+            val msg = when {
+                failed == 0 -> "$added dosya eklendi"
+                added == 0 -> "Dosyalar eklenemedi (Bluetooth/izin)"
+                else -> "$added eklendi, $failed başarısız"
+            }
+            Toast.makeText(this@VehicleIntakeActivity, msg, Toast.LENGTH_SHORT).show()
         }
-        refreshList()
-        Toast.makeText(this, "${uris.size} dosya eklendi", Toast.LENGTH_SHORT).show()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -138,13 +157,46 @@ class VehicleIntakeActivity : AppCompatActivity() {
         btnPrepareFolder.setOnClickListener { prepareFolder() }
         btnRecentPlates.setOnClickListener { showRecentPlatesDialog() }
         btnCapture.setOnClickListener { ensureCameraAndCapture() }
-        btnPickGallery.setOnClickListener { pickImages.launch("image/*") }
+        btnPickGallery.setOnClickListener {
+            pickDocuments.launch(arrayOf("image/*", "application/pdf"))
+        }
         btnSend.setOnClickListener { sendAll() }
         findViewById<Button>(R.id.btnClose).setOnClickListener { finish() }
 
         restoreFromIntentOrSession()
+        ingestShareUrisFromIntent()
         refreshRecentPlatesButton()
         refreshList()
+    }
+
+    private fun ingestShareUrisFromIntent() {
+        val shared = if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableArrayListExtra(EXTRA_SHARE_URIS, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableArrayListExtra(EXTRA_SHARE_URIS)
+        } ?: return
+        if (shared.isEmpty()) return
+        lifecycleScope.launch {
+            for (uri in shared) {
+                runCatching {
+                    val cached = withContext(Dispatchers.IO) {
+                        UriCacheCopy.copyToCache(this@VehicleIntakeActivity, uri, "intake")
+                    }
+                    photos.add(
+                        PendingPhoto(
+                            uri = cached.uri,
+                            displayName = cached.displayName,
+                            localFile = cached.localFile,
+                        ),
+                    )
+                }
+            }
+            refreshList()
+            if (photos.isNotEmpty()) {
+                Toast.makeText(this@VehicleIntakeActivity, "${photos.size} paylaşılan dosya eklendi", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun restoreFromIntentOrSession() {
@@ -410,6 +462,7 @@ class VehicleIntakeActivity : AppCompatActivity() {
         const val EXTRA_PLATE = "extra_plate"
         const val EXTRA_FOLDER_ID = "extra_folder_id"
         const val EXTRA_AUTO_PREPARE = "extra_auto_prepare"
+        const val EXTRA_SHARE_URIS = "extra_share_uris"
 
         fun intent(context: Context, plate: String, folderId: String? = null): Intent {
             return Intent(context, VehicleIntakeActivity::class.java).apply {

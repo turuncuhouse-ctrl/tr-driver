@@ -84,7 +84,7 @@
             android:layout_marginStart="6dp"
             android:layout_weight="1"
             android:enabled="false"
-            android:text="Galeriden" />
+                android:text="Dosya ekle" />
     </LinearLayout>
 
     <TextView
