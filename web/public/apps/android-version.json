@@ -1,7 +1,7 @@
 {
   "minSupportedCode": 1,
-  "versionCode": 16,
-  "versionName": "0.7.8",
+  "versionCode": 17,
+  "versionName": "0.7.9",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "Izgara onizleme (Windows gibi). Bluetooth/Paylas ile resim ve PDF dogrudan klasore veya arac kabul'e ekleme."
+  "releaseNotes": "PDF onizleme duzeltildi. Paylasilan klasor sayfasi calisir. Yuklemede buyuk fotograflar otomatik kucultulur."
 }

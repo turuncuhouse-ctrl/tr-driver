@@ -292,10 +292,19 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer reader.Close()
-	w.Header().Set("Content-Type", "application/octet-stream")
-	cd := mime.FormatMediaType("attachment", map[string]string{"filename": entry.Name})
+	contentType := files.ResolveContentType(entry.Name, entry.MimeType)
+	disposition := "attachment"
+	if r.URL.Query().Get("inline") == "1" && files.CanInlinePreview(entry.Name, entry.MimeType) {
+		disposition = "inline"
+	}
+	w.Header().Set("Content-Type", contentType)
+	cd := mime.FormatMediaType(disposition, map[string]string{"filename": entry.Name})
 	if cd == "" {
-		cd = `attachment; filename="download"`
+		if disposition == "inline" {
+			cd = `inline; filename="download"`
+		} else {
+			cd = `attachment; filename="download"`
+		}
 	}
 	w.Header().Set("Content-Disposition", cd)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -319,7 +328,7 @@ func setShareHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; base-uri 'none'; form-action 'self'")
 }
 
 func isHTTPS(r *http.Request) bool {
@@ -357,26 +366,100 @@ button{background:#4f6df5;border:0;font-weight:600;cursor:pointer}.err{color:#fe
 func writeShareBrowsePage(w http.ResponseWriter, token, name string) {
 	setShareHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><title>` + html.EscapeString(name) + `</title>
-<style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0b1220;color:#e8eefc;margin:0;padding:24px}a{color:#93b0ff}</style>
-</head><body><h1>` + html.EscapeString(name) + `</h1><ul id="list"></ul>
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>` + html.EscapeString(name) + ` · Paylaşım</title>
+<style>
+body{font-family:Segoe UI,system-ui,sans-serif;background:#0b1220;color:#e8eefc;margin:0;padding:20px;max-width:920px}
+h1{font-size:1.35rem;margin:0 0 4px}
+.muted{color:#94a3b8;font-size:14px;margin:0 0 16px}
+nav{margin-bottom:14px;font-size:14px}
+nav a{color:#93b0ff;text-decoration:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px}
+.card{background:#141c2e;border:1px solid #243049;border-radius:12px;padding:10px;text-decoration:none;color:inherit;display:block}
+.card:hover{border-color:#4f6df5}
+.thumb{aspect-ratio:1;border-radius:8px;background:#1e293b;display:grid;place-items:center;overflow:hidden;margin-bottom:8px;font-size:28px}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb.folder{background:#0b5cad;color:#fff}
+.thumb.pdf{background:#3f1d1d;color:#fca5a5}
+.name{font-size:13px;font-weight:600;word-break:break-word;line-height:1.3}
+.meta{font-size:11px;color:#94a3b8;margin-top:4px}
+.list{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.list a{color:#93b0ff;text-decoration:none}
+.err{color:#fecaca;padding:12px;border:1px solid #7f1d1d;border-radius:10px;background:#450a0a}
+.empty{color:#94a3b8;padding:24px;text-align:center;border:1px dashed #334155;border-radius:12px}
+#status{margin-bottom:12px;color:#94a3b8;font-size:14px}
+</style></head><body>
+<h1>` + html.EscapeString(name) + `</h1>
+<p class="muted">Paylaşılan klasör · dosyaları indirebilir veya önizleyebilirsiniz</p>
+<nav><a href="?" id="rootLink">Kök</a><span id="crumb"></span></nav>
+<p id="status">Yükleniyor…</p>
+<div id="grid" class="grid" hidden></div>
+<ul id="list" class="list" hidden></ul>
+<div id="err" class="err" hidden></div>
+<div id="empty" class="empty" hidden>Bu klasör boş.</div>
 <script>
 const token=` + "`" + html.EscapeString(token) + "`" + `;
-fetch('/s/'+token+'?list=1',{credentials:'same-origin'}).then(r=>r.json()).then(items=>{
-  const ul=document.getElementById('list');
-  (items||[]).forEach(it=>{
-    const li=document.createElement('li');
-    if(it.kind==='file'){
-      const a=document.createElement('a');
-      a.href='/s/'+token+'?download=1&fileId='+encodeURIComponent(it.id);
-      a.textContent=it.name;
-      li.appendChild(a);
-    } else {
-      li.textContent=it.name+' (klasör)';
-    }
-    ul.appendChild(li);
-  });
-});
+const params=new URLSearchParams(location.search);
+const parentId=params.get('parentId')||'';
+function fmtBytes(n){if(!n||n<1024)return(n||0)+' B';const u=['KB','MB','GB'];let v=n,i=0;while(v>=1024&&i<u.length-1){v/=1024;i++}return v.toFixed(1)+' '+u[i]}
+function fileUrl(id,inline){const q=new URLSearchParams({download:'1',fileId:id});if(inline)q.set('inline','1');return '/s/'+token+'?'+q}
+function isImage(it){const m=(it.mimeType||'').toLowerCase();return m.startsWith('image/')&&m!=='image/svg+xml'||/\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(it.name||'')}
+function isPdf(it){return (it.mimeType||'').toLowerCase()==='application/pdf'||/\.pdf$/i.test(it.name||'')}
+function icon(it){if(it.kind==='folder')return '▰';if(isPdf(it))return '▤';if(isImage(it))return '▣';return '▤'}
+async function load(){
+  const status=document.getElementById('status');
+  const grid=document.getElementById('grid');
+  const list=document.getElementById('list');
+  const err=document.getElementById('err');
+  const empty=document.getElementById('empty');
+  grid.hidden=list.hidden=err.hidden=empty.hidden=true;
+  status.textContent='Yükleniyor…';
+  const url='/s/'+token+'?list=1'+(parentId?'&parentId='+encodeURIComponent(parentId):'');
+  try{
+    const r=await fetch(url,{credentials:'same-origin'});
+    const data=await r.json();
+    if(!r.ok) throw new Error((data&&data.error)||('HTTP '+r.status));
+    if(!Array.isArray(data)) throw new Error('Beklenmeyen yanıt');
+    status.textContent=data.length+' öğe';
+    if(data.length===0){empty.hidden=false;return}
+    grid.hidden=false;
+    data.forEach(it=>{
+      const card=document.createElement('a');
+      card.className='card';
+      if(it.kind==='folder'){
+        card.href='?parentId='+encodeURIComponent(it.id);
+      }else if(isPdf(it)){
+        card.href=fileUrl(it.id,true);
+        card.target='_blank';
+      }else{
+        card.href=fileUrl(it.id,false);
+      }
+      const thumb=document.createElement('div');
+      thumb.className='thumb'+(it.kind==='folder'?' folder':isPdf(it)?' pdf':'');
+      if(it.kind==='file'&&isImage(it)){
+        const img=document.createElement('img');
+        img.src=fileUrl(it.id,true);
+        img.alt='';
+        img.loading='lazy';
+        img.onerror=()=>{img.remove();thumb.textContent=icon(it)};
+        thumb.appendChild(img);
+      }else{
+        thumb.textContent=icon(it);
+      }
+      const nm=document.createElement('div');nm.className='name';nm.textContent=it.name||'Dosya';
+      const meta=document.createElement('div');meta.className='meta';
+      meta.textContent=it.kind==='folder'?'Klasör · aç':fmtBytes(it.sizeBytes||0);
+      card.appendChild(thumb);card.appendChild(nm);card.appendChild(meta);
+      grid.appendChild(card);
+    });
+  }catch(e){
+    status.textContent='';
+    err.hidden=false;
+    err.textContent='Liste yüklenemedi: '+(e&&e.message?e.message:e);
+  }
+}
+if(parentId){document.getElementById('crumb').textContent=' · alt klasör';}
+load();
 </script></body></html>`))
 }
 

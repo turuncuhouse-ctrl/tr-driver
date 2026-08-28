@@ -361,8 +361,14 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                     }
                 }
                 val mime = resolver.getType(uri) ?: "application/octet-stream"
-                uploadStream(parentId, name, mime, size, onProgress) {
-                    resolver.openInputStream(uri) ?: throw IOException("Dosya okunamadı")
+                val prepared = ImageUploadPrep.prepare(appContext, uri, name, mime, size)
+                try {
+                    uploadStream(parentId, prepared.displayName, prepared.mimeType, prepared.sizeBytes, onProgress) {
+                        appContext.contentResolver.openInputStream(prepared.uri)
+                            ?: throw IOException("Dosya okunamadı")
+                    }
+                } finally {
+                    prepared.tempFile?.delete()
                 }
             }
         }
@@ -377,9 +383,21 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         refreshUploadPaceIfStale()
         UploadThrottle.run {
             withContext(Dispatchers.IO) {
-                val resolver = appContext.contentResolver
-                uploadStream(parentId, media.displayName, media.mimeType, media.sizeBytes, onProgress) {
-                    resolver.openInputStream(media.uri) ?: throw IOException("Medya okunamadı")
+                val prepared = ImageUploadPrep.prepare(
+                    appContext,
+                    media.uri,
+                    media.displayName,
+                    media.mimeType,
+                    media.sizeBytes,
+                    subdir = "backup_prep",
+                )
+                try {
+                    uploadStream(parentId, prepared.displayName, prepared.mimeType, prepared.sizeBytes, onProgress) {
+                        appContext.contentResolver.openInputStream(prepared.uri)
+                            ?: throw IOException("Medya okunamadı")
+                    }
+                } finally {
+                    prepared.tempFile?.delete()
                 }
             }
         }

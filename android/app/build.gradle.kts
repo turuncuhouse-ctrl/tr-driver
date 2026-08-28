@@ -21,8 +21,8 @@ android {
         applicationId = "net.neciparmagan.trdriver"
         minSdk = 26
         targetSdk = 34
-        versionCode = 16
-        versionName = "0.7.8"
+        versionCode = 17
+        versionName = "0.7.9"
         buildConfigField("String", "DEFAULT_SERVER", "\"https://drive.neciparmagan.net.tr\"")
     }
 
@@ -85,5 +85,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("io.coil-kt:coil:2.6.0")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }

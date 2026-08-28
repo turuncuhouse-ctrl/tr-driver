@@ -148,6 +148,9 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": entry.Name}))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if disposition == "inline" {
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	}
 	if file, ok := reader.(*os.File); ok {
 		http.ServeContent(w, r, entry.Name, entry.UpdatedAt, file)
 		return

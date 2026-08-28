@@ -1249,7 +1249,7 @@ export function App() {
               {preview.kind === "video" && <video src={previewURL} controls playsInline />}
               {preview.kind === "audio" && <audio src={previewURL} controls />}
               {preview.kind === "pdf" && (
-                <iframe title={preview.entry.name} src={previewURL} sandbox="" />
+                <iframe title={preview.entry.name} src={previewURL} />
               )}
             </div>
           </div>

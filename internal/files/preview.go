@@ -43,3 +43,13 @@ func canInlinePreview(name, mimeType string) bool {
 		return false
 	}
 }
+
+// ResolveContentType returns the best MIME type for downloads / previews.
+func ResolveContentType(name, mimeType string) string {
+	return resolveContentType(name, mimeType)
+}
+
+// CanInlinePreview reports whether a file can be shown inline in browser.
+func CanInlinePreview(name, mimeType string) bool {
+	return canInlinePreview(name, mimeType)
+}
