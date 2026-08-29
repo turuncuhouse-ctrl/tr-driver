@@ -1,7 +1,7 @@
 {
   "minSupportedCode": 1,
-  "versionCode": 17,
-  "versionName": "0.7.9",
+  "versionCode": 18,
+  "versionName": "0.8.0",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "PDF onizleme duzeltildi. Paylasilan klasor sayfasi calisir. Yuklemede buyuk fotograflar otomatik kucultulur."
+  "releaseNotes": "TR Photos bulut galeri. Guvenli Yer ac: sunucuda dogrulanan yedekler telefonda silinir (ag kopunca veri kaybi yok)."
 }

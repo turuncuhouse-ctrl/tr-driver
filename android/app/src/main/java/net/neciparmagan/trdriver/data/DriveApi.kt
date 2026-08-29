@@ -220,6 +220,40 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
     }
 
+    /**
+     * Confirms a remote file still exists (for safe free-up).
+     * Uses a lightweight download probe; closes immediately after headers/body start.
+     * @return true if present, false if 404/gone; throws on network/auth errors.
+     */
+    suspend fun remoteFileExists(fileId: String): Boolean = withContext(Dispatchers.IO) {
+        if (fileId.isBlank()) return@withContext false
+        val req = authed(Request.Builder().url("${base()}/api/files/download/$fileId?inline=1"))
+            .header("Range", "bytes=0-0")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            when (resp.code) {
+                200, 206 -> true
+                404, 410 -> false
+                else -> {
+                    if (resp.code in 400..499) false
+                    else throw IOException(parseError(resp.body?.string()).ifBlank { "HTTP ${resp.code}" })
+                }
+            }
+        }
+    }
+
+    /** Opens TR Photos root (creates if missing). */
+    suspend fun ensurePhotosRoot(): String {
+        if (session.photosRootId.isNotBlank()) {
+            // Still validate by listing parent once? Prefer ensure.
+            return session.photosRootId
+        }
+        val id = ensureChildFolder(null, "TR Photos")
+        session.photosRootId = id
+        return id
+    }
+
     private val folderCache = ConcurrentHashMap<String, String>()
     private val photosMonthCache = ConcurrentHashMap<String, String>()
 

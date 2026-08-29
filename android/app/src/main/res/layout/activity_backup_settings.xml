@@ -51,6 +51,19 @@
                 android:layout_height="wrap_content"
                 android:text="Şimdi yedekle" />
 
+            <Button
+                android:id="@+id/btnOpenPhotos"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="TR Photos (bulut galeri)" />
+
+            <Button
+                android:id="@+id/btnFreeUpSpace"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Yer aç (yedeklenenleri telefonda sil)"
+                android:textStyle="bold" />
+
             <TextView
                 android:id="@+id/backupStatus"
                 android:layout_width="match_parent"

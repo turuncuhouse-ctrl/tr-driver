@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/tr_sky"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Yer aç"
+        android:textColor="@color/tr_ink"
+        android:textSize="22sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:text="Yalnızca sunucuda doğrulanan yedekler telefonda silinir. Dosyalar TR Photos’ta kalır."
+        android:textColor="@color/tr_ink"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/freeUpSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@android:color/white"
+        android:padding="12dp"
+        android:textColor="@color/tr_ink"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/freeUpStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textColor="@color/tr_ink"
+        android:textSize="12sp" />
+
+    <ProgressBar
+        android:id="@+id/freeUpBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:layout_marginTop="8dp"
+        android:max="100"
+        android:progressTint="@color/tr_blue"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/btnScanFreeUp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="Adayları tara" />
+
+    <Button
+        android:id="@+id/btnVerifyAndFree"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:enabled="false"
+        android:text="Doğrula ve yer aç"
+        android:textStyle="bold" />
+
+    <Button
+        android:id="@+id/btnOpenPhotos"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="TR Photos’u aç" />
+
+    <Button
+        android:id="@+id/btnCloseFreeUp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Kapat" />
+</LinearLayout>

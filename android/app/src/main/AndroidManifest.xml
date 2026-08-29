@@ -43,6 +43,14 @@
             android:exported="false"
             android:theme="@style/Theme.TRDriver" />
         <activity
+            android:name=".FreeUpSpaceActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TRDriver" />
+        <activity
+            android:name=".PhotosLibraryActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TRDriver" />
+        <activity
             android:name=".VehicleIntakeActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"

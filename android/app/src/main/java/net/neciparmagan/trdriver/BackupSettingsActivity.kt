@@ -112,6 +112,12 @@ class BackupSettingsActivity : AppCompatActivity() {
             Toast.makeText(this, "Yedekleme başlatıldı", Toast.LENGTH_SHORT).show()
             refreshStatus()
         }
+        findViewById<Button>(R.id.btnOpenPhotos).setOnClickListener {
+            startActivity(Intent(this, PhotosLibraryActivity::class.java))
+        }
+        findViewById<Button>(R.id.btnFreeUpSpace).setOnClickListener {
+            startActivity(Intent(this, FreeUpSpaceActivity::class.java))
+        }
         findViewById<Button>(R.id.btnAddFolder).setOnClickListener {
             treePicker.launch(null)
         }
@@ -177,8 +183,9 @@ class BackupSettingsActivity : AppCompatActivity() {
         val on = if (session.galleryBackupEnabled) "Açık" else "Kapalı"
         val folders = session.backupFolderUris.size
         val last = session.lastBackupMessage.ifBlank { "Henüz çalışmadı" }
+        val freeable = UploadedMediaDb(this).countNotFreed()
         backupStatus.text =
-            "Durum: $on · $net · İşlenen: $count · Ek klasör: $folders\n$last\n" +
+            "Durum: $on · $net · İşlenen: $count · Yer açılabilir: $freeable · Ek klasör: $folders\n$last\n" +
                 "Galeri → TR Photos · Klasörler → TR Backup / ${session.deviceName}"
     }
 

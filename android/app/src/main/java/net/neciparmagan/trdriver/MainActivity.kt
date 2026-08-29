@@ -452,9 +452,11 @@ class MainActivity : AppCompatActivity() {
                 menu.add(0, 11, 6, "Fotoğraf ekle · $plate")
             }
             menu.add(0, 10, 7, "Araç kabul")
-            menu.add(0, 7, 8, "Yedekleme ayarları")
-            menu.add(0, 8, 9, "Müzik")
-            menu.add(0, 9, 10, "Güncellemeyi kontrol et")
+            menu.add(0, 12, 8, "TR Photos")
+            menu.add(0, 7, 9, "Yedekleme ayarları")
+            menu.add(0, 13, 10, "Yer aç")
+            menu.add(0, 8, 11, "Müzik")
+            menu.add(0, 9, 12, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> vm.showStarred()
@@ -474,7 +476,9 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     10 -> openVehicleIntake()
+                    12 -> startActivity(Intent(this@MainActivity, PhotosLibraryActivity::class.java))
                     7 -> startActivity(Intent(this@MainActivity, BackupSettingsActivity::class.java))
+                    13 -> startActivity(Intent(this@MainActivity, FreeUpSpaceActivity::class.java))
                     8 -> {
                         if (MusicService.isSessionActive) {
                             startActivity(Intent(this@MainActivity, PlayerActivity::class.java))

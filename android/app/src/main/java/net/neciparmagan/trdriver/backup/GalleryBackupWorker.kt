@@ -113,7 +113,7 @@ class GalleryBackupWorker(
                             }
                         }
                     })
-                    db.markUploaded(item.mediaKey, entry.id, item.sizeBytes)
+                    db.markUploaded(item.mediaKey, entry.id, item.sizeBytes, item.uri)
                     alreadyDone += 1
                     pendingLeft -= 1
                     session.updateBackupProgress(
