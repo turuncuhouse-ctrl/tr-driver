@@ -40,6 +40,7 @@ import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.FileEntry
 import net.neciparmagan.trdriver.data.LocalMedia
 import net.neciparmagan.trdriver.data.MediaAlbum
+import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.MediaCatalog
 import net.neciparmagan.trdriver.data.MediaThumbLoader
 import net.neciparmagan.trdriver.data.SessionStore
@@ -625,19 +626,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
         )
     }
 
-    private fun mediaPermissions(): Array<String> {
-        return if (Build.VERSION.SDK_INT >= 33) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-        } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-    }
+    private fun mediaPermissions(): Array<String> = MediaAccess.mediaPermissionsForRequest()
 
-    private fun hasMediaPermission(): Boolean {
-        return mediaPermissions().all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
-    }
+    private fun hasMediaPermission(): Boolean = MediaAccess.hasMediaAccess(this)
 
     // --- adapters ---
 

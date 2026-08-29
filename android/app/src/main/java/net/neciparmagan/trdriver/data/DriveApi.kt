@@ -436,9 +436,15 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                     }
                 }
                 val mime = resolver.getType(uri) ?: "application/octet-stream"
-                val prepared = ImageUploadPrep.prepare(appContext, uri, name, mime, size)
+                val resolvedSize = MediaAccess.resolveContentLength(appContext, uri, size)
+                val prepared = ImageUploadPrep.prepare(appContext, uri, name, mime, resolvedSize)
+                val uploadSize = MediaAccess.resolveContentLength(
+                    appContext,
+                    prepared.uri,
+                    prepared.sizeBytes,
+                )
                 try {
-                    uploadStream(parentId, prepared.displayName, prepared.mimeType, prepared.sizeBytes, onProgress) {
+                    uploadStream(parentId, prepared.displayName, prepared.mimeType, uploadSize, onProgress) {
                         appContext.contentResolver.openInputStream(prepared.uri)
                             ?: throw IOException("Dosya okunamadı")
                     }
@@ -458,16 +464,32 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         refreshUploadPaceIfStale()
         UploadThrottle.run {
             withContext(Dispatchers.IO) {
+                val resolvedSize = MediaAccess.resolveContentLength(
+                    appContext,
+                    media.uri,
+                    media.sizeBytes,
+                )
                 val prepared = ImageUploadPrep.prepare(
                     appContext,
                     media.uri,
                     media.displayName,
                     media.mimeType,
-                    media.sizeBytes,
+                    resolvedSize,
                     subdir = "backup_prep",
                 )
+                val uploadSize = MediaAccess.resolveContentLength(
+                    appContext,
+                    prepared.uri,
+                    prepared.sizeBytes,
+                )
                 try {
-                    uploadStream(parentId, prepared.displayName, prepared.mimeType, prepared.sizeBytes, onProgress) {
+                    uploadStream(
+                        parentId,
+                        prepared.displayName,
+                        prepared.mimeType,
+                        uploadSize,
+                        onProgress,
+                    ) {
                         appContext.contentResolver.openInputStream(prepared.uri)
                             ?: throw IOException("Medya okunamadı")
                     }

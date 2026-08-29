@@ -394,6 +394,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (::backupChip.isInitialized) refreshBackupUi()
         refreshMiniPlayer()
+        AppUpdateHelper.onMainResume(this)
         if (session.isLoggedIn) {
             AppUpdateHelper.check(this, force = false, silentIfCurrent = true)
         }

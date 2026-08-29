@@ -1,10 +1,8 @@
 package net.neciparmagan.trdriver
 
-import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -17,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
 import com.google.android.material.switchmaterial.SwitchMaterial
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
+import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadedMediaDb
 
@@ -29,19 +28,28 @@ class BackupSettingsActivity : AppCompatActivity() {
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-            val granted = result.values.any { it }
-            if (granted) {
+            // Ignore notification-only grants — media access is what enables backup.
+            if (MediaAccess.hasMediaAccess(this)) {
                 session.galleryBackupEnabled = true
                 switchGallery.isChecked = true
                 GalleryBackupWorker.schedule(this)
+                maybeRequestNotifications()
                 refreshStatus()
                 Toast.makeText(this, "Galeri yedekleme açıldı", Toast.LENGTH_SHORT).show()
             } else {
                 switchGallery.isChecked = false
                 session.galleryBackupEnabled = false
-                Toast.makeText(this, "Galeri izni gerekli", Toast.LENGTH_LONG).show()
+                val anyDenied = result.values.any { !it }
+                Toast.makeText(
+                    this,
+                    if (anyDenied) "Galeri izni gerekli (fotoğraf/video)" else "Galeri izni gerekli",
+                    Toast.LENGTH_LONG,
+                ).show()
             }
         }
+
+    private val notificationLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* optional */ }
 
     private val treePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -77,7 +85,7 @@ class BackupSettingsActivity : AppCompatActivity() {
 
         switchGallery.setOnCheckedChangeListener { _, checked ->
             if (checked) {
-                if (hasMediaPermission()) {
+                if (MediaAccess.hasMediaAccess(this)) {
                     session.galleryBackupEnabled = true
                     GalleryBackupWorker.schedule(this)
                     refreshStatus()
@@ -104,7 +112,7 @@ class BackupSettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "Önce otomatik yedeklemeyi açın", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            if (!hasMediaPermission() && session.backupFolderUris.isEmpty()) {
+            if (!MediaAccess.hasMediaAccess(this) && session.backupFolderUris.isEmpty()) {
                 requestMediaPermission()
                 return@setOnClickListener
             }
@@ -189,31 +197,14 @@ class BackupSettingsActivity : AppCompatActivity() {
                 "Galeri → TR Photos · Klasörler → TR Backup / ${session.deviceName}"
     }
 
-    private fun mediaPermissions(): Array<String> {
-        return if (Build.VERSION.SDK_INT >= 33) {
-            arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_AUDIO,
-                Manifest.permission.POST_NOTIFICATIONS,
-            )
-        } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-    }
+    private fun mediaPermissions(): Array<String> = MediaAccess.mediaPermissionsForRequest()
 
-    private fun hasMediaPermission(): Boolean {
-        val required = if (Build.VERSION.SDK_INT >= 33) {
-            arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_AUDIO,
-            )
-        } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    private fun maybeRequestNotifications() {
+        val needed = MediaAccess.notificationPermissionOrEmpty().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        return required.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        if (needed.isNotEmpty()) {
+            notificationLauncher.launch(needed.toTypedArray())
         }
     }
 

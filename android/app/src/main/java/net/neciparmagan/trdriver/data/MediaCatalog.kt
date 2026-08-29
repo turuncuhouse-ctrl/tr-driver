@@ -43,10 +43,20 @@ data class MediaAlbum(
 
 object MediaCatalog {
     fun scan(context: Context, limit: Int = 2000): List<LocalMedia> {
+        val perCollection = limit.coerceAtLeast(200)
         val out = ArrayList<LocalMedia>()
-        out += query(context, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false, limit)
-        out += query(context, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, limit)
-        return out.sortedByDescending { it.dateTakenMs }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            for (vol in MediaStore.getExternalVolumeNames(context)) {
+                out += query(context, MediaStore.Images.Media.getContentUri(vol), false, perCollection)
+                out += query(context, MediaStore.Video.Media.getContentUri(vol), true, perCollection)
+            }
+        } else {
+            out += query(context, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false, perCollection)
+            out += query(context, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, perCollection)
+        }
+        return out.distinctBy { it.mediaKey }
+            .sortedByDescending { it.dateTakenMs }
+            .take(limit.coerceAtLeast(perCollection))
     }
 
     fun scanAlbum(context: Context, albumId: String, limit: Int = 2000): List<LocalMedia> {
@@ -82,7 +92,9 @@ object MediaCatalog {
             val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: continue
             val tree = DocumentFile.fromTreeUri(context, uri) ?: continue
             val label = tree.name?.ifBlank { null } ?: "Klasor"
-            walkTree(tree, label, out, limitPerTree, depth = 0)
+            val treeItems = ArrayList<LocalMedia>()
+            walkTree(tree, label, treeItems, limitPerTree, depth = 0)
+            out += treeItems
         }
         return out.sortedByDescending { it.dateTakenMs }
     }
@@ -129,52 +141,77 @@ object MediaCatalog {
         val sizeCol = MediaStore.MediaColumns.SIZE
         val bucketIdCol = MediaStore.MediaColumns.BUCKET_ID
         val bucketNameCol = MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
-        val dateCol = if (Build.VERSION.SDK_INT >= 29) {
-            MediaStore.MediaColumns.DATE_TAKEN
+        val takenCol = MediaStore.MediaColumns.DATE_TAKEN
+        val modifiedCol = MediaStore.MediaColumns.DATE_MODIFIED
+        val addedCol = MediaStore.MediaColumns.DATE_ADDED
+        val projection = arrayOf(
+            idCol, nameCol, mimeCol, sizeCol,
+            takenCol, modifiedCol, addedCol,
+            bucketIdCol, bucketNameCol,
+        )
+        val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            "${MediaStore.MediaColumns.IS_PENDING}=0"
         } else {
-            MediaStore.MediaColumns.DATE_ADDED
+            null
         }
-        val projection = arrayOf(idCol, nameCol, mimeCol, sizeCol, dateCol, bucketIdCol, bucketNameCol)
-        val sort = "$dateCol DESC"
+        // Prefer taken, then modified/added for stable ordering across OEMs.
+        val sort = "$takenCol DESC, $modifiedCol DESC, $addedCol DESC"
         val result = ArrayList<LocalMedia>()
-        context.contentResolver.query(collection, projection, null, null, sort)?.use { c ->
-            val iId = c.getColumnIndexOrThrow(idCol)
-            val iName = c.getColumnIndexOrThrow(nameCol)
-            val iMime = c.getColumnIndexOrThrow(mimeCol)
-            val iSize = c.getColumnIndexOrThrow(sizeCol)
-            val iDate = c.getColumnIndexOrThrow(dateCol)
-            val iBucketId = c.getColumnIndex(bucketIdCol)
-            val iBucketName = c.getColumnIndex(bucketNameCol)
-            var n = 0
-            while (c.moveToNext() && n < limit) {
-                val id = c.getLong(iId)
-                val name = c.getString(iName) ?: if (video) "video_$id.mp4" else "image_$id.jpg"
-                val mime = c.getString(iMime)
-                    ?: if (video) "video/mp4" else "image/jpeg"
-                val size = c.getLong(iSize)
-                var date = c.getLong(iDate)
-                if (date > 0 && date < 10_000_000_000L) {
-                    date *= 1000
+        runCatching {
+            context.contentResolver.query(collection, projection, selection, null, sort)?.use { c ->
+                val iId = c.getColumnIndexOrThrow(idCol)
+                val iName = c.getColumnIndexOrThrow(nameCol)
+                val iMime = c.getColumnIndexOrThrow(mimeCol)
+                val iSize = c.getColumnIndexOrThrow(sizeCol)
+                val iTaken = c.getColumnIndex(takenCol)
+                val iModified = c.getColumnIndex(modifiedCol)
+                val iAdded = c.getColumnIndex(addedCol)
+                val iBucketId = c.getColumnIndex(bucketIdCol)
+                val iBucketName = c.getColumnIndex(bucketNameCol)
+                var n = 0
+                while (c.moveToNext() && n < limit) {
+                    val id = c.getLong(iId)
+                    val name = c.getString(iName) ?: if (video) "video_$id.mp4" else "image_$id.jpg"
+                    val mime = c.getString(iMime)
+                        ?: if (video) "video/mp4" else "image/jpeg"
+                    val size = c.getLong(iSize)
+                    val date = resolveDateMs(
+                        taken = if (iTaken >= 0) c.getLong(iTaken) else 0L,
+                        modified = if (iModified >= 0) c.getLong(iModified) else 0L,
+                        added = if (iAdded >= 0) c.getLong(iAdded) else 0L,
+                    )
+                    val uri = ContentUris.withAppendedId(collection, id)
+                    val volume = collection.toString()
+                    val bucketId = if (iBucketId >= 0) c.getString(iBucketId) else null
+                    val bucketName = if (iBucketName >= 0) c.getString(iBucketName) else null
+                    result += LocalMedia(
+                        mediaKey = "$volume/$id",
+                        uri = uri,
+                        displayName = name,
+                        mimeType = mime,
+                        sizeBytes = size,
+                        dateTakenMs = date,
+                        isVideo = video,
+                        albumName = bucketName,
+                        albumId = bucketId,
+                    )
+                    n++
                 }
-                if (date <= 0) date = System.currentTimeMillis()
-                val uri = ContentUris.withAppendedId(collection, id)
-                val volume = collection.toString()
-                val bucketId = if (iBucketId >= 0) c.getString(iBucketId) else null
-                val bucketName = if (iBucketName >= 0) c.getString(iBucketName) else null
-                result += LocalMedia(
-                    mediaKey = "$volume/$id",
-                    uri = uri,
-                    displayName = name,
-                    mimeType = mime,
-                    sizeBytes = size,
-                    dateTakenMs = date,
-                    isVideo = video,
-                    albumName = bucketName,
-                    albumId = bucketId,
-                )
-                n++
             }
         }
         return result
+    }
+
+    /** Milliseconds since epoch; never invent "now" (that dumps old files into today's folder). */
+    private fun resolveDateMs(taken: Long, modified: Long, added: Long): Long {
+        fun normalize(raw: Long): Long {
+            if (raw <= 0L) return 0L
+            return if (raw < 10_000_000_000L) raw * 1000L else raw
+        }
+        normalize(taken).takeIf { it > 0L }?.let { return it }
+        normalize(modified).takeIf { it > 0L }?.let { return it }
+        normalize(added).takeIf { it > 0L }?.let { return it }
+        // Last resort so undated items still land in a usable year/month folder.
+        return System.currentTimeMillis()
     }
 }

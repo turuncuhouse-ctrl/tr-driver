@@ -1,7 +1,7 @@
 ﻿{
-    "minSupportedCode":  1,
-    "versionCode":  21,
-    "versionName":  "0.8.3",
-    "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "Galeri onizlemeleri: MediaStore thumbnail + dosya adi"
+    "versionCode": 22,
+    "versionName": "0.8.4",
+    "minSupportedCode": 1,
+    "releaseNotes": "Yedekleme Android uyumu (izinler, SD kart, boyut); galeri onizleme; guncelleme devam",
+    "apkPath": "/download/TRDriver.apk"
 }

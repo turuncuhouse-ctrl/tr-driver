@@ -16,6 +16,7 @@ import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.LocalMedia
+import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.MediaCatalog
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadedMediaDb
@@ -35,15 +36,33 @@ class GalleryBackupWorker(
             BackupStatusWidget.refreshAll(applicationContext)
             return Result.success()
         }
+        val hasMedia = MediaAccess.hasMediaAccess(applicationContext)
+        val hasFolders = session.backupFolderUris.isNotEmpty()
+        if (!hasMedia && !hasFolders) {
+            session.updateBackupProgress(
+                active = false,
+                currentFile = "",
+                doneCount = 0,
+                pendingCount = 0,
+                message = "Yedek: galeri izni yok — Ayarlar → Yedek’ten fotoğraf/video izni verin",
+                clearFileBytes = true,
+            )
+            BackupStatusWidget.refreshAll(applicationContext)
+            return Result.success()
+        }
         val db = UploadedMediaDb(applicationContext)
         val api = DriveApi(session, applicationContext)
         val continueDelaySec = continueDelaySeconds(applicationContext, session)
         return try {
-            val gallery = MediaCatalog.scan(applicationContext, limit = 1000)
+            val gallery = if (hasMedia) {
+                MediaCatalog.scan(applicationContext, limit = 4000)
+            } else {
+                emptyList()
+            }
             val folders = MediaCatalog.scanDocumentTrees(
                 applicationContext,
                 session.backupFolderUris,
-                limitPerTree = 400,
+                limitPerTree = 800,
             )
             val media = gallery + folders
             val eligible = media.filter { it.sizeBytes !in 1 until 1024 }
@@ -51,12 +70,17 @@ class GalleryBackupWorker(
             var alreadyDone = (eligible.size - pendingList.size).coerceAtLeast(0)
 
             if (pendingList.isEmpty()) {
+                val hint = when {
+                    !hasMedia && hasFolders -> " (yalnız ek klasörler; galeri izni yok)"
+                    hasMedia && eligible.isEmpty() -> " (tarama boş — izin veya medya yok)"
+                    else -> ""
+                }
                 session.updateBackupProgress(
                     active = false,
                     currentFile = "",
                     doneCount = alreadyDone,
                     pendingCount = 0,
-                    message = "Yedek: yeni öğe yok (${eligible.size} tarandı)",
+                    message = "Yedek: yeni öğe yok (${eligible.size} tarandı)$hint",
                     clearFileBytes = true,
                 )
                 BackupStatusWidget.refreshAll(applicationContext)

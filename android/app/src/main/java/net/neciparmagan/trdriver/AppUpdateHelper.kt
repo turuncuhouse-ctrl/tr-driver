@@ -24,6 +24,8 @@ object AppUpdateHelper {
     private var skippedVersionCode = 0
     private var dialogShowing = false
     private var downloading = false
+    /** After user grants unknown-sources, resume download on next MainActivity resume. */
+    private var pendingDownloadInfo: AndroidVersionInfo? = null
 
     fun check(
         activity: MainActivity,
@@ -58,6 +60,19 @@ object AppUpdateHelper {
         }
     }
 
+    /** Call from MainActivity.onResume so install-permission return can continue. */
+    fun onMainResume(activity: MainActivity) {
+        val info = pendingDownloadInfo ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !activity.packageManager.canRequestPackageInstalls()
+        ) {
+            return
+        }
+        pendingDownloadInfo = null
+        val api = DriveApi(SessionStore(activity), activity.applicationContext)
+        startDownload(activity, api, info)
+    }
+
     private fun showUpdateDialog(activity: MainActivity, api: DriveApi, info: AndroidVersionInfo) {
         if (dialogShowing || activity.isFinishing) return
         dialogShowing = true
@@ -82,7 +97,7 @@ object AppUpdateHelper {
 
     private fun startDownload(activity: MainActivity, api: DriveApi, info: AndroidVersionInfo) {
         if (downloading) return
-        if (!ensureInstallPermission(activity)) return
+        if (!ensureInstallPermission(activity, info)) return
         downloading = true
         toast(activity, "Güncelleme indiriliyor…")
         activity.lifecycleScope.launch {
@@ -99,12 +114,16 @@ object AppUpdateHelper {
         }
     }
 
-    private fun ensureInstallPermission(activity: Activity): Boolean {
+    private fun ensureInstallPermission(activity: Activity, info: AndroidVersionInfo): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
         if (activity.packageManager.canRequestPackageInstalls()) return true
+        pendingDownloadInfo = info
         AlertDialog.Builder(activity)
             .setTitle("Kurulum izni")
-            .setMessage("Güncellemek için bu uygulamaya paket kurma izni verin.")
+            .setMessage(
+                "Güncellemek için bu uygulamaya paket kurma izni verin. " +
+                    "Ayarlardan dönünce indirme otomatik devam eder.",
+            )
             .setPositiveButton("Ayarlar") { _, _ ->
                 val intent = Intent(
                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -112,7 +131,9 @@ object AppUpdateHelper {
                 )
                 activity.startActivity(intent)
             }
-            .setNegativeButton("İptal", null)
+            .setNegativeButton("İptal") { _, _ ->
+                pendingDownloadInfo = null
+            }
             .show()
         return false
     }
