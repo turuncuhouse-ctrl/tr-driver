@@ -1,7 +1,7 @@
 {
   "minSupportedCode": 1,
-  "versionCode": 18,
-  "versionName": "0.8.0",
+  "versionCode": 19,
+  "versionName": "0.8.1",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "TR Photos bulut galeri. Guvenli Yer ac: sunucuda dogrulanan yedekler telefonda silinir (ag kopunca veri kaybi yok)."
+  "releaseNotes": "TR Photos artik Android Galeri gibi: Fotoograflar / Albumler / Bulut. Ana ekranda Galeri butonu. Klasor gezmek yerine zaman cizelgesi."
 }

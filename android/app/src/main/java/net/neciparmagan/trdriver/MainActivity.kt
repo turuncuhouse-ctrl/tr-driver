@@ -245,6 +245,9 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.headerProfile).setOnClickListener { showAccountSheet() }
         findViewById<Button>(R.id.btnActions).setOnClickListener { showActionsMenu(it) }
+        findViewById<Button>(R.id.btnPhotos).setOnClickListener {
+            startActivity(Intent(this, PhotosLibraryActivity::class.java))
+        }
         findViewById<Button>(R.id.btnLayout).setOnClickListener {
             gridLayout = !gridLayout
             session.filesGridLayout = gridLayout

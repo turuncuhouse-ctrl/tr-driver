@@ -188,6 +188,13 @@
                 android:text="▦" />
 
             <Button
+                android:id="@+id/btnPhotos"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Galeri"
+                android:textStyle="bold" />
+
+            <Button
                 android:id="@+id/btnActions"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

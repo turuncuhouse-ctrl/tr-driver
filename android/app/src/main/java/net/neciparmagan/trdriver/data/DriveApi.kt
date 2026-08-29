@@ -19,6 +19,7 @@ import okio.BufferedSink
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -246,12 +247,52 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
     /** Opens TR Photos root (creates if missing). */
     suspend fun ensurePhotosRoot(): String {
         if (session.photosRootId.isNotBlank()) {
-            // Still validate by listing parent once? Prefer ensure.
             return session.photosRootId
         }
         val id = ensureChildFolder(null, "TR Photos")
         session.photosRootId = id
         return id
+    }
+
+    /**
+     * Flat list of all image/video files under TR Photos (device/year/month nested).
+     * Used for Google Photos-style timeline — no folder drilling.
+     */
+    suspend fun listCloudPhotosFlat(maxFiles: Int = 800): List<FileEntry> = withContext(Dispatchers.IO) {
+        val root = ensurePhotosRoot()
+        val out = ArrayList<FileEntry>()
+        val queue = ArrayDeque<String>()
+        queue.add(root)
+        var foldersSeen = 0
+        while (queue.isNotEmpty() && out.size < maxFiles && foldersSeen < 400) {
+            val id = queue.removeFirst()
+            foldersSeen++
+            val children = runCatching { listFiles(id) }.getOrDefault(emptyList())
+            for (child in children) {
+                when (child.kind) {
+                    "folder" -> queue.add(child.id)
+                    "file" -> {
+                        val mime = child.mimeType.lowercase()
+                        val name = child.name.lowercase()
+                        val isMedia = mime.startsWith("image/") || mime.startsWith("video/") ||
+                            name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") ||
+                            name.endsWith(".webp") || name.endsWith(".heic") || name.endsWith(".mp4") ||
+                            name.endsWith(".mov") || name.endsWith(".mkv")
+                        if (isMedia) {
+                            out += child
+                            if (out.size >= maxFiles) break
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /** Top-level cloud "albums" under TR Photos (usually device folders). */
+    suspend fun listCloudPhotoAlbums(): List<FileEntry> = withContext(Dispatchers.IO) {
+        val root = ensurePhotosRoot()
+        listFiles(root).filter { it.kind == "folder" }
     }
 
     private val folderCache = ConcurrentHashMap<String, String>()

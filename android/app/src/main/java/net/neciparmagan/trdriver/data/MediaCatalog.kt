@@ -16,6 +16,8 @@ data class LocalMedia(
     val sizeBytes: Long,
     val dateTakenMs: Long,
     val isVideo: Boolean,
+    val albumName: String? = null,
+    val albumId: String? = null,
     /** Optional label for SAF tree backups (folder display name). */
     val backupFolderLabel: String? = null,
 ) {
@@ -31,12 +33,47 @@ data class LocalMedia(
         }
 }
 
+data class MediaAlbum(
+    val id: String,
+    val name: String,
+    val count: Int,
+    val coverUri: Uri?,
+    val isVideoHeavy: Boolean = false,
+)
+
 object MediaCatalog {
-    fun scan(context: Context, limit: Int = 500): List<LocalMedia> {
+    fun scan(context: Context, limit: Int = 2000): List<LocalMedia> {
         val out = ArrayList<LocalMedia>()
         out += query(context, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false, limit)
         out += query(context, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, limit)
         return out.sortedByDescending { it.dateTakenMs }
+    }
+
+    fun scanAlbum(context: Context, albumId: String, limit: Int = 2000): List<LocalMedia> {
+        return scan(context, limit).filter { it.albumId == albumId }
+            .sortedByDescending { it.dateTakenMs }
+    }
+
+    /** Device albums like Camera, Screenshots, WhatsApp Images — like system Gallery. */
+    fun listAlbums(context: Context, limitPerQuery: Int = 3000): List<MediaAlbum> {
+        val media = scan(context, limitPerQuery)
+        val grouped = linkedMapOf<String, MutableList<LocalMedia>>()
+        for (item in media) {
+            val key = item.albumId ?: "unknown"
+            grouped.getOrPut(key) { ArrayList() }.add(item)
+        }
+        return grouped.map { (id, items) ->
+            val sorted = items.sortedByDescending { it.dateTakenMs }
+            val name = sorted.firstOrNull()?.albumName?.ifBlank { null }
+                ?: if (id == "unknown") "Diğer" else id
+            MediaAlbum(
+                id = id,
+                name = name,
+                count = sorted.size,
+                coverUri = sorted.firstOrNull()?.uri,
+                isVideoHeavy = sorted.count { it.isVideo } > sorted.size / 2,
+            )
+        }.sortedByDescending { it.count }
     }
 
     fun scanDocumentTrees(context: Context, treeUris: List<String>, limitPerTree: Int = 300): List<LocalMedia> {
@@ -76,6 +113,8 @@ object MediaCatalog {
                         sizeBytes = size,
                         dateTakenMs = f.lastModified().coerceAtLeast(0L),
                         isVideo = mime.startsWith("video/"),
+                        albumName = label,
+                        albumId = "saf:$label",
                         backupFolderLabel = label,
                     )
                 }
@@ -88,12 +127,14 @@ object MediaCatalog {
         val nameCol = MediaStore.MediaColumns.DISPLAY_NAME
         val mimeCol = MediaStore.MediaColumns.MIME_TYPE
         val sizeCol = MediaStore.MediaColumns.SIZE
+        val bucketIdCol = MediaStore.MediaColumns.BUCKET_ID
+        val bucketNameCol = MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
         val dateCol = if (Build.VERSION.SDK_INT >= 29) {
             MediaStore.MediaColumns.DATE_TAKEN
         } else {
             MediaStore.MediaColumns.DATE_ADDED
         }
-        val projection = arrayOf(idCol, nameCol, mimeCol, sizeCol, dateCol)
+        val projection = arrayOf(idCol, nameCol, mimeCol, sizeCol, dateCol, bucketIdCol, bucketNameCol)
         val sort = "$dateCol DESC"
         val result = ArrayList<LocalMedia>()
         context.contentResolver.query(collection, projection, null, null, sort)?.use { c ->
@@ -102,6 +143,8 @@ object MediaCatalog {
             val iMime = c.getColumnIndexOrThrow(mimeCol)
             val iSize = c.getColumnIndexOrThrow(sizeCol)
             val iDate = c.getColumnIndexOrThrow(dateCol)
+            val iBucketId = c.getColumnIndex(bucketIdCol)
+            val iBucketName = c.getColumnIndex(bucketNameCol)
             var n = 0
             while (c.moveToNext() && n < limit) {
                 val id = c.getLong(iId)
@@ -111,12 +154,13 @@ object MediaCatalog {
                 val size = c.getLong(iSize)
                 var date = c.getLong(iDate)
                 if (date > 0 && date < 10_000_000_000L) {
-                    // DATE_ADDED is seconds
                     date *= 1000
                 }
                 if (date <= 0) date = System.currentTimeMillis()
                 val uri = ContentUris.withAppendedId(collection, id)
                 val volume = collection.toString()
+                val bucketId = if (iBucketId >= 0) c.getString(iBucketId) else null
+                val bucketName = if (iBucketName >= 0) c.getString(iBucketName) else null
                 result += LocalMedia(
                     mediaKey = "$volume/$id",
                     uri = uri,
@@ -125,6 +169,8 @@ object MediaCatalog {
                     sizeBytes = size,
                     dateTakenMs = date,
                     isVideo = video,
+                    albumName = bucketName,
+                    albumId = bucketId,
                 )
                 n++
             }

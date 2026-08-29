@@ -23,36 +23,46 @@ class MediaPreviewActivity : AppCompatActivity() {
 
         val id = intent.getStringExtra(EXTRA_ID).orEmpty()
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty()
+        val localUri = intent.getStringExtra(EXTRA_LOCAL_URI)?.let { runCatching { Uri.parse(it) }.getOrNull() }
         var mime = intent.getStringExtra(EXTRA_MIME).orEmpty()
         if (mime.isBlank() || mime == "application/octet-stream") {
             mime = guessMimeFromName(name)
         }
         val session = SessionStore(this)
-        val url = session.serverUrl.trimEnd('/') + "/api/files/download/$id?inline=1"
+        val remoteUrl = if (id.isNotBlank()) {
+            session.serverUrl.trimEnd('/') + "/api/files/download/$id?inline=1"
+        } else {
+            null
+        }
         val token = session.token.orEmpty()
+        val dataSource: Any? = localUri ?: remoteUrl
 
         findViewById<TextView>(R.id.previewTitle).text = name
         findViewById<View>(R.id.btnClosePreview).setOnClickListener { finish() }
 
         val image = findViewById<ImageView>(R.id.previewImage)
         val video = findViewById<VideoView>(R.id.previewVideo)
-        val audioHint = findViewById<TextView>(R.id.previewAudioHint)
         videoView = video
+
+        if (dataSource == null) {
+            Toast.makeText(this, "Önizleme kaynağı yok", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
 
         when {
             mime.startsWith("image/") -> {
                 image.visibility = View.VISIBLE
-                imageLoader.enqueue(
-                    ImageRequest.Builder(this)
-                        .data(url)
-                        .addHeader("Authorization", "Bearer $token")
-                        .target(image)
-                        .build(),
-                )
+                val req = ImageRequest.Builder(this)
+                    .data(dataSource)
+                    .target(image)
+                if (localUri == null && token.isNotBlank()) {
+                    req.addHeader("Authorization", "Bearer $token")
+                }
+                imageLoader.enqueue(req.build())
             }
             mime.startsWith("video/") -> {
                 video.visibility = View.VISIBLE
-                val headers = mapOf("Authorization" to "Bearer $token")
                 val controller = MediaController(this)
                 controller.setAnchorView(video)
                 video.setMediaController(controller)
@@ -64,15 +74,23 @@ class MediaPreviewActivity : AppCompatActivity() {
                     Toast.makeText(this, "Video oynatılamadı ($what/$extra)", Toast.LENGTH_LONG).show()
                     true
                 }
-                video.setVideoURI(Uri.parse(url), headers)
+                if (localUri != null) {
+                    video.setVideoURI(localUri)
+                } else {
+                    val headers = mapOf("Authorization" to "Bearer $token")
+                    video.setVideoURI(Uri.parse(remoteUrl), headers)
+                }
                 video.requestFocus()
             }
             mime.startsWith("audio/") -> {
-                // Full player with lock-screen controls
-                PlayerActivity.start(this, name, url, token)
+                if (remoteUrl != null) {
+                    PlayerActivity.start(this, name, remoteUrl, token)
+                } else {
+                    Toast.makeText(this, "Yerel ses önizlemesi yok", Toast.LENGTH_SHORT).show()
+                }
                 finish()
             }
-            else -> Toast.makeText(this, "Bu tür önizlenemiyor — indirip açmayı deneyin", Toast.LENGTH_SHORT).show()
+            else -> Toast.makeText(this, "Bu tür önizlenemiyor", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -91,6 +109,7 @@ class MediaPreviewActivity : AppCompatActivity() {
         const val EXTRA_ID = "id"
         const val EXTRA_NAME = "name"
         const val EXTRA_MIME = "mime"
+        const val EXTRA_LOCAL_URI = "local_uri"
 
         fun guessMimeFromName(name: String): String {
             val ext = name.substringAfterLast('.', "").lowercase()
@@ -99,6 +118,7 @@ class MediaPreviewActivity : AppCompatActivity() {
                 "png" -> "image/png"
                 "gif" -> "image/gif"
                 "webp" -> "image/webp"
+                "heic", "heif" -> "image/heic"
                 "mp4", "m4v" -> "video/mp4"
                 "webm" -> "video/webm"
                 "mkv" -> "video/x-matroska"
@@ -109,14 +129,6 @@ class MediaPreviewActivity : AppCompatActivity() {
                 "ogg", "oga" -> "audio/ogg"
                 "flac" -> "audio/flac"
                 "pdf" -> "application/pdf"
-                "doc" -> "application/msword"
-                "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                "xls" -> "application/vnd.ms-excel"
-                "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                "ppt" -> "application/vnd.ms-powerpoint"
-                "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                "txt" -> "text/plain"
-                "zip" -> "application/zip"
                 else -> "application/octet-stream"
             }
         }

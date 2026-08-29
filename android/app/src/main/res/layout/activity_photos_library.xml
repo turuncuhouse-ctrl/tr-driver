@@ -8,8 +8,9 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:padding="12dp">
+        android:padding="10dp">
 
         <TextView
             android:id="@+id/photosTitle"
@@ -22,10 +23,10 @@
             android:textStyle="bold" />
 
         <Button
-            android:id="@+id/btnPhotosUp"
+            android:id="@+id/btnPhotosFreeUp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Üst" />
+            android:text="Yer aç" />
 
         <Button
             android:id="@+id/btnPhotosClose"
@@ -34,13 +35,42 @@
             android:text="Kapat" />
     </LinearLayout>
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp">
+
+        <Button
+            android:id="@+id/tabPhotos"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Fotoğraflar"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/tabAlbums"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Albümler" />
+
+        <Button
+            android:id="@+id/tabCloud"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Bulut" />
+    </LinearLayout>
+
     <TextView
-        android:id="@+id/photosCrumbs"
+        android:id="@+id/photosSubtitle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="12dp"
-        android:paddingBottom="8dp"
-        android:text="TR Photos"
+        android:paddingBottom="6dp"
+        android:text="Tüm fotoğraf ve videolar"
         android:textColor="@color/tr_ink"
         android:textSize="12sp" />
 
@@ -56,6 +86,6 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:padding="8dp"
-        android:clipToPadding="false" />
+        android:clipToPadding="false"
+        android:padding="4dp" />
 </LinearLayout>
