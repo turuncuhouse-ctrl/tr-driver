@@ -17,7 +17,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="TR Photos"
+            android:text="@string/gallery_launcher_name"
             android:textColor="@color/tr_ink"
             android:textSize="20sp"
             android:textStyle="bold" />
@@ -29,10 +29,10 @@
             android:text="Seç" />
 
         <Button
-            android:id="@+id/btnPhotosFreeUp"
+            android:id="@+id/btnPhotosMore"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Yer aç" />
+            android:text="⋯" />
 
         <Button
             android:id="@+id/btnPhotosClose"
@@ -70,6 +70,39 @@
             android:text="Bulut" />
     </LinearLayout>
 
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="8dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/filterAll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tümü"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/filterPhotos"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Fotoğraf" />
+
+            <Button
+                android:id="@+id/filterVideos"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Video" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
     <EditText
         android:id="@+id/photosSearch"
         android:layout_width="match_parent"
@@ -94,50 +127,76 @@
         android:textColor="@color/tr_ink"
         android:textSize="12sp" />
 
-    <LinearLayout
-        android:id="@+id/selectionBar"
+    <HorizontalScrollView
+        android:id="@+id/selectionBarScroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#E8F2FC"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="6dp"
+        android:scrollbars="none"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/selectionCount"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:paddingStart="6dp"
-            android:text="0 seçili"
-            android:textColor="@color/tr_ink"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/btnSelectAll"
+        <LinearLayout
+            android:id="@+id/selectionBar"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Tümü" />
+            android:background="#E8F2FC"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="6dp">
 
-        <Button
-            android:id="@+id/btnShareSelected"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Paylaş" />
+            <TextView
+                android:id="@+id/selectionCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="72dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="8dp"
+                android:text="0 seçili"
+                android:textColor="@color/tr_ink"
+                android:textStyle="bold" />
 
-        <Button
-            android:id="@+id/btnDeleteSelected"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Sil" />
+            <Button
+                android:id="@+id/btnSelectAll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tümü" />
 
-        <Button
-            android:id="@+id/btnCancelSelect"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="İptal" />
-    </LinearLayout>
+            <Button
+                android:id="@+id/btnShareSelected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Paylaş" />
+
+            <Button
+                android:id="@+id/btnUploadSelected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Buluta" />
+
+            <Button
+                android:id="@+id/btnOpenSelected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Aç" />
+
+            <Button
+                android:id="@+id/btnInfoSelected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Bilgi" />
+
+            <Button
+                android:id="@+id/btnDeleteSelected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Sil" />
+
+            <Button
+                android:id="@+id/btnCancelSelect"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="İptal" />
+        </LinearLayout>
+    </HorizontalScrollView>
 
     <ProgressBar
         android:id="@+id/photosProgress"

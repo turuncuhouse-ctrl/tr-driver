@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Gallery-style mark for TR Galeri launcher -->
+    <path
+        android:fillColor="#0D9488"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,30h52c3.3,0 6,2.7 6,6v36c0,3.3 -2.7,6 -6,6h-52c-3.3,0 -6,-2.7 -6,-6v-36c0,-3.3 2.7,-6 6,-6z" />
+    <path
+        android:fillColor="#0D9488"
+        android:pathData="M34,66l14,-18 10,12 8,-10 18,16h-50z" />
+    <path
+        android:fillColor="#5EEAD4"
+        android:pathData="M68,42m-6,0a6,6 0,1 1,12,0a6,6 0,1 1,-12,0" />
+</vector>

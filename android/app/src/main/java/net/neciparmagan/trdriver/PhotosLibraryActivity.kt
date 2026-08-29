@@ -12,14 +12,17 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
+import android.text.format.Formatter
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -56,6 +59,7 @@ import java.util.Locale
  */
 class PhotosLibraryActivity : AppCompatActivity() {
     private enum class Tab { PHOTOS, ALBUMS, CLOUD }
+    private enum class MediaFilter { ALL, PHOTOS, VIDEOS }
 
     private sealed class TimelineItem {
         data class Header(val label: String, val dayKey: String) : TimelineItem()
@@ -71,19 +75,25 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private lateinit var grid: RecyclerView
     private lateinit var search: EditText
     private lateinit var selectionBar: LinearLayout
+    private lateinit var selectionBarScroll: HorizontalScrollView
     private lateinit var selectionCount: TextView
     private lateinit var tabPhotos: Button
     private lateinit var tabAlbums: Button
     private lateinit var tabCloud: Button
     private lateinit var btnSelect: Button
+    private lateinit var filterAll: Button
+    private lateinit var filterPhotos: Button
+    private lateinit var filterVideos: Button
 
     private var tab = Tab.PHOTOS
+    private var mediaFilter = MediaFilter.ALL
     private var viewingAlbum: MediaAlbum? = null
     private var viewingCloudAlbum: FileEntry? = null
     private var showingCloudAlbumList = false
     private var selectionMode = false
     private var searchQuery = ""
     private var searchJob: Job? = null
+    private var launchedAsGalleryApp = false
 
     private var allLocal: List<LocalMedia> = emptyList()
     private var allAlbums: List<MediaAlbum> = emptyList()
@@ -95,9 +105,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     private val timelineAdapter = TimelineAdapter(
         onOpenLocal = { if (selectionMode) toggleLocal(it) else openLocal(it) },
-        onLongLocal = { enterSelection(); toggleLocal(it) },
+        onLongLocal = { media, view -> showLocalContextMenu(media, view) },
         onOpenCloud = { if (selectionMode) toggleCloud(it) else openCloud(it) },
-        onLongCloud = { enterSelection(); toggleCloud(it) },
+        onLongCloud = { entry, view -> showCloudContextMenu(entry, view) },
         isLocalSelected = { selectedLocal.contains(it.mediaKey) },
         isCloudSelected = { selectedCloud.contains(it.id) },
         selectionActive = { selectionMode },
@@ -134,11 +144,22 @@ class PhotosLibraryActivity : AppCompatActivity() {
         grid = findViewById(R.id.photosGrid)
         search = findViewById(R.id.photosSearch)
         selectionBar = findViewById(R.id.selectionBar)
+        selectionBarScroll = findViewById(R.id.selectionBarScroll)
         selectionCount = findViewById(R.id.selectionCount)
         tabPhotos = findViewById(R.id.tabPhotos)
         tabAlbums = findViewById(R.id.tabAlbums)
         tabCloud = findViewById(R.id.tabCloud)
         btnSelect = findViewById(R.id.btnPhotosSelect)
+        filterAll = findViewById(R.id.filterAll)
+        filterPhotos = findViewById(R.id.filterPhotos)
+        filterVideos = findViewById(R.id.filterVideos)
+
+        launchedAsGalleryApp = intent?.action == Intent.ACTION_MAIN &&
+            intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
+        if (launchedAsGalleryApp) {
+            title.setText(R.string.gallery_launcher_name)
+            findViewById<Button>(R.id.btnPhotosClose).text = "Driver"
+        }
 
         val glm = GridLayoutManager(this, 3)
         glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
@@ -152,15 +173,26 @@ class PhotosLibraryActivity : AppCompatActivity() {
         tabPhotos.setOnClickListener { selectTab(Tab.PHOTOS) }
         tabAlbums.setOnClickListener { selectTab(Tab.ALBUMS) }
         tabCloud.setOnClickListener { selectTab(Tab.CLOUD) }
+        filterAll.setOnClickListener { setMediaFilter(MediaFilter.ALL) }
+        filterPhotos.setOnClickListener { setMediaFilter(MediaFilter.PHOTOS) }
+        filterVideos.setOnClickListener { setMediaFilter(MediaFilter.VIDEOS) }
+        styleFilters()
         btnSelect.setOnClickListener {
             if (selectionMode) exitSelection() else enterSelection()
         }
-        findViewById<Button>(R.id.btnPhotosFreeUp).setOnClickListener {
-            startActivity(Intent(this, FreeUpSpaceActivity::class.java))
+        findViewById<Button>(R.id.btnPhotosMore).setOnClickListener { showMoreMenu(it) }
+        findViewById<Button>(R.id.btnPhotosClose).setOnClickListener {
+            if (launchedAsGalleryApp) {
+                startActivity(Intent(this, MainActivity::class.java))
+            } else {
+                finish()
+            }
         }
-        findViewById<Button>(R.id.btnPhotosClose).setOnClickListener { finish() }
         findViewById<Button>(R.id.btnSelectAll).setOnClickListener { selectAllVisible() }
         findViewById<Button>(R.id.btnShareSelected).setOnClickListener { shareSelected() }
+        findViewById<Button>(R.id.btnUploadSelected).setOnClickListener { uploadSelectedToCloud() }
+        findViewById<Button>(R.id.btnOpenSelected).setOnClickListener { openSelectedExternal() }
+        findViewById<Button>(R.id.btnInfoSelected).setOnClickListener { showSelectedInfo() }
         findViewById<Button>(R.id.btnDeleteSelected).setOnClickListener { confirmDeleteSelected() }
         findViewById<Button>(R.id.btnCancelSelect).setOnClickListener { exitSelection() }
 
@@ -205,7 +237,25 @@ class PhotosLibraryActivity : AppCompatActivity() {
         })
 
         if (!hasMediaPermission()) permissionLauncher.launch(mediaPermissions())
-        selectTab(Tab.PHOTOS)
+        else if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
+            val uri = intent.data!!
+            val name = intent.getStringExtra(Intent.EXTRA_TITLE)
+                ?: uri.lastPathSegment
+                ?: "medya"
+            val mime = contentResolver.getType(uri)
+                ?: intent.type
+                ?: MediaPreviewActivity.guessMimeFromName(name)
+            startActivity(
+                Intent(this, MediaPreviewActivity::class.java).apply {
+                    putExtra(MediaPreviewActivity.EXTRA_NAME, name)
+                    putExtra(MediaPreviewActivity.EXTRA_MIME, mime)
+                    putExtra(MediaPreviewActivity.EXTRA_LOCAL_URI, uri.toString())
+                },
+            )
+            selectTab(Tab.PHOTOS)
+        } else {
+            selectTab(Tab.PHOTOS)
+        }
     }
 
     private fun selectTab(next: Tab) {
@@ -228,6 +278,50 @@ class PhotosLibraryActivity : AppCompatActivity() {
         style(tabPhotos, tab == Tab.PHOTOS)
         style(tabAlbums, tab == Tab.ALBUMS)
         style(tabCloud, tab == Tab.CLOUD)
+    }
+
+    private fun setMediaFilter(next: MediaFilter) {
+        mediaFilter = next
+        styleFilters()
+        applyFilter()
+    }
+
+    private fun styleFilters() {
+        fun style(btn: Button, active: Boolean) {
+            btn.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
+            btn.alpha = if (active) 1f else 0.7f
+        }
+        style(filterAll, mediaFilter == MediaFilter.ALL)
+        style(filterPhotos, mediaFilter == MediaFilter.PHOTOS)
+        style(filterVideos, mediaFilter == MediaFilter.VIDEOS)
+    }
+
+    private fun showMoreMenu(anchor: View) {
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, "Yer aç (yedeklenenler)")
+            menu.add(0, 2, 1, "Yedek ayarları")
+            menu.add(0, 3, 2, "Şimdi yedekle")
+            menu.add(0, 4, 3, "TR Driver dosyaları")
+            menu.add(0, 5, 4, "Seçim modu")
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> startActivity(Intent(this@PhotosLibraryActivity, FreeUpSpaceActivity::class.java))
+                    2 -> startActivity(Intent(this@PhotosLibraryActivity, BackupSettingsActivity::class.java))
+                    3 -> {
+                        if (!session.isLoggedIn) {
+                            Toast.makeText(this@PhotosLibraryActivity, "Giriş gerekli", Toast.LENGTH_SHORT).show()
+                        } else {
+                            net.neciparmagan.trdriver.backup.GalleryBackupWorker.runNow(this@PhotosLibraryActivity)
+                            Toast.makeText(this@PhotosLibraryActivity, "Yedekleme başlatıldı", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    4 -> startActivity(Intent(this@PhotosLibraryActivity, MainActivity::class.java))
+                    5 -> if (selectionMode) exitSelection() else enterSelection()
+                }
+                true
+            }
+            show()
+        }
     }
 
     private fun reload() {
@@ -403,8 +497,17 @@ class PhotosLibraryActivity : AppCompatActivity() {
                 } else {
                     grid.adapter = timelineAdapter
                     (grid.layoutManager as GridLayoutManager).spanCount = 3
-                    val files = if (q.isBlank()) allCloud else allCloud.filter {
+                    var files = if (q.isBlank()) allCloud else allCloud.filter {
                         it.name.lowercase(Locale.getDefault()).contains(q)
+                    }
+                    files = when (mediaFilter) {
+                        MediaFilter.ALL -> files
+                        MediaFilter.PHOTOS -> files.filter {
+                            MainActivity.resolveMime(it).startsWith("image/")
+                        }
+                        MediaFilter.VIDEOS -> files.filter {
+                            MainActivity.resolveMime(it).startsWith("video/")
+                        }
                     }
                     timelineAdapter.submitCloud(buildCloudTimeline(files))
                     subtitle.text = when {
@@ -421,12 +524,22 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun showLocalTimeline(q: String) {
         grid.adapter = timelineAdapter
         (grid.layoutManager as GridLayoutManager).spanCount = 3
-        val media = if (q.isBlank()) allLocal else allLocal.filter {
+        var media = if (q.isBlank()) allLocal else allLocal.filter {
             it.displayName.lowercase(Locale.getDefault()).contains(q) ||
                 (it.albumName?.lowercase(Locale.getDefault())?.contains(q) == true)
         }
+        media = when (mediaFilter) {
+            MediaFilter.ALL -> media
+            MediaFilter.PHOTOS -> media.filter { !it.isVideo }
+            MediaFilter.VIDEOS -> media.filter { it.isVideo }
+        }
         timelineAdapter.submitLocal(buildLocalTimeline(media))
-        subtitle.text = "${media.size} öğe · tarihe göre" +
+        val filterLabel = when (mediaFilter) {
+            MediaFilter.ALL -> "tarihe göre"
+            MediaFilter.PHOTOS -> "yalnız fotoğraf"
+            MediaFilter.VIDEOS -> "yalnız video"
+        }
+        subtitle.text = "${media.size} öğe · $filterLabel" +
             if (q.isNotBlank()) " · \"$searchQuery\"" else ""
     }
 
@@ -474,7 +587,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun enterSelection() {
         selectionMode = true
         btnSelect.text = "İptal"
-        selectionBar.visibility = View.VISIBLE
+        selectionBarScroll.visibility = View.VISIBLE
         timelineAdapter.notifyDataSetChanged()
         refreshSelectionUi()
     }
@@ -484,7 +597,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         selectedLocal.clear()
         selectedCloud.clear()
         btnSelect.text = "Seç"
-        selectionBar.visibility = View.GONE
+        selectionBarScroll.visibility = View.GONE
         if (refresh) timelineAdapter.notifyDataSetChanged()
     }
 
@@ -526,26 +639,240 @@ class PhotosLibraryActivity : AppCompatActivity() {
     }
 
     private fun shareSelected() {
-        val uris = ArrayList<Uri>()
-        if (selectedLocal.isNotEmpty()) {
-            for (m in allLocal) {
-                if (m.mediaKey in selectedLocal) uris += m.uri
+        val localItems = allLocal.filter { it.mediaKey in selectedLocal }
+        if (localItems.isEmpty() && selectedCloud.isNotEmpty()) {
+            Toast.makeText(
+                this,
+                "Bulut öğesini açıp Paylaş’a basın (önce indirilir)",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        if (localItems.isEmpty()) {
+            Toast.makeText(this, "Seçili yerel öğe yok", Toast.LENGTH_SHORT).show()
+            return
+        }
+        shareLocalItems(localItems)
+    }
+
+    private fun shareLocalItems(items: List<LocalMedia>) {
+        if (items.isEmpty()) return
+        if (items.size == 1) {
+            val item = items.first()
+            startActivity(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = item.mimeType.ifBlank { "*/*" }
+                        putExtra(Intent.EXTRA_STREAM, item.uri)
+                        putExtra(Intent.EXTRA_SUBJECT, item.displayName)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                    "Paylaş",
+                ),
+            )
+            return
+        }
+        val uris = ArrayList(items.map { it.uri })
+        startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                    type = "*/*"
+                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+                "Paylaş (${items.size})",
+            ),
+        )
+    }
+
+    private fun uploadSelectedToCloud() {
+        if (!session.isLoggedIn) {
+            Toast.makeText(this, "Buluta yüklemek için giriş yapın", Toast.LENGTH_LONG).show()
+            return
+        }
+        val items = allLocal.filter { it.mediaKey in selectedLocal }
+        if (items.isEmpty()) {
+            Toast.makeText(this, "Yüklenecek yerel öğe seçin", Toast.LENGTH_SHORT).show()
+            return
+        }
+        progress.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            var ok = 0
+            for (item in items) {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val parent = api.ensurePhotosAlbumFolder(item)
+                        api.uploadMedia(parent, item)
+                    }
+                }.onSuccess { ok++ }
             }
+            progress.visibility = View.GONE
+            Toast.makeText(this@PhotosLibraryActivity, "$ok / ${items.size} buluta yüklendi", Toast.LENGTH_LONG).show()
+            exitSelection()
         }
-        if (uris.isEmpty() && selectedCloud.isNotEmpty()) {
-            Toast.makeText(this, "Bulut öğeleri için önce indirin veya dosya tarayıcıdan paylaşın", Toast.LENGTH_LONG).show()
+    }
+
+    private fun openSelectedExternal() {
+        val local = allLocal.firstOrNull { it.mediaKey in selectedLocal }
+        if (local != null) {
+            openLocalExternal(local)
             return
         }
-        if (uris.isEmpty()) {
-            Toast.makeText(this, "Seçili öğe yok", Toast.LENGTH_SHORT).show()
+        val cloud = allCloud.firstOrNull { it.id in selectedCloud && it.kind == "file" }
+        if (cloud != null) {
+            openCloud(cloud)
             return
         }
-        val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = "*/*"
-            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        Toast.makeText(this, "Seçili öğe yok", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openLocalExternal(item: LocalMedia) {
+        try {
+            startActivity(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(item.uri, item.mimeType.ifBlank { "*/*" })
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                    "Birlikte aç",
+                ),
+            )
+        } catch (e: Exception) {
+            Toast.makeText(this, e.message, Toast.LENGTH_LONG).show()
         }
-        startActivity(Intent.createChooser(send, "Paylaş"))
+    }
+
+    private fun showSelectedInfo() {
+        val local = allLocal.firstOrNull { it.mediaKey in selectedLocal }
+        if (local != null) {
+            showLocalInfo(local)
+            return
+        }
+        val cloud = allCloud.firstOrNull { it.id in selectedCloud }
+        if (cloud != null) {
+            showCloudInfo(cloud)
+            return
+        }
+        Toast.makeText(this, "Seçili öğe yok", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showLocalInfo(item: LocalMedia) {
+        val date = if (item.dateTakenMs > 0) {
+            SimpleDateFormat("d MMMM yyyy HH:mm", Locale("tr", "TR")).format(Date(item.dateTakenMs))
+        } else {
+            "—"
+        }
+        val size = if (item.sizeBytes > 0) Formatter.formatFileSize(this, item.sizeBytes) else "—"
+        AlertDialog.Builder(this)
+            .setTitle(item.displayName)
+            .setMessage(
+                "Tür: ${item.mimeType}\n" +
+                    "Boyut: $size\n" +
+                    "Tarih: $date\n" +
+                    "Albüm: ${item.albumName ?: "—"}\n" +
+                    (if (item.isVideo) "Video" else "Fotoğraf"),
+            )
+            .setPositiveButton("Tamam", null)
+            .setNeutralButton("Paylaş") { _, _ -> shareLocalItems(listOf(item)) }
+            .show()
+    }
+
+    private fun showCloudInfo(entry: FileEntry) {
+        val size = if (entry.sizeBytes > 0) Formatter.formatFileSize(this, entry.sizeBytes) else "—"
+        AlertDialog.Builder(this)
+            .setTitle(entry.name)
+            .setMessage(
+                "Tür: ${MainActivity.resolveMime(entry)}\n" +
+                    "Boyut: $size\n" +
+                    "Kimlik: ${entry.id.take(12)}…\n" +
+                    if (entry.starred) "Yıldızlı" else "Bulut dosyası",
+            )
+            .setPositiveButton("Tamam", null)
+            .show()
+    }
+
+    private fun showLocalContextMenu(media: LocalMedia, anchor: View) {
+        if (selectionMode) {
+            toggleLocal(media)
+            return
+        }
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, "Paylaş")
+            menu.add(0, 2, 1, "Buluta yükle")
+            menu.add(0, 3, 2, "Birlikte aç")
+            menu.add(0, 4, 3, "Ayrıntılar")
+            menu.add(0, 5, 4, "Seç")
+            menu.add(0, 6, 5, "Sil")
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> shareLocalItems(listOf(media))
+                    2 -> {
+                        selectedLocal.clear()
+                        selectedLocal.add(media.mediaKey)
+                        enterSelection()
+                        uploadSelectedToCloud()
+                    }
+                    3 -> openLocalExternal(media)
+                    4 -> showLocalInfo(media)
+                    5 -> {
+                        enterSelection()
+                        toggleLocal(media)
+                    }
+                    6 -> {
+                        selectedLocal.clear()
+                        selectedLocal.add(media.mediaKey)
+                        confirmDeleteSelected()
+                    }
+                }
+                true
+            }
+            show()
+        }
+    }
+
+    private fun showCloudContextMenu(entry: FileEntry, anchor: View) {
+        if (selectionMode) {
+            toggleCloud(entry)
+            return
+        }
+        if (entry.kind == "folder") {
+            openCloud(entry)
+            return
+        }
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, "Önizle")
+            menu.add(0, 2, 1, "Ayrıntılar")
+            menu.add(0, 3, 2, if (entry.starred) "Yıldızı kaldır" else "Yıldızla")
+            menu.add(0, 4, 3, "Seç")
+            menu.add(0, 5, 4, "Sil")
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> openCloud(entry)
+                    2 -> showCloudInfo(entry)
+                    3 -> lifecycleScope.launch {
+                        runCatching {
+                            withContext(Dispatchers.IO) { api.setStarred(entry.id, !entry.starred) }
+                        }.onSuccess {
+                            Toast.makeText(this@PhotosLibraryActivity, "Güncellendi", Toast.LENGTH_SHORT).show()
+                            reload()
+                        }.onFailure {
+                            Toast.makeText(this@PhotosLibraryActivity, it.message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    4 -> {
+                        enterSelection()
+                        toggleCloud(entry)
+                    }
+                    5 -> {
+                        selectedCloud.clear()
+                        selectedCloud.add(entry.id)
+                        confirmDeleteSelected()
+                    }
+                }
+                true
+            }
+            show()
+        }
     }
 
     private fun confirmDeleteSelected() {
@@ -634,9 +961,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     private class TimelineAdapter(
         private val onOpenLocal: (LocalMedia) -> Unit,
-        private val onLongLocal: (LocalMedia) -> Unit,
+        private val onLongLocal: (LocalMedia, View) -> Unit,
         private val onOpenCloud: (FileEntry) -> Unit,
-        private val onLongCloud: (FileEntry) -> Unit,
+        private val onLongCloud: (FileEntry, View) -> Unit,
         private val isLocalSelected: (LocalMedia) -> Boolean,
         private val isCloudSelected: (FileEntry) -> Boolean,
         private val selectionActive: () -> Boolean,
@@ -700,7 +1027,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             MediaThumbLoader.loadLocal(holder.thumb, media.uri, media.mediaKey)
             holder.itemView.setOnClickListener { onOpenLocal(media) }
             holder.itemView.setOnLongClickListener {
-                onLongLocal(media)
+                onLongLocal(media, holder.itemView)
                 true
             }
         }
@@ -745,7 +1072,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             }
             holder.itemView.setOnClickListener { onOpenCloud(entry) }
             holder.itemView.setOnLongClickListener {
-                onLongCloud(entry)
+                onLongCloud(entry, holder.itemView)
                 true
             }
         }

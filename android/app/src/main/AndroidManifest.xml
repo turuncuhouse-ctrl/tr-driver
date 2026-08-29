@@ -53,8 +53,34 @@
             android:theme="@style/Theme.TRDriver" />
         <activity
             android:name=".PhotosLibraryActivity"
-            android:exported="false"
+            android:exported="true"
+            android:label="@string/gallery_launcher_name"
             android:theme="@style/Theme.TRDriver" />
+
+        <!-- Home-screen shortcut: TR Galeri (opens gallery directly) -->
+        <activity-alias
+            android:name=".TrGalleryLauncher"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@drawable/ic_gallery_app"
+            android:label="@string/gallery_launcher_name"
+            android:roundIcon="@drawable/ic_gallery_app"
+            android:targetActivity=".PhotosLibraryActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity-alias>
         <activity
             android:name=".VehicleIntakeActivity"
             android:exported="false"

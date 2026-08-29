@@ -10,35 +10,49 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import coil.imageLoader
 import coil.request.ImageRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.SessionStore
+import java.io.File
 
 class MediaPreviewActivity : AppCompatActivity() {
     private var videoView: VideoView? = null
+    private var localUri: Uri? = null
+    private var remoteId: String = ""
+    private var mime: String = ""
+    private var displayName: String = ""
+    private var shareUri: Uri? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_media_preview)
 
-        val id = intent.getStringExtra(EXTRA_ID).orEmpty()
-        val name = intent.getStringExtra(EXTRA_NAME).orEmpty()
-        val localUri = intent.getStringExtra(EXTRA_LOCAL_URI)?.let { runCatching { Uri.parse(it) }.getOrNull() }
-        var mime = intent.getStringExtra(EXTRA_MIME).orEmpty()
+        remoteId = intent.getStringExtra(EXTRA_ID).orEmpty()
+        displayName = intent.getStringExtra(EXTRA_NAME).orEmpty()
+        localUri = intent.getStringExtra(EXTRA_LOCAL_URI)?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        mime = intent.getStringExtra(EXTRA_MIME).orEmpty()
         if (mime.isBlank() || mime == "application/octet-stream") {
-            mime = guessMimeFromName(name)
+            mime = guessMimeFromName(displayName)
         }
         val session = SessionStore(this)
-        val remoteUrl = if (id.isNotBlank()) {
-            session.serverUrl.trimEnd('/') + "/api/files/download/$id?inline=1"
+        val remoteUrl = if (remoteId.isNotBlank()) {
+            session.serverUrl.trimEnd('/') + "/api/files/download/$remoteId?inline=1"
         } else {
             null
         }
         val token = session.token.orEmpty()
         val dataSource: Any? = localUri ?: remoteUrl
+        shareUri = localUri
 
-        findViewById<TextView>(R.id.previewTitle).text = name
+        findViewById<TextView>(R.id.previewTitle).text = displayName
         findViewById<View>(R.id.btnClosePreview).setOnClickListener { finish() }
+        findViewById<View>(R.id.btnSharePreview).setOnClickListener { shareCurrent(session) }
+        findViewById<View>(R.id.btnOpenExternal).setOnClickListener { openExternal() }
 
         val image = findViewById<ImageView>(R.id.previewImage)
         val video = findViewById<VideoView>(R.id.previewVideo)
@@ -84,13 +98,91 @@ class MediaPreviewActivity : AppCompatActivity() {
             }
             mime.startsWith("audio/") -> {
                 if (remoteUrl != null) {
-                    PlayerActivity.start(this, name, remoteUrl, token)
+                    PlayerActivity.start(this, displayName, remoteUrl, token)
                 } else {
                     Toast.makeText(this, "Yerel ses önizlemesi yok", Toast.LENGTH_SHORT).show()
                 }
                 finish()
             }
             else -> Toast.makeText(this, "Bu tür önizlenemiyor", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun shareCurrent(session: SessionStore) {
+        val uri = shareUri
+        if (uri != null) {
+            startActivity(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = mime.ifBlank { "*/*" }
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_SUBJECT, displayName)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                    "Paylaş",
+                ),
+            )
+            return
+        }
+        if (remoteId.isBlank() || !session.isLoggedIn) {
+            Toast.makeText(this, "Paylaşılacak dosya yok", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, "Paylaşım için indiriliyor…", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            try {
+                val api = DriveApi(session, applicationContext)
+                val file = withContext(Dispatchers.IO) {
+                    api.downloadToCache(
+                        net.neciparmagan.trdriver.data.FileEntry(
+                            id = remoteId,
+                            name = displayName.ifBlank { "share.bin" },
+                            kind = "file",
+                            mimeType = mime,
+                        ),
+                    )
+                }
+                val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                    this@MediaPreviewActivity,
+                    "${packageName}.files",
+                    file,
+                )
+                shareUri = contentUri
+                startActivity(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = mime.ifBlank { "*/*" }
+                            putExtra(Intent.EXTRA_STREAM, contentUri)
+                            putExtra(Intent.EXTRA_SUBJECT, displayName)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        },
+                        "Paylaş",
+                    ),
+                )
+            } catch (e: Exception) {
+                Toast.makeText(this@MediaPreviewActivity, e.message ?: "İndirme başarısız", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun openExternal() {
+        val uri = shareUri ?: localUri
+        if (uri == null) {
+            Toast.makeText(this, "Önce paylaşım için indirin veya yerel dosya açın", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            startActivity(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime.ifBlank { "*/*" })
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                    "Birlikte aç",
+                ),
+            )
+        } catch (e: Exception) {
+            Toast.makeText(this, e.message, Toast.LENGTH_LONG).show()
         }
     }
 

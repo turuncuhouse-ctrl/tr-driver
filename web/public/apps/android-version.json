@@ -1,7 +1,7 @@
 ﻿{
-    "versionCode": 22,
-    "versionName": "0.8.4",
+    "versionCode": 23,
+    "versionName": "0.8.5",
     "minSupportedCode": 1,
-    "releaseNotes": "Yedekleme Android uyumu (izinler, SD kart, boyut); galeri onizleme; guncelleme devam",
+    "releaseNotes": "TR Galeri kisayolu; paylasim, buluta yukleme, filtreler, uzun bas menu",
     "apkPath": "/download/TRDriver.apk"
 }

@@ -6,4 +6,5 @@
     <color name="tr_ink">#102A43</color>
     <color name="tr_white">#FFFFFF</color>
     <color name="ic_launcher_background">#0B5CAD</color>
+    <color name="ic_gallery_background">#0D9488</color>
 </resources>

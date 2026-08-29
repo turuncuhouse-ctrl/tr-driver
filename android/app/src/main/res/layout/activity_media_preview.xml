@@ -50,6 +50,18 @@
             android:textStyle="bold" />
 
         <Button
+            android:id="@+id/btnSharePreview"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Paylaş" />
+
+        <Button
+            android:id="@+id/btnOpenExternal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Aç" />
+
+        <Button
             android:id="@+id/btnClosePreview"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
