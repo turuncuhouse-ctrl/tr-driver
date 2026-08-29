@@ -1,7 +1,7 @@
-{
-  "minSupportedCode": 1,
-  "versionCode": 19,
-  "versionName": "0.8.1",
-  "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "TR Photos artik Android Galeri gibi: Fotoograflar / Albumler / Bulut. Ana ekranda Galeri butonu. Klasor gezmek yerine zaman cizelgesi."
+﻿{
+    "minSupportedCode":  1,
+    "versionCode":  20,
+    "versionName":  "0.8.2",
+    "apkPath":  "/download/TRDriver.apk",
+    "releaseNotes":  "Galeri: tarih bolumleri, coklu secim (paylas/sil), arama"
 }

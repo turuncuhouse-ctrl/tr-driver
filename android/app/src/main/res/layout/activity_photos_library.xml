@@ -23,6 +23,12 @@
             android:textStyle="bold" />
 
         <Button
+            android:id="@+id/btnPhotosSelect"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Seç" />
+
+        <Button
             android:id="@+id/btnPhotosFreeUp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -64,15 +70,74 @@
             android:text="Bulut" />
     </LinearLayout>
 
+    <EditText
+        android:id="@+id/photosSearch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="10dp"
+        android:layout_marginTop="4dp"
+        android:hint="Ara (dosya, albüm…)"
+        android:imeOptions="actionSearch"
+        android:inputType="text"
+        android:maxLines="1"
+        android:textColor="@color/tr_ink"
+        android:textSize="14sp" />
+
     <TextView
         android:id="@+id/photosSubtitle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="12dp"
-        android:paddingBottom="6dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
         android:text="Tüm fotoğraf ve videolar"
         android:textColor="@color/tr_ink"
         android:textSize="12sp" />
+
+    <LinearLayout
+        android:id="@+id/selectionBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#E8F2FC"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="6dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/selectionCount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:paddingStart="6dp"
+            android:text="0 seçili"
+            android:textColor="@color/tr_ink"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnSelectAll"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Tümü" />
+
+        <Button
+            android:id="@+id/btnShareSelected"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Paylaş" />
+
+        <Button
+            android:id="@+id/btnDeleteSelected"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Sil" />
+
+        <Button
+            android:id="@+id/btnCancelSelect"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="İptal" />
+    </LinearLayout>
 
     <ProgressBar
         android:id="@+id/photosProgress"

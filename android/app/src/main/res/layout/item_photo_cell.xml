@@ -28,5 +28,12 @@
             android:textColor="#FFFFFF"
             android:textSize="10sp"
             android:visibility="gone" />
+
+        <CheckBox
+            android:id="@+id/photoCheck"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:visibility="gone" />
     </FrameLayout>
 </FrameLayout>
