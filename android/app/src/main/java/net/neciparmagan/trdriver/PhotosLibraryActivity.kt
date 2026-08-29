@@ -31,7 +31,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import coil.load
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -42,8 +41,8 @@ import net.neciparmagan.trdriver.data.FileEntry
 import net.neciparmagan.trdriver.data.LocalMedia
 import net.neciparmagan.trdriver.data.MediaAlbum
 import net.neciparmagan.trdriver.data.MediaCatalog
+import net.neciparmagan.trdriver.data.MediaThumbLoader
 import net.neciparmagan.trdriver.data.SessionStore
-import okhttp3.Headers
 import java.text.SimpleDateFormat
 import java.util.ArrayDeque
 import java.util.Calendar
@@ -700,13 +699,14 @@ class PhotosLibraryActivity : AppCompatActivity() {
         private fun bindLocal(holder: CellVH, media: LocalMedia) {
             holder.badge.visibility = if (media.isVideo) View.VISIBLE else View.GONE
             if (media.isVideo) holder.badge.text = "▶"
+            holder.nameHint.visibility = View.VISIBLE
+            holder.nameHint.text = media.displayName
             holder.check.visibility = if (selectionActive()) View.VISIBLE else View.GONE
             holder.check.setOnCheckedChangeListener(null)
             holder.check.isChecked = isLocalSelected(media)
-            holder.thumb.load(media.uri) {
-                size(280, 280)
-                crossfade(true)
-            }
+            holder.thumb.clearColorFilter()
+            holder.thumb.setBackgroundColor(Color.parseColor("#DCE6F5"))
+            MediaThumbLoader.loadLocal(holder.thumb, media.uri, media.mediaKey)
             holder.itemView.setOnClickListener { onOpenLocal(media) }
             holder.itemView.setOnLongClickListener {
                 onLongLocal(media)
@@ -715,31 +715,41 @@ class PhotosLibraryActivity : AppCompatActivity() {
         }
 
         private fun bindCloud(holder: CellVH, entry: FileEntry) {
-            holder.thumb.setImageDrawable(null)
             holder.badge.visibility = View.GONE
+            holder.nameHint.visibility = View.VISIBLE
+            holder.nameHint.text = entry.name
             holder.check.visibility = if (selectionActive() && entry.kind == "file") View.VISIBLE else View.GONE
             holder.check.setOnCheckedChangeListener(null)
             holder.check.isChecked = isCloudSelected(entry)
+            holder.thumb.clearColorFilter()
             if (entry.kind == "folder") {
+                holder.thumb.setImageDrawable(null)
+                holder.thumb.tag = null
                 holder.thumb.setBackgroundColor(Color.parseColor("#0B5CAD"))
                 holder.badge.visibility = View.VISIBLE
                 holder.badge.text = "Albüm"
             } else {
                 holder.thumb.setBackgroundColor(Color.parseColor("#DCE6F5"))
                 val mime = MainActivity.resolveMime(entry)
-                if (mime.startsWith("video/")) {
+                val isVideo = mime.startsWith("video/")
+                if (isVideo) {
                     holder.badge.visibility = View.VISIBLE
                     holder.badge.text = "▶"
                 }
                 if (token.isNotBlank() && serverUrl.isNotBlank() &&
-                    (mime.startsWith("image/") || mime.startsWith("video/"))
+                    (mime.startsWith("image/") || isVideo)
                 ) {
                     val url = "$serverUrl/api/files/download/${entry.id}?inline=1"
-                    holder.thumb.load(url) {
-                        headers(Headers.headersOf("Authorization", "Bearer $token"))
-                        size(280, 280)
-                        crossfade(true)
-                    }
+                    MediaThumbLoader.loadRemote(
+                        holder.thumb,
+                        url,
+                        token,
+                        "cloud:${entry.id}",
+                        isVideo = isVideo,
+                    )
+                } else {
+                    holder.thumb.tag = null
+                    holder.thumb.setImageDrawable(null)
                 }
             }
             holder.itemView.setOnClickListener { onOpenCloud(entry) }
@@ -756,6 +766,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         class CellVH(view: View) : RecyclerView.ViewHolder(view) {
             val thumb: ImageView = view.findViewById(R.id.photoThumb)
             val badge: TextView = view.findViewById(R.id.photoBadge)
+            val nameHint: TextView = view.findViewById(R.id.photoNameHint)
             val check: CheckBox = view.findViewById(R.id.photoCheck)
         }
     }
@@ -781,13 +792,13 @@ class PhotosLibraryActivity : AppCompatActivity() {
             val album = items[position]
             holder.name.text = album.name
             holder.count.text = if (album.count > 0) "${album.count} öğe" else "Albüm"
-            holder.cover.setImageDrawable(null)
+            holder.cover.clearColorFilter()
             holder.cover.setBackgroundColor(Color.parseColor("#0B5CAD"))
-            album.coverUri?.let { uri ->
-                holder.cover.load(uri) {
-                    size(360, 360)
-                    crossfade(true)
-                }
+            val cover = album.coverUri
+            if (cover != null) {
+                MediaThumbLoader.loadLocal(holder.cover, cover, "album:${album.id}")
+            } else {
+                holder.cover.setImageDrawable(null)
             }
             holder.itemView.setOnClickListener { onOpen(album) }
         }

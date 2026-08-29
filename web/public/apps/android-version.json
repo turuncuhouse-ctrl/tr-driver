@@ -1,7 +1,7 @@
 ﻿{
     "minSupportedCode":  1,
-    "versionCode":  20,
-    "versionName":  "0.8.2",
+    "versionCode":  21,
+    "versionName":  "0.8.3",
     "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "Galeri: tarih bolumleri, coklu secim (paylas/sil), arama"
+    "releaseNotes":  "Galeri onizlemeleri: MediaStore thumbnail + dosya adi"
 }
