@@ -40,6 +40,26 @@ type Settings = {
   diskPath?: string;
 };
 
+type UploadPace = {
+  cpuPercent: number;
+  activeUploads: number;
+  maxConcurrent: number;
+  delayMs: number;
+  mode: string;
+  acceptUploads: boolean;
+  retryAfterSec: number;
+  recommendedBatch: number;
+};
+
+type AdminDevice = {
+  id: string;
+  userId: string;
+  userEmail: string;
+  name: string;
+  lastSeenAt: string;
+  createdAt: string;
+};
+
 type MailSettings = {
   enabled: boolean;
   host: string;
@@ -98,6 +118,8 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     customer?: string;
     instanceId?: string;
   } | null>(null);
+  const [uploadPace, setUploadPace] = useState<UploadPace | null>(null);
+  const [devices, setDevices] = useState<AdminDevice[]>([]);
 
   const visibleUsers = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("tr-TR");
@@ -112,17 +134,21 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   async function load() {
     setLoading(true);
     try {
-      const [nextSummary, nextUsers, nextSettings, nextLicense, nextMail] = await Promise.all([
+      const [nextSummary, nextUsers, nextSettings, nextLicense, nextMail, nextPace, nextDevices] = await Promise.all([
         request<Summary>("/api/admin/summary"),
         request<AdminUser[]>("/api/admin/users"),
         request<Settings>("/api/admin/settings"),
         request<NonNullable<typeof license>>("/api/admin/license"),
-        request<MailSettings>("/api/admin/mail").catch(() => null)
+        request<MailSettings>("/api/admin/mail").catch(() => null),
+        request<UploadPace>("/api/admin/upload-pace").catch(() => null),
+        request<AdminDevice[]>("/api/admin/devices").catch(() => []),
       ]);
       setSummary(nextSummary);
       setUsers(nextUsers);
       setSettings(nextSettings);
       setLicense(nextLicense);
+      setUploadPace(nextPace);
+      setDevices(nextDevices);
       if (nextMail) setMail({ ...nextMail, password: nextMail.password || "" });
       setBatchLimitGB((nextSettings.maxUploadBatchBytes / 1024 ** 3).toFixed(1));
       setDefaultQuotaGB(((nextSettings.defaultQuotaBytes || 0) / 1024 ** 3).toFixed(1));
@@ -312,6 +338,46 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
         <article><span>Disk (DATA_DIR)</span><strong>{formatBytes(settings?.diskFreeBytes || 0)}</strong><small>{formatBytes(settings?.diskTotalBytes || 0)} toplam · boş</small></article>
         <article><span>Aktif dosya</span><strong>{summary?.fileCount ?? 0}</strong><small>{summary?.shareCount ?? 0} paylaşım</small></article>
       </div>
+
+      <section className="admin-settings">
+        <div>
+          <h2>Yükleme durumu (sunucu)</h2>
+          <p>Galeri yedekleme ve mobil yüklemelerin sunucu yükünü izleyin. Yoğunlukta istemciler otomatik yavaşlar.</p>
+        </div>
+        {uploadPace ? (
+          <div className="stats-grid">
+            <article><span>Mod</span><strong>{uploadPace.mode}</strong><small>{uploadPace.acceptUploads ? "yükleme kabul" : "duraklatıldı"}</small></article>
+            <article><span>CPU</span><strong>%{uploadPace.cpuPercent}</strong><small>gecikme {uploadPace.delayMs} ms</small></article>
+            <article><span>Aktif yükleme</span><strong>{uploadPace.activeUploads}</strong><small>max {uploadPace.maxConcurrent}</small></article>
+            <article><span>Önerilen grup</span><strong>{uploadPace.recommendedBatch}</strong><small>dosya / tur</small></article>
+          </div>
+        ) : (
+          <p className="notice">Yükleme durumu alınamadı (sunucu güncellemesi gerekebilir).</p>
+        )}
+      </section>
+
+      <section className="admin-settings">
+        <div>
+          <h2>Bağlı cihazlar</h2>
+          <p>Android uygulamasından giriş yapan telefonlar (son 200). Yedekleme sorunlarında cihaz adını kontrol edin.</p>
+        </div>
+        <div className="admin-table">
+          <div className="admin-table-head">
+            <span>Cihaz</span><span>Kullanıcı</span><span>Son görülme</span>
+          </div>
+          {devices.slice(0, 50).map((device) => (
+            <article className="admin-user-row" key={device.id}>
+              <div className="admin-identity">
+                <span>📱</span>
+                <div><strong>{device.name || "Android"}</strong><small>{device.id.slice(0, 8)}…</small></div>
+              </div>
+              <div><strong>{device.userEmail}</strong></div>
+              <div><small>{new Date(device.lastSeenAt).toLocaleString("tr-TR")}</small></div>
+            </article>
+          ))}
+          {!devices.length && <div className="admin-empty">Henüz kayıtlı cihaz yok.</div>}
+        </div>
+      </section>
 
       <section className="admin-settings">
         <div>

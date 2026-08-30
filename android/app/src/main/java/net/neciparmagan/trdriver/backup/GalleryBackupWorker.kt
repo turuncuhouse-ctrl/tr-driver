@@ -4,22 +4,31 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
+import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
+import net.neciparmagan.trdriver.R
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.LocalMedia
 import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.MediaCatalog
 import net.neciparmagan.trdriver.data.SessionStore
+import net.neciparmagan.trdriver.data.UploadConflictPolicy
+import net.neciparmagan.trdriver.data.UploadExecutor
+import net.neciparmagan.trdriver.data.UploadNetworkBlockedException
+import net.neciparmagan.trdriver.data.UploadNetworkGate
+import net.neciparmagan.trdriver.data.UploadRetry
 import net.neciparmagan.trdriver.data.UploadedMediaDb
+import net.neciparmagan.trdriver.upload.UploadForegroundService
 import net.neciparmagan.trdriver.widget.BackupStatusWidget
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -50,10 +59,23 @@ class GalleryBackupWorker(
             BackupStatusWidget.refreshAll(applicationContext)
             return Result.success()
         }
+        if (!session.backupOnWifi && !session.backupOnMobile) {
+            session.updateBackupProgress(
+                active = false,
+                currentFile = "",
+                doneCount = session.backupDoneCount,
+                pendingCount = session.backupPendingCount,
+                message = "Yedek: ağ kapalı — Wi‑Fi veya mobil veriyi açın",
+                clearFileBytes = true,
+            )
+            BackupStatusWidget.refreshAll(applicationContext)
+            return Result.success()
+        }
         val db = UploadedMediaDb(applicationContext)
         val api = DriveApi(session, applicationContext)
         val continueDelaySec = continueDelaySeconds(applicationContext, session)
         return try {
+            setForeground(createForegroundInfo(session, "Galeri yedekleme…"))
             val gallery = if (hasMedia) {
                 MediaCatalog.scan(applicationContext, limit = 4000)
             } else {
@@ -123,20 +145,40 @@ class GalleryBackupWorker(
                 }
 
                 try {
+                    if (!UploadNetworkGate.allowsUploadNow(applicationContext, session, item.sizeBytes)) {
+                        UploadNetworkGate.awaitUploadAllowed(applicationContext, session, item.sizeBytes)
+                    }
                     val parentKey = parentCacheKey(item)
                     val parent = parentCache.getOrPut(parentKey) { resolveParent(api, item) }
                     val lastEmitMs = AtomicLong(0L)
-                    val entry = api.uploadMedia(parent, item, onProgress = { sent, total ->
-                        session.updateBackupFileBytes(sent, total)
-                        val now = System.currentTimeMillis()
-                        if (now - lastEmitMs.get() >= 500L || sent >= total) {
-                            lastEmitMs.set(now)
-                            if (now - lastWidgetRefresh >= 1_500L || sent >= total) {
-                                lastWidgetRefresh = now
-                                BackupStatusWidget.refreshAll(applicationContext)
+                    val entry = UploadExecutor.uploadMediaItem(
+                        context = applicationContext,
+                        api = api,
+                        session = session,
+                        parentId = parent,
+                        media = item,
+                        conflict = UploadConflictPolicy.RENAME,
+                        onProgress = { sent, total ->
+                            session.updateBackupFileBytes(sent, total)
+                            val now = System.currentTimeMillis()
+                            if (now - lastEmitMs.get() >= 500L || sent >= total) {
+                                lastEmitMs.set(now)
+                                if (now - lastWidgetRefresh >= 1_500L || sent >= total) {
+                                    lastWidgetRefresh = now
+                                    BackupStatusWidget.refreshAll(applicationContext)
+                                }
                             }
-                        }
-                    })
+                        },
+                        onRetry = { attempt, _ ->
+                            session.updateBackupProgress(
+                                active = true,
+                                currentFile = item.displayName,
+                                doneCount = alreadyDone,
+                                pendingCount = pendingLeft,
+                                message = "Ağ değişti, yeniden ($attempt) · ${item.displayName}",
+                            )
+                        },
+                    )
                     db.markUploaded(item.mediaKey, entry.id, item.sizeBytes, item.uri)
                     alreadyDone += 1
                     pendingLeft -= 1
@@ -166,6 +208,18 @@ class GalleryBackupWorker(
                         scheduleContinue(applicationContext, delaySeconds = continueDelaySec)
                     }
                     throw e
+                } catch (e: UploadNetworkBlockedException) {
+                    session.updateBackupProgress(
+                        active = false,
+                        currentFile = item.displayName,
+                        doneCount = alreadyDone,
+                        pendingCount = pendingLeft,
+                        message = e.reason,
+                        clearFileBytes = true,
+                    )
+                    BackupStatusWidget.refreshAll(applicationContext)
+                    scheduleContinue(applicationContext, delaySeconds = 30)
+                    return Result.success()
                 } catch (e: Exception) {
                     Log.w(TAG, "upload failed ${item.displayName}: ${e.message}")
                     session.updateBackupProgress(
@@ -173,12 +227,20 @@ class GalleryBackupWorker(
                         currentFile = item.displayName,
                         doneCount = alreadyDone,
                         pendingCount = pendingLeft,
-                        message = "Yedek hata (${item.displayName}): ${e.message}",
+                        message = if (UploadRetry.isTransient(e)) {
+                            "Yedek bekliyor (ağ): ${item.displayName}"
+                        } else {
+                            "Yedek hata (${item.displayName}): ${e.message}"
+                        },
                         clearFileBytes = true,
                     )
                     BackupStatusWidget.refreshAll(applicationContext)
-                    scheduleContinue(applicationContext, delaySeconds = 15)
-                    return Result.success()
+                    if (UploadRetry.isTransient(e)) {
+                        scheduleContinue(applicationContext, delaySeconds = 15)
+                        return Result.success()
+                    }
+                    // Permanent error: skip file, continue batch
+                    pendingLeft -= 1
                 }
             }
 
@@ -242,7 +304,7 @@ class GalleryBackupWorker(
         const val UNIQUE_CONTINUE = "trdriver_gallery_continue"
 
         private fun continueDelaySeconds(context: Context, session: SessionStore): Long {
-            if (!session.wifiOnlyBackup) return 2L
+            if (session.backupOnMobile) return 2L
             val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
                 ?: return 1L
             val network = cm.activeNetwork ?: return 1L
@@ -290,12 +352,15 @@ class GalleryBackupWorker(
         fun scheduleContinue(context: Context, delaySeconds: Long = 1) {
             val session = SessionStore(context)
             if (!session.galleryBackupEnabled || !session.isLoggedIn) return
-            val once = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
+            if (!session.backupOnWifi && !session.backupOnMobile) return
+            val builder = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
                 .setConstraints(constraints(session))
                 .setInitialDelay(delaySeconds.coerceAtLeast(0), TimeUnit.SECONDS)
-                .build()
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            }
             WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(UNIQUE_CONTINUE, ExistingWorkPolicy.REPLACE, once)
+                .enqueueUniqueWork(UNIQUE_CONTINUE, ExistingWorkPolicy.REPLACE, builder.build())
         }
 
         private fun enqueueOnce(context: Context, policy: ExistingWorkPolicy) {
@@ -308,9 +373,29 @@ class GalleryBackupWorker(
         }
 
         private fun constraints(session: SessionStore) = Constraints.Builder()
-            .setRequiredNetworkType(
-                if (session.wifiOnlyBackup) NetworkType.UNMETERED else NetworkType.CONNECTED
-            )
+            .setRequiredNetworkType(UploadNetworkGate.workManagerNetworkType(session))
             .build()
+    }
+
+    private fun createForegroundInfo(session: SessionStore, text: String): ForegroundInfo {
+        val channelId = UploadForegroundService.CHANNEL_ID
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val nm = applicationContext.getSystemService(android.app.NotificationManager::class.java)
+            nm.createNotificationChannel(
+                android.app.NotificationChannel(
+                    channelId,
+                    "Yedekleme",
+                    android.app.NotificationManager.IMPORTANCE_LOW,
+                ),
+            )
+        }
+        val notification = NotificationCompat.Builder(applicationContext, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("TR Driver yedek")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .build()
+        return ForegroundInfo(4101, notification)
     }
 }

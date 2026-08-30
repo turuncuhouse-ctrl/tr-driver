@@ -47,6 +47,10 @@ import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.MediaCatalog
 import net.neciparmagan.trdriver.data.MediaThumbLoader
 import net.neciparmagan.trdriver.data.SessionStore
+import net.neciparmagan.trdriver.data.UploadConflictPolicy
+import net.neciparmagan.trdriver.data.UploadConflictUi
+import net.neciparmagan.trdriver.data.UploadQueueDb
+import net.neciparmagan.trdriver.upload.UploadForegroundService
 import java.text.SimpleDateFormat
 import java.util.ArrayDeque
 import java.util.Calendar
@@ -256,6 +260,16 @@ class PhotosLibraryActivity : AppCompatActivity() {
         } else {
             selectTab(Tab.PHOTOS)
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        UploadConflictUi.bindActivity(this)
+    }
+
+    override fun onStop() {
+        UploadConflictUi.unbindActivity()
+        super.onStop()
     }
 
     private fun selectTab(next: Tab) {
@@ -697,18 +711,36 @@ class PhotosLibraryActivity : AppCompatActivity() {
         }
         progress.visibility = View.VISIBLE
         lifecycleScope.launch {
-            var ok = 0
-            for (item in items) {
-                runCatching {
-                    withContext(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.IO) {
+                    val db = UploadQueueDb(applicationContext)
+                    for (item in items) {
                         val parent = api.ensurePhotosAlbumFolder(item)
-                        api.uploadMedia(parent, item)
+                        db.enqueue(
+                            source = "gallery",
+                            parentId = parent,
+                            localUri = item.uri.toString(),
+                            displayName = item.displayName,
+                            conflictPolicy = UploadConflictPolicy.ASK,
+                        )
                     }
-                }.onSuccess { ok++ }
+                }
+                UploadForegroundService.startDrain(this@PhotosLibraryActivity)
+                Toast.makeText(
+                    this@PhotosLibraryActivity,
+                    "${items.size} dosya arka planda yükleniyor",
+                    Toast.LENGTH_LONG,
+                ).show()
+                exitSelection()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@PhotosLibraryActivity,
+                    "Yükleme başlatılamadı: ${e.message}",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } finally {
+                progress.visibility = View.GONE
             }
-            progress.visibility = View.GONE
-            Toast.makeText(this@PhotosLibraryActivity, "$ok / ${items.size} buluta yüklendi", Toast.LENGTH_LONG).show()
-            exitSelection()
         }
     }
 
@@ -1014,6 +1046,12 @@ class PhotosLibraryActivity : AppCompatActivity() {
             }
         }
 
+        override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+            if (holder is CellVH) {
+                MediaThumbLoader.cancelLoad(holder.thumb)
+            }
+        }
+
         private fun bindLocal(holder: CellVH, media: LocalMedia) {
             holder.badge.visibility = if (media.isVideo) View.VISIBLE else View.GONE
             if (media.isVideo) holder.badge.text = "▶"
@@ -1119,6 +1157,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
                 holder.cover.setImageDrawable(null)
             }
             holder.itemView.setOnClickListener { onOpen(album) }
+        }
+
+        override fun onViewRecycled(holder: VH) {
+            MediaThumbLoader.cancelLoad(holder.cover)
         }
 
         class VH(view: View) : RecyclerView.ViewHolder(view) {

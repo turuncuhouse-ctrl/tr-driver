@@ -60,8 +60,24 @@ object MediaCatalog {
     }
 
     fun scanAlbum(context: Context, albumId: String, limit: Int = 2000): List<LocalMedia> {
-        return scan(context, limit).filter { it.albumId == albumId }
+        if (albumId.startsWith("saf:")) {
+            return scan(context, limit).filter { it.albumId == albumId }
+                .sortedByDescending { it.dateTakenMs }
+        }
+        val perCollection = limit.coerceAtLeast(200)
+        val out = ArrayList<LocalMedia>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            for (vol in MediaStore.getExternalVolumeNames(context)) {
+                out += query(context, MediaStore.Images.Media.getContentUri(vol), false, perCollection, albumId)
+                out += query(context, MediaStore.Video.Media.getContentUri(vol), true, perCollection, albumId)
+            }
+        } else {
+            out += query(context, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false, perCollection, albumId)
+            out += query(context, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, perCollection, albumId)
+        }
+        return out.distinctBy { it.mediaKey }
             .sortedByDescending { it.dateTakenMs }
+            .take(limit.coerceAtLeast(perCollection))
     }
 
     /** Device albums like Camera, Screenshots, WhatsApp Images — like system Gallery. */
@@ -134,7 +150,13 @@ object MediaCatalog {
         }
     }
 
-    private fun query(context: Context, collection: Uri, video: Boolean, limit: Int): List<LocalMedia> {
+    private fun query(
+        context: Context,
+        collection: Uri,
+        video: Boolean,
+        limit: Int,
+        bucketId: String? = null,
+    ): List<LocalMedia> {
         val idCol = MediaStore.MediaColumns._ID
         val nameCol = MediaStore.MediaColumns.DISPLAY_NAME
         val mimeCol = MediaStore.MediaColumns.MIME_TYPE
@@ -149,16 +171,21 @@ object MediaCatalog {
             takenCol, modifiedCol, addedCol,
             bucketIdCol, bucketNameCol,
         )
-        val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            "${MediaStore.MediaColumns.IS_PENDING}=0"
-        } else {
-            null
-        }
+        val selection = buildString {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                append("${MediaStore.MediaColumns.IS_PENDING}=0")
+            }
+            if (bucketId != null) {
+                if (isNotEmpty()) append(" AND ")
+                append("$bucketIdCol=?")
+            }
+        }.ifBlank { null }
+        val selectionArgs = if (bucketId != null) arrayOf(bucketId) else null
         // Prefer taken, then modified/added for stable ordering across OEMs.
         val sort = "$takenCol DESC, $modifiedCol DESC, $addedCol DESC"
         val result = ArrayList<LocalMedia>()
         runCatching {
-            context.contentResolver.query(collection, projection, selection, null, sort)?.use { c ->
+            context.contentResolver.query(collection, projection, selection, selectionArgs, sort)?.use { c ->
                 val iId = c.getColumnIndexOrThrow(idCol)
                 val iName = c.getColumnIndexOrThrow(nameCol)
                 val iMime = c.getColumnIndexOrThrow(mimeCol)

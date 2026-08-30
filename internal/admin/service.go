@@ -286,3 +286,35 @@ func (s *Service) SetRole(ctx context.Context, actorID, userID, role string) err
 	}
 	return tx.Commit(ctx)
 }
+
+type DeviceRow struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"userId"`
+	UserEmail  string    `json:"userEmail"`
+	Name       string    `json:"name"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+func (s *Service) Devices(ctx context.Context) ([]DeviceRow, error) {
+	rows, err := s.db.Query(ctx, `
+		select d.id::text, d.user_id::text, u.email, d.name, d.last_seen_at, d.created_at
+		from devices d
+		join users u on u.id = d.user_id
+		where d.revoked_at is null
+		order by d.last_seen_at desc
+		limit 200`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]DeviceRow, 0, 32)
+	for rows.Next() {
+		var row DeviceRow
+		if err := rows.Scan(&row.ID, &row.UserID, &row.UserEmail, &row.Name, &row.LastSeenAt, &row.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}

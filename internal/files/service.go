@@ -162,7 +162,7 @@ func (s *Service) CreateFolder(ctx context.Context, userID, userRole, parentID, 
 	return &entry, nil
 }
 
-func (s *Service) Upload(ctx context.Context, user domain.User, parentID, deviceID string, file multipart.File, header *multipart.FileHeader) (*domain.FileEntry, error) {
+func (s *Service) Upload(ctx context.Context, user domain.User, parentID, deviceID, conflict string, file multipart.File, header *multipart.FileHeader) (*domain.FileEntry, error) {
 	defer file.Close()
 	if s.pace != nil {
 		release, err := s.pace.Acquire(ctx)
@@ -226,21 +226,8 @@ func (s *Service) Upload(ctx context.Context, user domain.User, parentID, device
 	}
 
 	var entry domain.FileEntry
-	err = tx.QueryRow(ctx, `
-		insert into file_entries (user_id, drive_id, parent_id, name, kind, storage_key, size_bytes, mime_type)
-		values ($1::uuid, nullif($2,'')::uuid, $3::uuid, $4, 'file', $5, $6, $7)
-		returning id::text, user_id::text, coalesce(drive_id::text,''), parent_id::text, name, kind, storage_key, size_bytes, mime_type, content_version, content_hash, client_modified_at, last_opened_at, deleted_at, created_at, updated_at`,
-		user.ID, driveID, parentID, fileName, storageKey, written, mimeType,
-	).Scan(&entry.ID, &entry.UserID, &entry.DriveID, &entry.ParentID, &entry.Name, &entry.Kind, &entry.StorageKey, &entry.SizeBytes, &entry.MimeType, &entry.ContentVersion, &entry.ContentHash, &entry.ClientModifiedAt, &entry.LastOpenedAt, &entry.DeletedAt, &entry.CreatedAt, &entry.UpdatedAt)
+	entry, err = s.insertUploadedFile(ctx, tx, user.ID, driveID, parentID, billUser, fileName, storageKey, written, mimeType, deviceID, normalizeUploadConflict(conflict))
 	if err != nil {
-		_ = s.storage.Delete(storageKey)
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `update users set used_bytes = used_bytes + $1 where id = $2::uuid`, written, billUser); err != nil {
-		_ = s.storage.Delete(storageKey)
-		return nil, err
-	}
-	if err := changelog.Append(ctx, tx, billUser, entry.ID, "upsert", entry.Name, entry.ParentID, entry.Kind, entry.SizeBytes, entry.MimeType, entry.ContentVersion, entry.ContentHash, stringPtr(deviceID), entry.ClientModifiedAt); err != nil {
 		_ = s.storage.Delete(storageKey)
 		return nil, err
 	}
@@ -705,6 +692,109 @@ func sanitizeName(name string) string {
 		name = name[:255]
 	}
 	return strings.TrimSpace(name)
+}
+
+var ErrDuplicateName = errors.New("duplicate file name")
+
+func normalizeUploadConflict(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "overwrite", "replace":
+		return "overwrite"
+	case "error", "skip":
+		return "error"
+	default:
+		return "rename"
+	}
+}
+
+func nextUniqueName(base string, n int) string {
+	if n <= 1 {
+		return base
+	}
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if stem == "" {
+		stem = base
+		ext = ""
+	}
+	return fmt.Sprintf("%s (%d)%s", stem, n, ext)
+}
+
+func (s *Service) insertUploadedFile(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID, driveID, parentID, billUser, fileName, storageKey string,
+	written int64,
+	mimeType, deviceID, conflict string,
+) (domain.FileEntry, error) {
+	conflict = normalizeUploadConflict(conflict)
+	name := sanitizeName(fileName)
+	if name == "" {
+		return domain.FileEntry{}, errors.New("file name is required")
+	}
+	for attempt := 0; attempt < 30; attempt++ {
+		if attempt > 0 {
+			name = nextUniqueName(sanitizeName(fileName), attempt+1)
+		}
+		var existingID, oldKey string
+		var oldSize int64
+		err := tx.QueryRow(ctx, `
+			select id::text, storage_key, size_bytes from file_entries
+			where parent_id = $1::uuid and lower(name) = lower($2) and deleted_at is null and kind = 'file'`,
+			parentID, name,
+		).Scan(&existingID, &oldKey, &oldSize)
+		if errors.Is(err, pgx.ErrNoRows) {
+			var entry domain.FileEntry
+			err = tx.QueryRow(ctx, `
+				insert into file_entries (user_id, drive_id, parent_id, name, kind, storage_key, size_bytes, mime_type)
+				values ($1::uuid, nullif($2,'')::uuid, $3::uuid, $4, 'file', $5, $6, $7)
+				returning id::text, user_id::text, coalesce(drive_id::text,''), parent_id::text, name, kind, storage_key, size_bytes, mime_type, content_version, content_hash, client_modified_at, last_opened_at, deleted_at, created_at, updated_at`,
+				userID, driveID, parentID, name, storageKey, written, mimeType,
+			).Scan(&entry.ID, &entry.UserID, &entry.DriveID, &entry.ParentID, &entry.Name, &entry.Kind, &entry.StorageKey, &entry.SizeBytes, &entry.MimeType, &entry.ContentVersion, &entry.ContentHash, &entry.ClientModifiedAt, &entry.LastOpenedAt, &entry.DeletedAt, &entry.CreatedAt, &entry.UpdatedAt)
+			if err != nil {
+				return domain.FileEntry{}, err
+			}
+			if _, err := tx.Exec(ctx, `update users set used_bytes = used_bytes + $1 where id = $2::uuid`, written, billUser); err != nil {
+				return domain.FileEntry{}, err
+			}
+			if err := changelog.Append(ctx, tx, billUser, entry.ID, "upsert", entry.Name, entry.ParentID, entry.Kind, entry.SizeBytes, entry.MimeType, entry.ContentVersion, entry.ContentHash, stringPtr(deviceID), entry.ClientModifiedAt); err != nil {
+				return domain.FileEntry{}, err
+			}
+			return entry, nil
+		}
+		if err != nil {
+			return domain.FileEntry{}, err
+		}
+		switch conflict {
+		case "overwrite":
+			if _, err := tx.Exec(ctx, `
+				update file_entries set storage_key = $1, size_bytes = $2, mime_type = $3, content_version = content_version + 1, updated_at = now()
+				where id = $4::uuid`, storageKey, written, mimeType, existingID); err != nil {
+				return domain.FileEntry{}, err
+			}
+			if _, err := tx.Exec(ctx, `update users set used_bytes = used_bytes - $1 + $2 where id = $3::uuid`, oldSize, written, billUser); err != nil {
+				return domain.FileEntry{}, err
+			}
+			_ = s.storage.Delete(oldKey)
+			var entry domain.FileEntry
+			err = tx.QueryRow(ctx, `
+				select id::text, user_id::text, coalesce(drive_id::text,''), parent_id::text, name, kind, storage_key, size_bytes, mime_type, content_version, content_hash, client_modified_at, last_opened_at, deleted_at, created_at, updated_at
+				from file_entries where id = $1::uuid`, existingID,
+			).Scan(&entry.ID, &entry.UserID, &entry.DriveID, &entry.ParentID, &entry.Name, &entry.Kind, &entry.StorageKey, &entry.SizeBytes, &entry.MimeType, &entry.ContentVersion, &entry.ContentHash, &entry.ClientModifiedAt, &entry.LastOpenedAt, &entry.DeletedAt, &entry.CreatedAt, &entry.UpdatedAt)
+			if err != nil {
+				return domain.FileEntry{}, err
+			}
+			if err := changelog.Append(ctx, tx, billUser, entry.ID, "upsert", entry.Name, entry.ParentID, entry.Kind, entry.SizeBytes, entry.MimeType, entry.ContentVersion, entry.ContentHash, stringPtr(deviceID), entry.ClientModifiedAt); err != nil {
+				return domain.FileEntry{}, err
+			}
+			return entry, nil
+		case "rename":
+			continue
+		default:
+			return domain.FileEntry{}, ErrDuplicateName
+		}
+	}
+	return domain.FileEntry{}, ErrDuplicateName
 }
 
 func stringPtr(value string) *string {

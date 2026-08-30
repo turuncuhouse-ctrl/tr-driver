@@ -81,7 +81,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		}
 	}()
 
-	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService)
+	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace)
 	if err != nil {
 		cleanupCancel()
 		db.Close()

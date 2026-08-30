@@ -39,11 +39,40 @@
                 android:layout_height="wrap_content"
                 android:text="Otomatik foto/video yedekle" />
 
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchWifiOnly"
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Sadece Wi‑Fi (kapalıysa mobil veri de)" />
+                android:layout_marginTop="8dp"
+                android:text="Ağ tercihi (en az biri açık olmalı)"
+                android:textColor="@color/tr_ink"
+                android:textStyle="bold" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchBackupWifi"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Wi‑Fi'de yedekle" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchBackupMobile"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Mobil veride yedekle" />
+
+            <TextView
+                android:id="@+id/networkHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Mobil veri çoğu kullanıcı için önerilir. Wi‑Fi'de yedekleme pil ve kota dostudur."
+                android:textColor="@color/tr_ink"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnOemSettings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Arka plan izinleri (Xiaomi / pil)" />
 
             <Button
                 android:id="@+id/btnBackupNow"

@@ -44,10 +44,44 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean(KEY_GALLERY_ON, false)
         set(value) = prefs.edit().putBoolean(KEY_GALLERY_ON, value).apply()
 
-    /** true = yalnız Wi‑Fi; false = mobil veri de kullanılabilir */
+    /** Wi‑Fi ağında otomatik yedekleme ve yükleme */
+    var backupOnWifi: Boolean
+        get() = ensureNetworkPrefsMigrated() && prefs.getBoolean(KEY_BACKUP_WIFI, true)
+        set(value) {
+            ensureNetworkPrefsMigrated()
+            prefs.edit().putBoolean(KEY_BACKUP_WIFI, value).apply()
+        }
+
+    /** Mobil veride otomatik yedekleme ve yükleme */
+    var backupOnMobile: Boolean
+        get() = ensureNetworkPrefsMigrated() && prefs.getBoolean(KEY_BACKUP_MOBILE, true)
+        set(value) {
+            ensureNetworkPrefsMigrated()
+            prefs.edit().putBoolean(KEY_BACKUP_MOBILE, value).apply()
+        }
+
+    /** @deprecated Eski tek anahtar; yeni kurulumlarda [backupOnWifi]/[backupOnMobile] kullanın */
     var wifiOnlyBackup: Boolean
-        get() = prefs.getBoolean(KEY_WIFI_ONLY, true)
-        set(value) = prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
+        get() = backupOnWifi && !backupOnMobile
+        set(value) {
+            if (value) {
+                backupOnWifi = true
+                backupOnMobile = false
+            } else {
+                backupOnWifi = true
+                backupOnMobile = true
+            }
+        }
+
+    private fun ensureNetworkPrefsMigrated(): Boolean {
+        if (prefs.contains(KEY_BACKUP_WIFI) || prefs.contains(KEY_BACKUP_MOBILE)) return true
+        val legacyWifiOnly = prefs.getBoolean(KEY_WIFI_ONLY, false)
+        prefs.edit()
+            .putBoolean(KEY_BACKUP_WIFI, true)
+            .putBoolean(KEY_BACKUP_MOBILE, !legacyWifiOnly)
+            .apply()
+        return true
+    }
 
     var lastBackupMessage: String
         get() = prefs.getString(KEY_LAST_MSG, "") ?: ""
@@ -217,6 +251,72 @@ class SessionStore(context: Context) {
         )
     }
 
+    var uploadQueueActive: Boolean
+        get() = prefs.getBoolean(KEY_UPLOAD_Q_ACTIVE, false)
+        set(value) = prefs.edit().putBoolean(KEY_UPLOAD_Q_ACTIVE, value).apply()
+
+    var uploadQueueCurrentFile: String
+        get() = prefs.getString(KEY_UPLOAD_Q_CURRENT, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_UPLOAD_Q_CURRENT, value).apply()
+
+    var uploadQueueDone: Int
+        get() = prefs.getInt(KEY_UPLOAD_Q_DONE, 0)
+        set(value) = prefs.edit().putInt(KEY_UPLOAD_Q_DONE, value.coerceAtLeast(0)).apply()
+
+    var uploadQueuePending: Int
+        get() = prefs.getInt(KEY_UPLOAD_Q_PENDING, 0)
+        set(value) = prefs.edit().putInt(KEY_UPLOAD_Q_PENDING, value.coerceAtLeast(0)).apply()
+
+    var uploadQueueMessage: String
+        get() = prefs.getString(KEY_UPLOAD_Q_MSG, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_UPLOAD_Q_MSG, value).apply()
+
+    var uploadQueueBytesSent: Long
+        get() = prefs.getLong(KEY_UPLOAD_Q_BYTES_SENT, 0L)
+        set(value) = prefs.edit().putLong(KEY_UPLOAD_Q_BYTES_SENT, value.coerceAtLeast(0L)).apply()
+
+    var uploadQueueBytesTotal: Long
+        get() = prefs.getLong(KEY_UPLOAD_Q_BYTES_TOTAL, 0L)
+        set(value) = prefs.edit().putLong(KEY_UPLOAD_Q_BYTES_TOTAL, value.coerceAtLeast(0L)).apply()
+
+    fun updateUploadQueueProgress(
+        active: Boolean,
+        currentFile: String = "",
+        done: Int = 0,
+        pending: Int = 0,
+        message: String? = null,
+        clearBytes: Boolean = false,
+    ) {
+        val editor = prefs.edit()
+            .putBoolean(KEY_UPLOAD_Q_ACTIVE, active)
+            .putString(KEY_UPLOAD_Q_CURRENT, currentFile)
+            .putInt(KEY_UPLOAD_Q_DONE, done.coerceAtLeast(0))
+            .putInt(KEY_UPLOAD_Q_PENDING, pending.coerceAtLeast(0))
+        if (message != null) editor.putString(KEY_UPLOAD_Q_MSG, message)
+        if (clearBytes || !active) {
+            editor.putLong(KEY_UPLOAD_Q_BYTES_SENT, 0L).putLong(KEY_UPLOAD_Q_BYTES_TOTAL, 0L)
+        }
+        editor.apply()
+    }
+
+    fun updateUploadQueueFileBytes(sent: Long, total: Long) {
+        prefs.edit()
+            .putLong(KEY_UPLOAD_Q_BYTES_SENT, sent.coerceAtLeast(0L))
+            .putLong(KEY_UPLOAD_Q_BYTES_TOTAL, total.coerceAtLeast(0L))
+            .apply()
+    }
+
+    fun clearUploadQueueProgress(message: String? = null) {
+        updateUploadQueueProgress(
+            active = false,
+            currentFile = "",
+            done = 0,
+            pending = 0,
+            message = message,
+            clearBytes = true,
+        )
+    }
+
     fun backupFileBytesLabel(): String {
         val total = backupFileBytesTotal
         if (total <= 0L) return ""
@@ -289,6 +389,8 @@ class SessionStore(context: Context) {
         private const val KEY_ROOT = "root"
         private const val KEY_PHOTOS_ROOT = "photos_root"
         private const val KEY_WIFI_ONLY = "wifi_only"
+        private const val KEY_BACKUP_WIFI = "backup_on_wifi"
+        private const val KEY_BACKUP_MOBILE = "backup_on_mobile"
         private const val KEY_DEVICE = "device_name"
         private const val KEY_BACKUP_FOLDERS = "backup_folders"
         private const val KEY_LAST_INTAKE_PLATE = "last_intake_plate"
@@ -296,5 +398,12 @@ class SessionStore(context: Context) {
         private const val KEY_RECENT_INTAKE_PLATES = "recent_intake_plates"
         private const val KEY_FILES_GRID = "files_grid_layout"
         private const val KEY_LAST_BROWSE_FOLDER = "last_browse_folder"
+        private const val KEY_UPLOAD_Q_ACTIVE = "upload_q_active"
+        private const val KEY_UPLOAD_Q_CURRENT = "upload_q_current"
+        private const val KEY_UPLOAD_Q_DONE = "upload_q_done"
+        private const val KEY_UPLOAD_Q_PENDING = "upload_q_pending"
+        private const val KEY_UPLOAD_Q_MSG = "upload_q_msg"
+        private const val KEY_UPLOAD_Q_BYTES_SENT = "upload_q_bytes_sent"
+        private const val KEY_UPLOAD_Q_BYTES_TOTAL = "upload_q_bytes_total"
     }
 }

@@ -14,6 +14,7 @@ import (
 	"necipdrive/internal/files"
 	"necipdrive/internal/httpx"
 	"necipdrive/internal/license"
+	"necipdrive/internal/loadpace"
 	"necipdrive/internal/mailer"
 	"necipdrive/internal/plans"
 	"necipdrive/internal/shares"
@@ -37,11 +38,12 @@ func NewRouter(
 	collabService *collab.Service,
 	licenseService *license.Service,
 	mailService *mailer.Service,
+	pace *loadpace.Controller,
 ) (http.Handler, error) {
 	mux := http.NewServeMux()
 
 	authHandler := auth.NewHandler(authService)
-	adminHandler := admin.NewHandler(adminService, cfg.MaxUploadBatchBytes, cfg.UploadChunkBytes)
+	adminHandler := admin.NewHandler(adminService, pace, cfg.MaxUploadBatchBytes, cfg.UploadChunkBytes)
 	mailHandler := admin.NewMailHandler(mailService)
 	fileHandler := files.NewHandler(fileService)
 	planHandler := plans.NewHandler(planService)
@@ -87,6 +89,8 @@ func NewRouter(
 	mux.Handle("/api/admin/settings", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.Settings))))
 	mux.Handle("/api/admin/mail", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(mailHandler.Settings))))
 	mux.Handle("/api/admin/mail/test", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(mailHandler.Test))))
+	mux.Handle("/api/admin/upload-pace", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.UploadPace))))
+	mux.Handle("/api/admin/devices", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.Devices))))
 	mux.Handle("/api/mail/status", authHandler.RequireAuth(http.HandlerFunc(mailHandler.Status)))
 	mux.Handle("/api/files", authHandler.RequireAuth(http.HandlerFunc(fileHandler.ListOrCreateFolder)))
 	mux.Handle("/api/files/upload", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Upload)))

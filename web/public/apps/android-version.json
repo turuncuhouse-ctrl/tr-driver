@@ -1,7 +1,7 @@
 ﻿{
-    "versionCode": 23,
-    "versionName": "0.8.5",
+    "versionCode": 25,
+    "versionName": "0.8.7",
     "minSupportedCode": 1,
-    "releaseNotes": "TR Galeri kisayolu; paylasim, buluta yukleme, filtreler, uzun bas menu",
+    "releaseNotes": "Wi-Fi ve mobil veri ayri yedekleme; Xiaomi/HyperOS arka plan destegi; galeri izni uyarisi; yonetim paneli yukleme durumu",
     "apkPath": "/download/TRDriver.apk"
 }

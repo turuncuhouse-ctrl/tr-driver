@@ -31,6 +31,9 @@ import kotlinx.coroutines.withContext
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UriCacheCopy
+import net.neciparmagan.trdriver.data.UploadConflictPolicy
+import net.neciparmagan.trdriver.data.UploadConflictUi
+import net.neciparmagan.trdriver.upload.UploadForegroundService
 import java.io.File
 import android.os.Build
 
@@ -167,6 +170,16 @@ class VehicleIntakeActivity : AppCompatActivity() {
         ingestShareUrisFromIntent()
         refreshRecentPlatesButton()
         refreshList()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        UploadConflictUi.bindActivity(this)
+    }
+
+    override fun onStop() {
+        UploadConflictUi.unbindActivity()
+        super.onStop()
     }
 
     private fun ingestShareUrisFromIntent() {
@@ -316,75 +329,36 @@ class VehicleIntakeActivity : AppCompatActivity() {
             return
         }
         if (uploading) return
+        val queue = photos.toList()
         uploading = true
-        setCaptureEnabled(false)
-        btnPrepareFolder.isEnabled = false
         btnSend.isEnabled = false
         uploadBar.visibility = View.VISIBLE
         uploadStatus.visibility = View.VISIBLE
         uploadBar.progress = 0
+        uploadStatus.text = "Kuyruğa alınıyor…"
 
-        val queue = photos.toList()
-        lifecycleScope.launch {
-            var ok = 0
-            var fail = 0
-            try {
-                withContext(Dispatchers.IO) {
-                    runCatching { api.refreshUploadPace(force = true) }
-                }
-                for ((index, photo) in queue.withIndex()) {
-                    val n = index + 1
-                    uploadStatus.text = "Yükleniyor $n / ${queue.size} · ${photo.displayName}"
-                    uploadBar.progress = ((index * 100) / queue.size).coerceIn(0, 99)
-                    try {
-                        withContext(Dispatchers.IO) {
-                            api.upload(
-                                parent,
-                                photo.uri,
-                                onProgress = { sent, total ->
-                                    val filePct = if (total > 0) ((sent * 100) / total).toInt() else 0
-                                    val overall = ((index * 100) + filePct) / queue.size
-                                    runOnUiThread {
-                                        uploadBar.progress = overall.coerceIn(0, 99)
-                                        uploadStatus.text =
-                                            "$n / ${queue.size} · ${photo.displayName} · " +
-                                                "${SessionStore.formatBytes(sent)} / ${SessionStore.formatBytes(total)}"
-                                    }
-                                },
-                                onRetry = { attempt, _ ->
-                                    runOnUiThread {
-                                        uploadStatus.text =
-                                            "Ağ değişti, yeniden deneniyor ($attempt) · ${photo.displayName}"
-                                    }
-                                },
-                            )
-                        }
-                        ok++
-                        photo.localFile?.delete()
-                    } catch (e: Exception) {
-                        fail++
-                        uploadStatus.text = "Hata ($n): ${e.message}"
-                    }
-                }
-                photos.clear()
-                refreshList()
-                uploadBar.progress = 100
-                val msg = when {
-                    fail == 0 -> "Tamam · $ok fotoğraf → TR Araç Kabul / $folderName"
-                    ok == 0 -> "Yükleme başarısız ($fail hata)"
-                    else -> "$ok yüklendi, $fail hata · TR Araç Kabul / $folderName"
-                }
-                uploadStatus.text = msg
-                Toast.makeText(this@VehicleIntakeActivity, msg, Toast.LENGTH_LONG).show()
-                if (ok > 0 && folderId != null && folderName.isNotBlank()) {
-                    session.rememberIntakePlate(folderName, folderId!!)
-                }
-            } finally {
-                uploading = false
-                btnPrepareFolder.isEnabled = true
-                setCaptureEnabled(folderId != null)
-                refreshList()
-            }
+        UploadForegroundService.enqueue(
+            context = this,
+            source = "intake",
+            parentId = parent,
+            items = queue.map { it.uri to it.displayName },
+            conflict = UploadConflictPolicy.ASK,
+        )
+        for (photo in queue) {
+            photo.localFile?.delete()
+        }
+        photos.clear()
+        uploading = false
+        uploadBar.progress = 100
+        uploadStatus.text = "Yükleme arka planda devam ediyor (${queue.size} dosya)"
+        refreshList()
+        Toast.makeText(
+            this,
+            "${queue.size} dosya kuyruğa alındı · TR Araç Kabul / $folderName",
+            Toast.LENGTH_LONG,
+        ).show()
+        if (folderId != null && folderName.isNotBlank()) {
+            session.rememberIntakePlate(folderName, folderId!!)
         }
     }
 

@@ -415,25 +415,38 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
 
     fun downloadUrl(fileId: String): String = "${base()}/api/files/download/$fileId"
 
+    suspend fun findExistingFile(parentId: String, name: String): FileEntry? = withContext(Dispatchers.IO) {
+        if (parentId.isBlank() || name.isBlank()) return@withContext null
+        listFiles(parentId).firstOrNull {
+            it.kind == "file" && it.name.equals(name, ignoreCase = true)
+        }
+    }
+
     suspend fun upload(
         parentId: String?,
         uri: Uri,
+        displayName: String? = null,
+        conflict: String = "rename",
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
         onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
-    ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
+    ): FileEntry {
         refreshUploadPaceIfStale()
-        UploadThrottle.run {
+        return UploadThrottle.run {
             withContext(Dispatchers.IO) {
                 val resolver = appContext.contentResolver
-                var name = "upload.bin"
+                var name = displayName?.trim().orEmpty().ifBlank { "upload.bin" }
                 var size = -1L
-                resolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (cursor.moveToFirst()) {
-                        if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
-                        if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                if (displayName.isNullOrBlank()) {
+                    resolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if (cursor.moveToFirst()) {
+                            if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
+                            if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                        }
                     }
+                } else {
+                    size = MediaAccess.resolveContentLength(appContext, uri, -1L)
                 }
                 val mime = resolver.getType(uri) ?: "application/octet-stream"
                 val resolvedSize = MediaAccess.resolveContentLength(appContext, uri, size)
@@ -444,7 +457,14 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                     prepared.sizeBytes,
                 )
                 try {
-                    uploadStream(parentId, prepared.displayName, prepared.mimeType, uploadSize, onProgress) {
+                    uploadStream(
+                        parentId,
+                        prepared.displayName,
+                        prepared.mimeType,
+                        uploadSize,
+                        conflict,
+                        onProgress,
+                    ) {
                         appContext.contentResolver.openInputStream(prepared.uri)
                             ?: throw IOException("Dosya okunamadı")
                     }
@@ -458,11 +478,12 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
     suspend fun uploadMedia(
         parentId: String?,
         media: LocalMedia,
+        conflict: String = "rename",
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
         onRetry: ((attempt: Int, error: Throwable) -> Unit)? = null,
-    ): FileEntry = UploadRetry.run(appContext, onRetry = onRetry) {
+    ): FileEntry {
         refreshUploadPaceIfStale()
-        UploadThrottle.run {
+        return UploadThrottle.run {
             withContext(Dispatchers.IO) {
                 val resolvedSize = MediaAccess.resolveContentLength(
                     appContext,
@@ -488,6 +509,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                         prepared.displayName,
                         prepared.mimeType,
                         uploadSize,
+                        conflict,
                         onProgress,
                     ) {
                         appContext.contentResolver.openInputStream(prepared.uri)
@@ -544,6 +566,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         name: String,
         mime: String,
         size: Long,
+        conflict: String = "rename",
         onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)?,
         open: () -> InputStream,
     ): FileEntry {
@@ -579,6 +602,7 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
         val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("file", name, fileBody)
+            .addFormDataPart("conflict", conflict)
             .apply {
                 if (!parentId.isNullOrBlank()) {
                     addFormDataPart("parentId", parentId)
@@ -592,11 +616,16 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
                 val retryAfter = resp.header("Retry-After")?.toIntOrNull() ?: 0
-                if (resp.code == 429) {
-                    throw HttpStatusIOException(
+                when (resp.code) {
+                    429 -> throw HttpStatusIOException(
                         code = 429,
                         message = parseError(text).ifBlank { "Sunucu yoğun" },
                         retryAfterSec = retryAfter.coerceAtLeast(2),
+                    )
+                    409 -> throw DuplicateNameException(
+                        existingId = "",
+                        fileName = name,
+                        message = parseError(text).ifBlank { "Dosya zaten var: $name" },
                     )
                 }
                 throw IOException(parseError(text))

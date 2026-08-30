@@ -83,8 +83,12 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	if parentID == "" {
 		parentID = user.StorageRootID
 	}
-	entry, err := h.service.Upload(r.Context(), *user, parentID, auth.DeviceIDFromContext(r.Context()), file, header)
+	entry, err := h.service.Upload(r.Context(), *user, parentID, auth.DeviceIDFromContext(r.Context()), r.FormValue("conflict"), file, header)
 	if err != nil {
+		if errors.Is(err, ErrDuplicateName) {
+			httpx.Error(w, http.StatusConflict, err.Error())
+			return
+		}
 		if errors.Is(err, loadpace.ErrOverloaded) {
 			snap := h.service.UploadPace()
 			retry := snap.RetryAfterSec

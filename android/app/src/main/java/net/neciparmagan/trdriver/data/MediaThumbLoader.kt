@@ -12,9 +12,11 @@ import android.widget.ImageView
 import coil.load
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Gallery-style thumbnails: MediaStore [ContentResolver.loadThumbnail] for local
@@ -23,12 +25,14 @@ import kotlinx.coroutines.withContext
 object MediaThumbLoader {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val placeholder = ColorDrawable(0xFFDCE6F5.toInt())
+    private val activeJobs = ConcurrentHashMap<ImageView, Job>()
 
     fun loadLocal(imageView: ImageView, uri: Uri, cacheKey: String, sizePx: Int = 320) {
+        cancelLoad(imageView)
         imageView.tag = cacheKey
         imageView.setImageDrawable(placeholder)
         val appCtx = imageView.context.applicationContext
-        scope.launch {
+        val job = scope.launch {
             val bmp = withContext(Dispatchers.IO) {
                 decodeSystemThumb(appCtx, uri, sizePx)
             }
@@ -37,7 +41,6 @@ object MediaThumbLoader {
                 imageView.setImageBitmap(bmp)
                 return@launch
             }
-            // SAF / exotic formats: Coil decode as image when system thumb is unavailable.
             imageView.load(uri) {
                 size(sizePx, sizePx)
                 memoryCacheKey(cacheKey)
@@ -46,6 +49,14 @@ object MediaThumbLoader {
                 placeholder(placeholder)
             }
         }
+        activeJobs[imageView] = job
+        job.invokeOnCompletion { activeJobs.remove(imageView, job) }
+    }
+
+    fun cancelLoad(imageView: ImageView) {
+        activeJobs.remove(imageView)?.cancel()
+        imageView.tag = null
+        imageView.setImageDrawable(placeholder)
     }
 
     fun loadRemote(
@@ -56,10 +67,10 @@ object MediaThumbLoader {
         sizePx: Int = 320,
         isVideo: Boolean = false,
     ) {
+        cancelLoad(imageView)
         imageView.tag = cacheKey
         imageView.setImageDrawable(placeholder)
         if (isVideo) {
-            // Full video download for a frame is too heavy; keep placeholder + badge.
             return
         }
         imageView.load(url) {

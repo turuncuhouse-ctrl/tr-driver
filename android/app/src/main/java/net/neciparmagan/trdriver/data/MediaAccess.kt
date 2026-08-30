@@ -48,6 +48,26 @@ object MediaAccess {
         return granted(context, Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
+    /** Android 14+: user picked only some photos (not full gallery). */
+    fun hasPartialMediaAccess(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 34) return false
+        if (!hasMediaAccess(context)) return false
+        val fullImages = granted(context, Manifest.permission.READ_MEDIA_IMAGES)
+        val fullVideo = granted(context, Manifest.permission.READ_MEDIA_VIDEO)
+        val partial = granted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        return partial && !(fullImages && fullVideo)
+    }
+
+    fun openAppSettings(context: Context) {
+        val intent = android.content.Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        ).apply {
+            data = android.net.Uri.parse("package:${context.packageName}")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }
+    }
+
     fun resolveContentLength(context: Context, uri: android.net.Uri, hint: Long): Long {
         if (hint > 0L) return hint
         return runCatching {

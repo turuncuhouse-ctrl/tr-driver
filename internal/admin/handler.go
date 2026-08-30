@@ -5,16 +5,18 @@ import (
 
 	"necipdrive/internal/auth"
 	"necipdrive/internal/httpx"
+	"necipdrive/internal/loadpace"
 )
 
 type Handler struct {
 	service      *Service
+	pace         *loadpace.Controller
 	defaultBatch int64
 	chunkBytes   int64
 }
 
-func NewHandler(service *Service, defaultBatch, chunkBytes int64) *Handler {
-	return &Handler{service: service, defaultBatch: defaultBatch, chunkBytes: chunkBytes}
+func NewHandler(service *Service, pace *loadpace.Controller, defaultBatch, chunkBytes int64) *Handler {
+	return &Handler{service: service, pace: pace, defaultBatch: defaultBatch, chunkBytes: chunkBytes}
 }
 
 func (h *Handler) RequireAdmin(next http.Handler) http.Handler {
@@ -183,4 +185,29 @@ func (h *Handler) Settings(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (h *Handler) UploadPace(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.pace == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "upload pace unavailable")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, h.pace.Snapshot())
+}
+
+func (h *Handler) Devices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	result, err := h.service.Devices(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
