@@ -46,7 +46,16 @@ class UploadForegroundService : Service() {
             }
         }
         ensureChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Yükleme hazırlanıyor…", 0, 1))
+        val notification = buildNotification("Yükleme hazırlanıyor…", 0, 1)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
         worker?.cancel()
         worker = scope.launch { drainQueue() }
         return START_STICKY
@@ -159,7 +168,7 @@ class UploadForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(net.neciparmagan.trdriver.R.drawable.ic_stat_backup)
             .setContentTitle("TR Driver yükleme")
             .setContentText(text)
             .setSubText(if (total > 1) "$done / $total" else null)

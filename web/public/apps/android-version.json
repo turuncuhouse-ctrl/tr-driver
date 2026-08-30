@@ -1,7 +1,7 @@
 ﻿{
-    "versionCode": 25,
-    "versionName": "0.8.7",
+    "versionCode": 26,
+    "versionName": "0.8.8",
     "minSupportedCode": 1,
-    "releaseNotes": "Wi-Fi ve mobil veri ayri yedekleme; Xiaomi/HyperOS arka plan destegi; galeri izni uyarisi; yonetim paneli yukleme durumu",
+    "releaseNotes": "Yedekleme cokmesi duzeltildi (Android 14/15/Xiaomi); guvenli foreground service; Wi-Fi/mobil ayri secim",
     "apkPath": "/download/TRDriver.apk"
 }
