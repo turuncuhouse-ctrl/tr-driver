@@ -65,6 +65,7 @@ import java.util.Locale
 class PhotosLibraryActivity : AppCompatActivity() {
     private enum class Tab { PHOTOS, ALBUMS, CLOUD }
     private enum class MediaFilter { ALL, PHOTOS, VIDEOS }
+    private enum class TimelineZoom { DAY, MONTH, YEAR }
 
     private sealed class TimelineItem {
         data class Header(val label: String, val dayKey: String) : TimelineItem()
@@ -82,6 +83,8 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private lateinit var selectionBar: LinearLayout
     private lateinit var selectionBarScroll: HorizontalScrollView
     private lateinit var selectionCount: TextView
+    private lateinit var galleryBottomNav: View
+    private lateinit var stickyHeader: TextView
     private lateinit var tabPhotos: Button
     private lateinit var tabAlbums: Button
     private lateinit var tabCloud: Button
@@ -89,9 +92,13 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private lateinit var filterAll: Button
     private lateinit var filterPhotos: Button
     private lateinit var filterVideos: Button
+    private lateinit var zoomDay: Button
+    private lateinit var zoomMonth: Button
+    private lateinit var zoomYear: Button
 
     private var tab = Tab.PHOTOS
     private var mediaFilter = MediaFilter.ALL
+    private var timelineZoom = TimelineZoom.DAY
     private var viewingAlbum: MediaAlbum? = null
     private var viewingCloudAlbum: FileEntry? = null
     private var showingCloudAlbumList = false
@@ -99,6 +106,8 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private var searchQuery = ""
     private var searchJob: Job? = null
     private var launchedAsGalleryApp = false
+    private var pickMode = false
+    private var uploadedKeys: Set<String> = emptySet()
 
     private var allLocal: List<LocalMedia> = emptyList()
     private var allAlbums: List<MediaAlbum> = emptyList()
@@ -116,6 +125,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         isLocalSelected = { selectedLocal.contains(it.mediaKey) },
         isCloudSelected = { selectedCloud.contains(it.id) },
         selectionActive = { selectionMode },
+        isBackedUp = { uploadedKeys.contains(it.mediaKey) },
     )
     private val albumAdapter = AlbumGridAdapter { openAlbum(it) }
 
@@ -151,6 +161,8 @@ class PhotosLibraryActivity : AppCompatActivity() {
         selectionBar = findViewById(R.id.selectionBar)
         selectionBarScroll = findViewById(R.id.selectionBarScroll)
         selectionCount = findViewById(R.id.selectionCount)
+        galleryBottomNav = findViewById(R.id.galleryBottomNav)
+        stickyHeader = findViewById(R.id.stickyTimelineHeader)
         tabPhotos = findViewById(R.id.tabPhotos)
         tabAlbums = findViewById(R.id.tabAlbums)
         tabCloud = findViewById(R.id.tabCloud)
@@ -158,22 +170,31 @@ class PhotosLibraryActivity : AppCompatActivity() {
         filterAll = findViewById(R.id.filterAll)
         filterPhotos = findViewById(R.id.filterPhotos)
         filterVideos = findViewById(R.id.filterVideos)
+        zoomDay = findViewById(R.id.zoomDay)
+        zoomMonth = findViewById(R.id.zoomMonth)
+        zoomYear = findViewById(R.id.zoomYear)
 
-        launchedAsGalleryApp = intent?.action == Intent.ACTION_MAIN &&
+        pickMode = intent?.action == Intent.ACTION_PICK ||
+            intent?.action == Intent.ACTION_GET_CONTENT
+        launchedAsGalleryApp = !pickMode && intent?.action == Intent.ACTION_MAIN &&
             intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
         if (launchedAsGalleryApp) {
             title.setText(R.string.gallery_launcher_name)
             findViewById<Button>(R.id.btnPhotosClose).text = "Driver"
         }
-
-        val glm = GridLayoutManager(this, 3)
-        glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
-            override fun getSpanSize(position: Int): Int {
-                return if (grid.adapter === timelineAdapter && timelineAdapter.isHeader(position)) 3 else 1
-            }
+        if (pickMode) {
+            title.text = "Fotoğraf seç"
+            findViewById<Button>(R.id.btnPhotosClose).text = "İptal"
+            btnSelect.visibility = View.GONE
         }
-        grid.layoutManager = glm
+
+        applyTimelineLayout()
         timelineAdapter.updateAuth(session.token.orEmpty(), session.serverUrl)
+        grid.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                updateStickyHeader()
+            }
+        })
 
         // Bottom nav (Google Photos style)
         findViewById<Button>(R.id.navPhotos).setOnClickListener { selectTab(Tab.PHOTOS) }
@@ -185,13 +206,20 @@ class PhotosLibraryActivity : AppCompatActivity() {
         filterAll.setOnClickListener { setMediaFilter(MediaFilter.ALL) }
         filterPhotos.setOnClickListener { setMediaFilter(MediaFilter.PHOTOS) }
         filterVideos.setOnClickListener { setMediaFilter(MediaFilter.VIDEOS) }
+        zoomDay.setOnClickListener { setTimelineZoom(TimelineZoom.DAY) }
+        zoomMonth.setOnClickListener { setTimelineZoom(TimelineZoom.MONTH) }
+        zoomYear.setOnClickListener { setTimelineZoom(TimelineZoom.YEAR) }
         styleFilters()
+        styleZoom()
         btnSelect.setOnClickListener {
             if (selectionMode) exitSelection() else enterSelection()
         }
         findViewById<Button>(R.id.btnPhotosMore).setOnClickListener { showMoreMenu(it) }
         findViewById<Button>(R.id.btnPhotosClose).setOnClickListener {
-            if (launchedAsGalleryApp) {
+            if (pickMode) {
+                setResult(Activity.RESULT_CANCELED)
+                finish()
+            } else if (launchedAsGalleryApp) {
                 startActivity(Intent(this, MainActivity::class.java))
             } else {
                 finish()
@@ -298,6 +326,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             net.neciparmagan.trdriver.backup.GalleryBackupWorker.schedule(this)
         }
         refreshBackupChip()
+        refreshUploadedKeys()
     }
 
     override fun onStop() {
@@ -377,6 +406,77 @@ class PhotosLibraryActivity : AppCompatActivity() {
         style(filterVideos, mediaFilter == MediaFilter.VIDEOS)
     }
 
+    private fun setTimelineZoom(next: TimelineZoom) {
+        timelineZoom = next
+        styleZoom()
+        applyTimelineLayout()
+        applyFilter()
+    }
+
+    private fun styleZoom() {
+        fun style(btn: Button, active: Boolean) {
+            btn.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
+            btn.setTextColor(
+                ContextCompat.getColor(this, if (active) R.color.tr_blue else R.color.tr_ink),
+            )
+        }
+        style(zoomDay, timelineZoom == TimelineZoom.DAY)
+        style(zoomMonth, timelineZoom == TimelineZoom.MONTH)
+        style(zoomYear, timelineZoom == TimelineZoom.YEAR)
+    }
+
+    private fun currentSpanCount(): Int = when (timelineZoom) {
+        TimelineZoom.DAY -> 3
+        TimelineZoom.MONTH -> 5
+        TimelineZoom.YEAR -> 7
+    }
+
+    private fun applyTimelineLayout() {
+        val spans = currentSpanCount()
+        val glm = GridLayoutManager(this, spans)
+        glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int): Int {
+                return if (grid.adapter === timelineAdapter && timelineAdapter.isHeader(position)) {
+                    spans
+                } else {
+                    1
+                }
+            }
+        }
+        grid.layoutManager = glm
+    }
+
+    private fun updateStickyHeader() {
+        if (grid.adapter !== timelineAdapter) {
+            stickyHeader.visibility = View.GONE
+            return
+        }
+        val lm = grid.layoutManager as? GridLayoutManager ?: return
+        val first = lm.findFirstVisibleItemPosition()
+        if (first == RecyclerView.NO_POSITION) {
+            stickyHeader.visibility = View.GONE
+            return
+        }
+        val label = timelineAdapter.headerLabelAtOrBefore(first)
+        if (label.isNullOrBlank()) {
+            stickyHeader.visibility = View.GONE
+        } else {
+            stickyHeader.visibility = View.VISIBLE
+            stickyHeader.text = label
+        }
+    }
+
+    private fun refreshUploadedKeys() {
+        lifecycleScope.launch {
+            uploadedKeys = withContext(Dispatchers.IO) {
+                net.neciparmagan.trdriver.data.UploadedMediaDb(this@PhotosLibraryActivity).allUploadedKeys()
+            }
+            if (grid.adapter === timelineAdapter) {
+                timelineAdapter.notifyDataSetChanged()
+            }
+        }
+    }
+
     private fun showMoreMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, "Yer aç (yedeklenenler)")
@@ -424,9 +524,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
         }
         progress.visibility = View.VISIBLE
         grid.adapter = timelineAdapter
-        (grid.layoutManager as GridLayoutManager).spanCount = 3
+        applyTimelineLayout()
         lifecycleScope.launch {
-            allLocal = withContext(Dispatchers.IO) { MediaCatalog.scan(this@PhotosLibraryActivity, 3000) }
+            allLocal = withContext(Dispatchers.IO) { MediaCatalog.scan(this@PhotosLibraryActivity, 4000) }
+            refreshUploadedKeys()
             applyFilter()
             progress.visibility = View.GONE
             refreshBackupChip()
@@ -633,7 +734,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     private fun showLocalTimeline(q: String) {
         grid.adapter = timelineAdapter
-        (grid.layoutManager as GridLayoutManager).spanCount = 3
+        applyTimelineLayout()
         var media = if (q.isBlank()) allLocal else allLocal.filter {
             it.displayName.lowercase(Locale.getDefault()).contains(q) ||
                 (it.albumName?.lowercase(Locale.getDefault())?.contains(q) == true)
@@ -644,7 +745,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
             MediaFilter.VIDEOS -> media.filter { it.isVideo }
         }
         timelineAdapter.submitLocal(buildLocalTimeline(media))
+        grid.post { updateStickyHeader() }
         if (media.isEmpty()) {
+            stickyHeader.visibility = View.GONE
             showEmpty(
                 if (q.isNotBlank()) "Sonuç yok" else "Fotoğraf yok",
                 if (q.isNotBlank()) "Aramanızla eşleşen öğe bulunamadı."
@@ -653,22 +756,38 @@ class PhotosLibraryActivity : AppCompatActivity() {
         } else {
             hideEmpty()
         }
-        val filterLabel = when (mediaFilter) {
-            MediaFilter.ALL -> "tarihe göre"
-            MediaFilter.PHOTOS -> "yalnız fotoğraf"
-            MediaFilter.VIDEOS -> "yalnız video"
+        val backed = media.count { it.mediaKey in uploadedKeys }
+        val zoomLabel = when (timelineZoom) {
+            TimelineZoom.DAY -> "gün"
+            TimelineZoom.MONTH -> "ay"
+            TimelineZoom.YEAR -> "yıl"
         }
-        subtitle.text = "${media.size} öğe · $filterLabel" +
+        val filterLabel = when (mediaFilter) {
+            MediaFilter.ALL -> "tümü"
+            MediaFilter.PHOTOS -> "fotoğraf"
+            MediaFilter.VIDEOS -> "video"
+        }
+        subtitle.text = "${media.size} öğe · $filterLabel · $zoomLabel · ☁$backed yedekli" +
             if (q.isNotBlank()) " · \"$searchQuery\"" else ""
     }
 
     private fun buildLocalTimeline(media: List<LocalMedia>): List<TimelineItem> {
         val out = ArrayList<TimelineItem>()
         var lastKey = ""
-        for (item in media.sortedByDescending { it.dateTakenMs }) {
-            val key = dayKey(item.dateTakenMs)
+        val sorted = media.sortedByDescending { it.dateTakenMs }
+        for (item in sorted) {
+            val key = when (timelineZoom) {
+                TimelineZoom.DAY -> dayKey(item.dateTakenMs)
+                TimelineZoom.MONTH -> monthKey(item.dateTakenMs)
+                TimelineZoom.YEAR -> yearKey(item.dateTakenMs)
+            }
             if (key != lastKey) {
-                out += TimelineItem.Header(formatDayLabel(item.dateTakenMs), key)
+                val label = when (timelineZoom) {
+                    TimelineZoom.DAY -> formatDayLabel(item.dateTakenMs)
+                    TimelineZoom.MONTH -> formatMonthLabel(item.dateTakenMs)
+                    TimelineZoom.YEAR -> formatYearLabel(item.dateTakenMs)
+                }
+                out += TimelineItem.Header(label, key)
                 lastKey = key
             }
             out += TimelineItem.Photo(item)
@@ -677,10 +796,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
     }
 
     private fun buildCloudTimeline(files: List<FileEntry>): List<TimelineItem> {
-        // Cloud entries lack taken date in FileEntry — group by name heuristic or single section.
         val out = ArrayList<TimelineItem>()
         if (files.isEmpty()) return out
-        out += TimelineItem.Header("Yedeklenenler", "cloud")
+        out += TimelineItem.Header("Kitaplık · yedeklenenler", "cloud")
         for (f in files) out += TimelineItem.Cloud(f)
         return out
     }
@@ -688,6 +806,16 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun dayKey(ms: Long): String {
         val c = Calendar.getInstance().apply { timeInMillis = ms.coerceAtLeast(0L) }
         return "%04d-%02d-%02d".format(c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH))
+    }
+
+    private fun monthKey(ms: Long): String {
+        val c = Calendar.getInstance().apply { timeInMillis = ms.coerceAtLeast(0L) }
+        return "%04d-%02d".format(c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1)
+    }
+
+    private fun yearKey(ms: Long): String {
+        val c = Calendar.getInstance().apply { timeInMillis = ms.coerceAtLeast(0L) }
+        return "%04d".format(c.get(Calendar.YEAR))
     }
 
     private fun formatDayLabel(ms: Long): String {
@@ -703,10 +831,17 @@ class PhotosLibraryActivity : AppCompatActivity() {
         }
     }
 
+    private fun formatMonthLabel(ms: Long): String =
+        SimpleDateFormat("MMMM yyyy", Locale("tr", "TR")).format(Date(ms))
+
+    private fun formatYearLabel(ms: Long): String =
+        SimpleDateFormat("yyyy", Locale("tr", "TR")).format(Date(ms))
+
     private fun enterSelection() {
         selectionMode = true
         btnSelect.text = "İptal"
         selectionBarScroll.visibility = View.VISIBLE
+        galleryBottomNav.visibility = View.INVISIBLE
         timelineAdapter.notifyDataSetChanged()
         refreshSelectionUi()
     }
@@ -717,6 +852,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         selectedCloud.clear()
         btnSelect.text = "Seç"
         selectionBarScroll.visibility = View.GONE
+        galleryBottomNav.visibility = View.VISIBLE
         if (refresh) timelineAdapter.notifyDataSetChanged()
     }
 
@@ -760,48 +896,69 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun shareSelected() {
         val localItems = allLocal.filter { it.mediaKey in selectedLocal }
         if (localItems.isEmpty() && selectedCloud.isNotEmpty()) {
-            Toast.makeText(
-                this,
-                "Bulut öğesini açıp Paylaş’a basın (önce indirilir)",
-                Toast.LENGTH_LONG,
-            ).show()
+            shareCloudSelected()
             return
         }
         if (localItems.isEmpty()) {
             Toast.makeText(this, "Seçili yerel öğe yok", Toast.LENGTH_SHORT).show()
             return
         }
-        shareLocalItems(localItems)
+        GalleryShareHelper.showLocalShareSheet(this, localItems)
+    }
+
+    private fun shareCloudSelected() {
+        val entry = allCloud.firstOrNull { it.id in selectedCloud && it.kind == "file" }
+        if (entry == null) {
+            Toast.makeText(this, "Paylaşılacak bulut dosyası yok", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Bulut paylaşımı")
+            .setItems(arrayOf("İndirip uygulamalarla paylaş", "Bağlantı oluştur", "Bağlantıyı kopyala")) { _, which ->
+                when (which) {
+                    0 -> shareCloudAfterDownload(entry)
+                    1, 2 -> createCloudShareLink(entry, copyOnly = which == 2)
+                }
+            }
+            .setNegativeButton("İptal", null)
+            .show()
+    }
+
+    private fun shareCloudAfterDownload(entry: FileEntry) {
+        progress.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) { api.downloadToCache(entry) }
+                GalleryShareHelper.shareFile(this@PhotosLibraryActivity, file, entry.name, MainActivity.resolveMime(entry))
+            } catch (e: Exception) {
+                Toast.makeText(this@PhotosLibraryActivity, e.message, Toast.LENGTH_LONG).show()
+            } finally {
+                progress.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun createCloudShareLink(entry: FileEntry, copyOnly: Boolean) {
+        progress.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            try {
+                val resp = withContext(Dispatchers.IO) { api.createShareLink(entry.id) }
+                val url = resp.url.ifBlank { throw IllegalStateException("Boş bağlantı") }
+                if (copyOnly) {
+                    GalleryShareHelper.copyText(this@PhotosLibraryActivity, url, "Bağlantı kopyalandı")
+                } else {
+                    GalleryShareHelper.shareTextLink(this@PhotosLibraryActivity, url, entry.name)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@PhotosLibraryActivity, e.message ?: "Bağlantı oluşturulamadı", Toast.LENGTH_LONG).show()
+            } finally {
+                progress.visibility = View.GONE
+            }
+        }
     }
 
     private fun shareLocalItems(items: List<LocalMedia>) {
-        if (items.isEmpty()) return
-        if (items.size == 1) {
-            val item = items.first()
-            startActivity(
-                Intent.createChooser(
-                    Intent(Intent.ACTION_SEND).apply {
-                        type = item.mimeType.ifBlank { "*/*" }
-                        putExtra(Intent.EXTRA_STREAM, item.uri)
-                        putExtra(Intent.EXTRA_SUBJECT, item.displayName)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    },
-                    "Paylaş",
-                ),
-            )
-            return
-        }
-        val uris = ArrayList(items.map { it.uri })
-        startActivity(
-            Intent.createChooser(
-                Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                    type = "*/*"
-                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                },
-                "Paylaş (${items.size})",
-            ),
-        )
+        GalleryShareHelper.showLocalShareSheet(this, items)
     }
 
     private fun uploadSelectedToCloud() {
@@ -907,6 +1064,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
                     "Boyut: $size\n" +
                     "Tarih: $date\n" +
                     "Albüm: ${item.albumName ?: "—"}\n" +
+                    (if (uploadedKeys.contains(item.mediaKey)) "Yedek: bulutta ☁\n" else "Yedek: henüz yüklenmedi\n") +
                     (if (item.isVideo) "Video" else "Fotoğraf"),
             )
             .setPositiveButton("Tamam", null)
@@ -1066,6 +1224,16 @@ class PhotosLibraryActivity : AppCompatActivity() {
     }
 
     private fun openLocal(item: LocalMedia) {
+        if (pickMode) {
+            val result = Intent().apply {
+                data = item.uri
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                clipData = android.content.ClipData.newUri(contentResolver, item.displayName, item.uri)
+            }
+            setResult(Activity.RESULT_OK, result)
+            finish()
+            return
+        }
         startActivity(
             Intent(this, MediaPreviewActivity::class.java).apply {
                 putExtra(MediaPreviewActivity.EXTRA_NAME, item.displayName)
@@ -1104,6 +1272,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         private val isLocalSelected: (LocalMedia) -> Boolean,
         private val isCloudSelected: (FileEntry) -> Boolean,
         private val selectionActive: () -> Boolean,
+        private val isBackedUp: (LocalMedia) -> Boolean,
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private var items: List<TimelineItem> = emptyList()
         private var token = ""
@@ -1112,6 +1281,14 @@ class PhotosLibraryActivity : AppCompatActivity() {
         fun updateAuth(token: String, serverUrl: String) {
             this.token = token
             this.serverUrl = serverUrl.trimEnd('/')
+        }
+
+        fun headerLabelAtOrBefore(position: Int): String? {
+            for (i in position downTo 0) {
+                val item = items.getOrNull(i) ?: continue
+                if (item is TimelineItem.Header) return item.label
+            }
+            return null
         }
 
         fun submitLocal(next: List<TimelineItem>) {
@@ -1181,8 +1358,8 @@ class PhotosLibraryActivity : AppCompatActivity() {
         private fun bindLocal(holder: CellVH, media: LocalMedia) {
             holder.badge.visibility = if (media.isVideo) View.VISIBLE else View.GONE
             if (media.isVideo) holder.badge.text = "▶"
-            holder.nameHint.visibility = View.VISIBLE
-            holder.nameHint.text = media.displayName
+            holder.nameHint.visibility = View.GONE
+            holder.backupBadge.visibility = if (isBackedUp(media)) View.VISIBLE else View.GONE
             holder.check.visibility = if (selectionActive()) View.VISIBLE else View.GONE
             holder.check.setOnCheckedChangeListener(null)
             holder.check.isChecked = isLocalSelected(media)
@@ -1198,8 +1375,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
         private fun bindCloud(holder: CellVH, entry: FileEntry) {
             holder.badge.visibility = View.GONE
-            holder.nameHint.visibility = View.VISIBLE
-            holder.nameHint.text = entry.name
+            holder.nameHint.visibility = View.GONE
+            holder.backupBadge.visibility = View.VISIBLE
+            holder.backupBadge.text = "☁"
             holder.check.visibility = if (selectionActive() && entry.kind == "file") View.VISIBLE else View.GONE
             holder.check.setOnCheckedChangeListener(null)
             holder.check.isChecked = isCloudSelected(entry)
@@ -1210,6 +1388,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
                 holder.thumb.setBackgroundColor(Color.parseColor("#0B5CAD"))
                 holder.badge.visibility = View.VISIBLE
                 holder.badge.text = "Albüm"
+                holder.backupBadge.visibility = View.GONE
             } else {
                 holder.thumb.setBackgroundColor(Color.parseColor("#DCE6F5"))
                 val mime = MainActivity.resolveMime(entry)
@@ -1249,6 +1428,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             val thumb: ImageView = view.findViewById(R.id.photoThumb)
             val badge: TextView = view.findViewById(R.id.photoBadge)
             val nameHint: TextView = view.findViewById(R.id.photoNameHint)
+            val backupBadge: TextView = view.findViewById(R.id.photoBackupBadge)
             val check: CheckBox = view.findViewById(R.id.photoCheck)
         }
     }

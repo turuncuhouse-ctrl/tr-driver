@@ -1,7 +1,7 @@
 ﻿{
     "minSupportedCode":  1,
-    "versionCode":  29,
-    "versionName":  "0.8.11",
+    "versionCode":  30,
+    "versionName":  "0.8.12",
     "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "TR Galeri Photos-tarzi alt nav, onizleme ve DiffUtil; Drive alt nav + FAB; dosya tasi/yeniden adlandir; bos durumlar"
+    "releaseNotes":  "TR Galeri: Gunsuz/Ay/Yil zaman cizelgesi, sticky baslik, yedek rozeti, zengin paylasim, varsayilan galeri intentleri; secim cubugu alt nav ustune binmez"
 }

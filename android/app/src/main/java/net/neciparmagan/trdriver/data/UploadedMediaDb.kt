@@ -50,6 +50,19 @@ class UploadedMediaDb(context: Context) :
         ).use { return it.moveToFirst() }
     }
 
+    /** All media keys that have been backed up (for gallery cloud badges). */
+    fun allUploadedKeys(): Set<String> {
+        val out = HashSet<String>()
+        readableDatabase.rawQuery("SELECT media_key FROM uploaded_media", null).use { c ->
+            val idx = c.getColumnIndex("media_key")
+            if (idx < 0) return emptySet()
+            while (c.moveToNext()) {
+                out += c.getString(idx)
+            }
+        }
+        return out
+    }
+
     fun markUploaded(mediaKey: String, remoteId: String, sizeBytes: Long, localUri: Uri? = null) {
         writableDatabase.execSQL(
             """

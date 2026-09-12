@@ -2,17 +2,17 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:padding="3dp">
+    android:padding="1dp">
 
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@android:color/white">
+        android:background="#E8EEF5">
 
         <ImageView
             android:id="@+id/photoThumb"
             android:layout_width="match_parent"
-            android:layout_height="140dp"
+            android:layout_height="118dp"
             android:background="#DCE6F5"
             android:contentDescription="@null"
             android:scaleType="centerCrop" />
@@ -36,9 +36,23 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="top|end"
+            android:layout_margin="3dp"
             android:background="#99000000"
-            android:paddingHorizontal="6dp"
-            android:paddingVertical="2dp"
+            android:paddingHorizontal="5dp"
+            android:paddingVertical="1dp"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/photoBackupBadge"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:background="#CC0B5CAD"
+            android:gravity="center"
+            android:text="☁"
             android:textColor="#FFFFFF"
             android:textSize="10sp"
             android:visibility="gone" />

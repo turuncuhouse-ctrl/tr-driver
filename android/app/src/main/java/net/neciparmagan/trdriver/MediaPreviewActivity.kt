@@ -155,6 +155,23 @@ class MediaPreviewActivity : AppCompatActivity() {
 
     private fun shareCurrent(session: SessionStore) {
         val uri = shareUri
+        if (uri != null && localUri != null) {
+            GalleryShareHelper.showLocalShareSheet(
+                this,
+                listOf(
+                    net.neciparmagan.trdriver.data.LocalMedia(
+                        mediaKey = uri.toString(),
+                        uri = uri,
+                        displayName = displayName.ifBlank { "paylas" },
+                        mimeType = mime.ifBlank { "*/*" },
+                        sizeBytes = 0L,
+                        dateTakenMs = 0L,
+                        isVideo = mime.startsWith("video/"),
+                    ),
+                ),
+            )
+            return
+        }
         if (uri != null) {
             startActivity(
                 Intent.createChooser(
@@ -173,6 +190,20 @@ class MediaPreviewActivity : AppCompatActivity() {
             Toast.makeText(this, "Paylaşılacak dosya yok", Toast.LENGTH_SHORT).show()
             return
         }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Paylaş")
+            .setItems(arrayOf("İndirip uygulamalarla paylaş", "Bağlantı oluştur", "Bağlantıyı kopyala")) { _, which ->
+                when (which) {
+                    0 -> downloadThenShare(session)
+                    1 -> createPreviewLink(session, copyOnly = false)
+                    2 -> createPreviewLink(session, copyOnly = true)
+                }
+            }
+            .setNegativeButton("İptal", null)
+            .show()
+    }
+
+    private fun downloadThenShare(session: SessionStore) {
         Toast.makeText(this, "Paylaşım için indiriliyor…", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             try {
@@ -187,25 +218,23 @@ class MediaPreviewActivity : AppCompatActivity() {
                         ),
                     )
                 }
-                val contentUri = androidx.core.content.FileProvider.getUriForFile(
-                    this@MediaPreviewActivity,
-                    "${packageName}.files",
-                    file,
-                )
-                shareUri = contentUri
-                startActivity(
-                    Intent.createChooser(
-                        Intent(Intent.ACTION_SEND).apply {
-                            type = mime.ifBlank { "*/*" }
-                            putExtra(Intent.EXTRA_STREAM, contentUri)
-                            putExtra(Intent.EXTRA_SUBJECT, displayName)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        },
-                        "Paylaş",
-                    ),
-                )
+                GalleryShareHelper.shareFile(this@MediaPreviewActivity, file, displayName, mime)
             } catch (e: Exception) {
                 Toast.makeText(this@MediaPreviewActivity, e.message ?: "İndirme başarısız", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun createPreviewLink(session: SessionStore, copyOnly: Boolean) {
+        lifecycleScope.launch {
+            try {
+                val api = DriveApi(session, applicationContext)
+                val resp = withContext(Dispatchers.IO) { api.createShareLink(remoteId) }
+                val url = resp.url.ifBlank { throw IllegalStateException("Boş bağlantı") }
+                if (copyOnly) GalleryShareHelper.copyText(this@MediaPreviewActivity, url)
+                else GalleryShareHelper.shareTextLink(this@MediaPreviewActivity, url, displayName)
+            } catch (e: Exception) {
+                Toast.makeText(this@MediaPreviewActivity, e.message ?: "Bağlantı oluşturulamadı", Toast.LENGTH_LONG).show()
             }
         }
     }
