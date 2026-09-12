@@ -158,49 +158,65 @@
             android:padding="12dp"
             android:textColor="@color/tr_ink" />
 
-        <LinearLayout
+        <EditText
+            android:id="@+id/inputSearch"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginHorizontal="8dp"
+            android:layout_marginTop="4dp"
+            android:background="@android:color/white"
+            android:hint="Dosya ara…"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLines="1"
+            android:paddingHorizontal="12dp" />
+
+        <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="8dp"
-            android:paddingTop="4dp">
+            android:paddingHorizontal="4dp"
+            android:scrollbars="none">
 
-            <EditText
-                android:id="@+id/inputSearch"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="Dosya ara…"
-                android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:maxLines="1" />
-
-            <Button
-                android:id="@+id/btnSearch"
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Ara" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/btnLayout"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="▦" />
+                <Button
+                    android:id="@+id/btnSearch"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:text="Ara" />
 
-            <Button
-                android:id="@+id/btnPhotos"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Galeri"
-                android:textStyle="bold" />
+                <Button
+                    android:id="@+id/btnLayout"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:text="▦" />
 
-            <Button
-                android:id="@+id/btnActions"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="⋯" />
-        </LinearLayout>
+                <Button
+                    android:id="@+id/btnPhotos"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:text="Galeri"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnActions"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:text="⋯" />
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <LinearLayout
             android:id="@+id/selectionBar"
@@ -257,13 +273,15 @@
 
         <TextView
             android:id="@+id/backupChip"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="12dp"
+            android:layout_marginHorizontal="10dp"
             android:layout_marginTop="4dp"
             android:background="#E8F2FC"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:paddingHorizontal="12dp"
-            android:paddingVertical="6dp"
+            android:paddingVertical="8dp"
             android:text="Yedek: kapalı"
             android:textColor="@color/tr_ink"
             android:textSize="12sp" />
@@ -272,7 +290,7 @@
             android:id="@+id/backupInline"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="12dp"
+            android:layout_marginHorizontal="10dp"
             android:layout_marginTop="4dp"
             android:layout_marginBottom="4dp"
             android:background="#F3F7FC"

@@ -119,9 +119,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     private val timelineAdapter = TimelineAdapter(
         onOpenLocal = { if (selectionMode) toggleLocal(it) else openLocal(it) },
-        onLongLocal = { media, view -> showLocalContextMenu(media, view) },
+        onLongLocal = { media, _ -> beginMultiSelectLocal(media) },
         onOpenCloud = { if (selectionMode) toggleCloud(it) else openCloud(it) },
-        onLongCloud = { entry, view -> showCloudContextMenu(entry, view) },
+        onLongCloud = { entry, _ -> beginMultiSelectCloud(entry) },
         isLocalSelected = { selectedLocal.contains(it.mediaKey) },
         isCloudSelected = { selectedCloud.contains(it.id) },
         selectionActive = { selectionMode },
@@ -447,7 +447,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
     }
 
     private fun updateStickyHeader() {
-        if (grid.adapter !== timelineAdapter) {
+        if (grid.adapter !== timelineAdapter || tab == Tab.ALBUMS) {
             stickyHeader.visibility = View.GONE
             return
         }
@@ -464,6 +464,30 @@ class PhotosLibraryActivity : AppCompatActivity() {
             stickyHeader.visibility = View.VISIBLE
             stickyHeader.text = label
         }
+    }
+
+    private fun beginMultiSelectLocal(media: LocalMedia) {
+        if (!selectionMode) enterSelection()
+        if (media.mediaKey !in selectedLocal) {
+            selectedLocal.add(media.mediaKey)
+        }
+        refreshSelectionUi()
+        timelineAdapter.notifyDataSetChanged()
+        Toast.makeText(this, "Toplu seçim · alt çubuktan işlem yapın", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun beginMultiSelectCloud(entry: FileEntry) {
+        if (entry.kind == "folder") {
+            openCloud(entry)
+            return
+        }
+        if (!selectionMode) enterSelection()
+        if (entry.id !in selectedCloud) {
+            selectedCloud.add(entry.id)
+        }
+        refreshSelectionUi()
+        timelineAdapter.notifyDataSetChanged()
+        Toast.makeText(this, "Toplu seçim · alt çubuktan işlem yapın", Toast.LENGTH_SHORT).show()
     }
 
     private fun refreshUploadedKeys() {
@@ -841,7 +865,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         selectionMode = true
         btnSelect.text = "İptal"
         selectionBarScroll.visibility = View.VISIBLE
-        galleryBottomNav.visibility = View.INVISIBLE
+        galleryBottomNav.visibility = View.GONE
         timelineAdapter.notifyDataSetChanged()
         refreshSelectionUi()
     }
@@ -858,6 +882,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     private fun toggleLocal(item: LocalMedia) {
         if (!selectedLocal.add(item.mediaKey)) selectedLocal.remove(item.mediaKey)
+        if (selectedLocal.isEmpty() && selectedCloud.isEmpty()) {
+            exitSelection()
+            return
+        }
         refreshSelectionUi()
         timelineAdapter.notifyDataSetChanged()
     }
@@ -865,6 +893,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun toggleCloud(item: FileEntry) {
         if (item.kind == "folder") return
         if (!selectedCloud.add(item.id)) selectedCloud.remove(item.id)
+        if (selectedLocal.isEmpty() && selectedCloud.isEmpty()) {
+            exitSelection()
+            return
+        }
         refreshSelectionUi()
         timelineAdapter.notifyDataSetChanged()
     }
@@ -872,6 +904,11 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun refreshSelectionUi() {
         val n = selectedLocal.size + selectedCloud.size
         selectionCount.text = "$n seçili"
+        findViewById<Button>(R.id.btnShareSelected).isEnabled = n > 0
+        findViewById<Button>(R.id.btnUploadSelected).isEnabled = selectedLocal.isNotEmpty()
+        findViewById<Button>(R.id.btnDeleteSelected).isEnabled = n > 0
+        findViewById<Button>(R.id.btnOpenSelected).isEnabled = n == 1
+        findViewById<Button>(R.id.btnInfoSelected).isEnabled = n == 1
     }
 
     private fun selectAllVisible() {
