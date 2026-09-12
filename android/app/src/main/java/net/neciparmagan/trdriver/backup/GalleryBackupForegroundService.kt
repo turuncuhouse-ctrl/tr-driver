@@ -76,7 +76,8 @@ class GalleryBackupForegroundService : Service() {
                     },
                 )
                 if (!result.scheduleContinue || !result.morePending) break
-                delay(result.continueDelaySec.coerceIn(1L, 60L) * 1000L)
+                // Longer pause between batches so interactive apps recover Wi‑Fi.
+                delay((result.continueDelaySec.coerceIn(2L, 60L) * 1000L).coerceAtLeast(3_000L))
             }
         } catch (e: Exception) {
             Log.e(TAG, "backup loop failed", e)

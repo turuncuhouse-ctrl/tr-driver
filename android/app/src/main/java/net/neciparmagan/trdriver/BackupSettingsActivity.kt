@@ -226,7 +226,7 @@ class BackupSettingsActivity : AppCompatActivity() {
             "Durum: $on · $net$wifiNow · İşlenen: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
                 "Galeri → TR Photos · Klasörler → TR Backup / ${session.deviceName}"
         networkHint.text =
-            "Yedekleme yalnız Wi‑Fi üzerinden yapılır. Mobil veri kullanılmaz; Wi‑Fi gelince kaldığı yerden devam eder."
+            "Yedekleme yalnız Wi‑Fi, sınırlı hız (~0.5 MB/s). Mobil veri yok. WhatsApp gibi uygulamalar yavaşlamamalı; Wi‑Fi gelince arka planda devam eder."
     }
 
     private fun mediaPermissions(): Array<String> = MediaAccess.mediaPermissionsForRequest()

@@ -44,7 +44,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="Yedekleme: yalnız Wi‑Fi. Mobil veri ile yükleme yapılmaz; Wi‑Fi gelince kaldığı yerden devam eder."
+                android:text="Yedekleme: yalnız Wi‑Fi, sınırlı hız (~0.5 MB/s). WhatsApp ve diğer uygulamalar çalışmaya devam eder; Wi‑Fi gelince arka planda kaldığı yerden devam eder."
                 android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
 

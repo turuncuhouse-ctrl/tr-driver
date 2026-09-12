@@ -189,18 +189,44 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
                         busy = false,
                         user = me,
                         crumbs = listOf(Crumb(null, "Dosyalarım")),
+                        offline = false,
                     )
                 }
                 loadFiles()
             } catch (e: Exception) {
-                session.clearAuth()
-                _state.update {
-                    it.copy(
-                        bootstrapped = true,
-                        loggedIn = false,
-                        busy = false,
-                        message = "Oturum sona erdi. Tekrar giriş yapın.",
-                    )
+                val code = (e as? net.neciparmagan.trdriver.data.HttpStatusIOException)?.code
+                // Only clear session on real auth rejection — never on network blips.
+                if (code == 401 || code == 403) {
+                    session.clearAuth()
+                    _state.update {
+                        it.copy(
+                            bootstrapped = true,
+                            loggedIn = false,
+                            busy = false,
+                            message = "Oturum sona erdi. Tekrar giriş yapın.",
+                        )
+                    }
+                } else if (session.isLoggedIn) {
+                    // Keep token; show offline / retry UI without forcing login.
+                    _state.update {
+                        it.copy(
+                            bootstrapped = true,
+                            loggedIn = true,
+                            busy = false,
+                            offline = true,
+                            message = "Bağlantı sorunu — oturum korunuyor. Tekrar denenecek.",
+                        )
+                    }
+                    loadFiles()
+                } else {
+                    _state.update {
+                        it.copy(
+                            bootstrapped = true,
+                            loggedIn = false,
+                            busy = false,
+                            message = e.message,
+                        )
+                    }
                 }
             }
         }

@@ -260,11 +260,42 @@ class PhotosLibraryActivity : AppCompatActivity() {
         } else {
             selectTab(Tab.PHOTOS)
         }
+
+        // Keep session / Wi‑Fi backup alive while gallery is used.
+        if (session.isLoggedIn && session.galleryBackupEnabled) {
+            net.neciparmagan.trdriver.backup.GalleryBackupWorker.schedule(this)
+        }
+        refreshGallerySubtitle()
+    }
+
+    private fun refreshGallerySubtitle() {
+        val login = if (session.isLoggedIn) {
+            session.email.ifBlank { "oturum açık" }
+        } else {
+            "giriş yok (yerel galeri)"
+        }
+        val backup = when {
+            !session.isLoggedIn -> ""
+            session.galleryBackupEnabled -> " · Wi‑Fi yedek açık"
+            else -> " · yedek kapalı"
+        }
+        subtitle.text = "$login$backup"
     }
 
     override fun onStart() {
         super.onStart()
         UploadConflictUi.bindActivity(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Don't overwrite detailed tab subtitles while browsing; only when idle on photos root.
+        if (tab == Tab.PHOTOS && viewingAlbum == null && !selectionMode) {
+            // keep loadTimeline subtitle; append session hint via title only if needed
+        }
+        if (session.isLoggedIn && session.galleryBackupEnabled) {
+            net.neciparmagan.trdriver.backup.GalleryBackupWorker.schedule(this)
+        }
     }
 
     override fun onStop() {

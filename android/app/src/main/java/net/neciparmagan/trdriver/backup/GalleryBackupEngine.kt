@@ -3,6 +3,7 @@ package net.neciparmagan.trdriver.backup
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.LocalMedia
 import net.neciparmagan.trdriver.data.MediaAccess
@@ -27,7 +28,7 @@ data class GalleryBackupBatchResult(
 /** Core gallery backup logic — safe to run from WorkManager or foreground service. */
 object GalleryBackupEngine {
     private const val TAG = "GalleryBackupEngine"
-    private const val FILES_PER_RUN = 19
+    private const val FILES_PER_RUN = 8
 
     suspend fun runBatch(
         context: Context,
@@ -179,12 +180,14 @@ object GalleryBackupEngine {
                     doneCount = alreadyDone,
                     pendingCount = pendingLeft,
                     message = if (pendingLeft > 0) {
-                        "Yedek OK (+1). Kalan ~$pendingLeft · ${session.deviceName}"
+                        "Yedek OK (+1). Kalan ~$pendingLeft · Wi‑Fi sınırlı hız"
                     } else {
                         "Yedek tamam. Toplam işaretli: ${db.countUploaded()}"
                     },
                     clearFileBytes = true,
                 )
+                // Leave Wi‑Fi free for WhatsApp / other apps between files.
+                if (pendingLeft > 0) delay(1_500L)
             } catch (e: CancellationException) {
                 session.updateBackupProgress(
                     active = false,

@@ -90,7 +90,12 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         val req = authed(Request.Builder().url("${base()}/api/auth/me")).get().build()
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw IOException(parseError(text))
+            if (!resp.isSuccessful) {
+                throw HttpStatusIOException(
+                    code = resp.code,
+                    message = parseError(text).ifBlank { "Oturum doğrulanamadı (${resp.code})" },
+                )
+            }
             val user = json.decodeFromString(User.serializer(), text)
             if (user.storageRootId.isNotBlank()) {
                 session.storageRootId = user.storageRootId
@@ -577,14 +582,16 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             override fun isOneShot(): Boolean = true
             override fun writeTo(sink: BufferedSink) {
                 open().use { input ->
-                    val buffer = ByteArray(128 * 1024)
+                    val buffer = ByteArray(64 * 1024)
                     var sent = 0L
                     var lastEmit = -1L
+                    val paceWindow = UploadBandwidthLimiter.Window()
                     while (true) {
                         val read = input.read(buffer)
                         if (read < 0) break
                         sink.write(buffer, 0, read)
                         sent += read
+                        UploadBandwidthLimiter.paceAfterWrite(read, paceWindow)
                         val total = if (size >= 0) size else sent
                         if (onProgress != null) {
                             val step = maxOf(256L * 1024L, total / 50L)

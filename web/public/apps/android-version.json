@@ -1,7 +1,7 @@
 ﻿{
-    "versionCode": 27,
-    "versionName": "0.8.9",
+    "versionCode": 28,
+    "versionName": "0.8.10",
     "minSupportedCode": 1,
-    "releaseNotes": "Yedekleme yalniz Wi-Fi; mobil veri ile yukleme tamamen kapali. Wi-Fi gelince kaldigi yerden devam eder.",
+    "releaseNotes": "Yedekleme sinirli hiz (WhatsApp yavaslamaz); Wi-Fi gelince arka plan devam; oturum uygulama ici cikis olmadan dusmez; TR Galeri iyilestirme",
     "apkPath": "/download/TRDriver.apk"
 }

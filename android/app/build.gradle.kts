@@ -21,8 +21,8 @@ android {
         applicationId = "net.neciparmagan.trdriver"
         minSdk = 26
         targetSdk = 34
-        versionCode = 27
-        versionName = "0.8.9"
+        versionCode = 28
+        versionName = "0.8.10"
         buildConfigField("String", "DEFAULT_SERVER", "\"https://drive.neciparmagan.net.tr\"")
     }
 

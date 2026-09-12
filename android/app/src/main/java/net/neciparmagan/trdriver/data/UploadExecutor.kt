@@ -72,6 +72,8 @@ object UploadExecutor {
         val policy = resolveConflictPolicy(api, parentId, media.displayName, conflict, null)
         if (policy == UploadConflictPolicy.SKIP) throw SkipUploadException()
         val network = UploadNetworkGate.bindUploadNetwork(context)
+        val previousBackupMode = UploadBandwidthLimiter.backupMode
+        UploadBandwidthLimiter.backupMode = true
         try {
             UploadRetry.run(
                 context = context,
@@ -89,6 +91,7 @@ object UploadExecutor {
                 )
             }
         } finally {
+            UploadBandwidthLimiter.backupMode = previousBackupMode
             UploadNetworkGate.unbindUploadNetwork(context)
         }
     }
