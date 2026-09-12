@@ -53,6 +53,51 @@ class MediaPreviewActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnClosePreview).setOnClickListener { finish() }
         findViewById<View>(R.id.btnSharePreview).setOnClickListener { shareCurrent(session) }
         findViewById<View>(R.id.btnOpenExternal).setOnClickListener { openExternal() }
+        findViewById<View>(R.id.btnInfoPreview).setOnClickListener {
+            val sizeHint = localUri?.let { uri ->
+                runCatching {
+                    contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+                }.getOrNull()
+            }
+            val msg = buildString {
+                append("Ad: $displayName\n")
+                append("Tür: ${mime.ifBlank { "bilinmiyor" }}\n")
+                if (sizeHint != null && sizeHint > 0) {
+                    append("Boyut: ${SessionStore.formatBytes(sizeHint)}\n")
+                }
+                if (localUri != null) append("Kaynak: cihaz")
+                else if (remoteId.isNotBlank()) append("Kaynak: bulut")
+            }
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Bilgi")
+                .setMessage(msg)
+                .setPositiveButton("Tamam", null)
+                .show()
+        }
+        val deleteBtn = findViewById<View>(R.id.btnDeletePreview)
+        if (localUri != null) {
+            deleteBtn.visibility = View.VISIBLE
+            deleteBtn.setOnClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Silinsin mi?")
+                    .setMessage(displayName)
+                    .setPositiveButton("Sil") { _, _ ->
+                        val uri = localUri!!
+                        val rows = runCatching { contentResolver.delete(uri, null, null) }.getOrDefault(0)
+                        if (rows > 0) {
+                            Toast.makeText(this, "Silindi", Toast.LENGTH_SHORT).show()
+                            setResult(RESULT_OK)
+                            finish()
+                        } else {
+                            Toast.makeText(this, "Silinemedi (izin gerekebilir)", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    .setNegativeButton("İptal", null)
+                    .show()
+            }
+        } else {
+            deleteBtn.visibility = View.GONE
+        }
 
         val image = findViewById<ImageView>(R.id.previewImage)
         val video = findViewById<VideoView>(R.id.previewVideo)

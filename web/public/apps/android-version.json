@@ -1,7 +1,7 @@
 ﻿{
-    "versionCode": 28,
-    "versionName": "0.8.10",
-    "minSupportedCode": 1,
-    "releaseNotes": "Yedekleme sinirli hiz (WhatsApp yavaslamaz); Wi-Fi gelince arka plan devam; oturum uygulama ici cikis olmadan dusmez; TR Galeri iyilestirme",
-    "apkPath": "/download/TRDriver.apk"
+    "minSupportedCode":  1,
+    "versionCode":  29,
+    "versionName":  "0.8.11",
+    "apkPath":  "/download/TRDriver.apk",
+    "releaseNotes":  "TR Galeri Photos-tarzi alt nav, onizleme ve DiffUtil; Drive alt nav + FAB; dosya tasi/yeniden adlandir; bos durumlar"
 }

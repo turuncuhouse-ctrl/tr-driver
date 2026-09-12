@@ -122,6 +122,7 @@
                 android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/driveSectionTitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="TR Driver"
@@ -198,7 +199,7 @@
                 android:id="@+id/btnActions"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="İşlemler" />
+                android:text="⋯" />
         </LinearLayout>
 
         <LinearLayout
@@ -301,18 +302,46 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
-        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-            android:id="@+id/swipeRefresh"
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1">
 
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/fileList"
+            <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+                android:id="@+id/swipeRefresh"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:padding="8dp" />
-        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+                android:layout_height="match_parent">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/fileList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="8dp"
+                    android:clipToPadding="false"
+                    android:paddingBottom="72dp" />
+            </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+            <TextView
+                android:id="@+id/driveEmpty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:padding="24dp"
+                android:text="Bu klasör boş\n+ ile dosya yükleyin veya klasör oluşturun"
+                android:textColor="@color/tr_ink"
+                android:textSize="15sp"
+                android:visibility="gone" />
+
+            <com.google.android.material.floatingactionbutton.FloatingActionButton
+                android:id="@+id/fabDrive"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="16dp"
+                android:contentDescription="Yeni"
+                android:src="@android:drawable/ic_input_add" />
+        </FrameLayout>
 
         <LinearLayout
             android:id="@+id/miniPlayer"
@@ -348,6 +377,53 @@
                 android:layout_height="wrap_content"
                 android:minWidth="0dp"
                 android:text="Aç" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/driveBottomNav"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/white"
+            android:elevation="8dp"
+            android:orientation="horizontal"
+            android:paddingVertical="4dp">
+
+            <Button
+                android:id="@+id/navHome"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:text="Ana sayfa"
+                android:textColor="@color/tr_ink" />
+
+            <Button
+                android:id="@+id/navFiles"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:text="Dosyalar"
+                android:textColor="@color/tr_blue"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/navStarred"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:text="Yıldızlı"
+                android:textColor="@color/tr_ink" />
+
+            <Button
+                android:id="@+id/navMore"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:text="Diğer"
+                android:textColor="@color/tr_ink" />
         </LinearLayout>
     </LinearLayout>
 

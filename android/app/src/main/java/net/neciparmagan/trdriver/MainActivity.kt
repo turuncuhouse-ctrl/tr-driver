@@ -106,7 +106,7 @@ class MainActivity : AppCompatActivity() {
                 openEntry(entry)
             }
         },
-        onLongPress = { entry -> vm.enterSelection(entry.id) },
+        onLongPress = { entry -> showFileContextMenu(entry, list) },
         onDownload = { vm.download(it) },
         onDelete = { entry ->
             AlertDialog.Builder(this)
@@ -117,10 +117,15 @@ class MainActivity : AppCompatActivity() {
         },
         onShare = { vm.shareEntry(it) },
         onStar = { vm.toggleStar(it) },
+        onRename = { entry -> promptRename(entry) },
+        onMove = { entry -> promptMove(entry) },
         onToggleCheck = { vm.toggleSelection(it.id) },
         onAddIntakePhotos = { entry -> openIntakeForPlate(entry.name, entry.id) },
     )
     private var gridLayout = false
+    private var driveSection: DriveSection = DriveSection.FILES
+
+    private enum class DriveSection { HOME, FILES, STARRED }
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) vm.upload(uri)
@@ -278,6 +283,12 @@ class MainActivity : AppCompatActivity() {
                 vm.shareEntry(entry)
             }
         }
+        findViewById<View>(R.id.fabDrive).setOnClickListener { showFabMenu(it) }
+        findViewById<Button>(R.id.navHome).setOnClickListener { selectDriveSection(DriveSection.HOME) }
+        findViewById<Button>(R.id.navFiles).setOnClickListener { selectDriveSection(DriveSection.FILES) }
+        findViewById<Button>(R.id.navStarred).setOnClickListener { selectDriveSection(DriveSection.STARRED) }
+        findViewById<Button>(R.id.navMore).setOnClickListener { showActionsMenu(it) }
+        styleDriveNav()
         crumbs.setOnClickListener {
             val state = vm.state.value
             if (state.crumbs.size > 1) vm.goToCrumb(state.crumbs.lastIndex - 1)
@@ -330,11 +341,24 @@ class MainActivity : AppCompatActivity() {
                         session.lastBrowseFolderId = it
                     }
                     adapter.submit(state.files, state.selectionMode, state.selectedIds)
+                    findViewById<View>(R.id.driveEmpty).visibility =
+                        if (state.files.isEmpty() && !state.busy) View.VISIBLE else View.GONE
+                    findViewById<TextView>(R.id.driveEmpty).text = when {
+                        driveSection == DriveSection.STARRED -> "Yıldızlı öğe yok\nDosyalarda ★ ile işaretleyin"
+                        driveSection == DriveSection.HOME -> "Son açılan yok\nDosyalardan bir öğe açın"
+                        else -> "Bu klasör boş\n+ ile dosya yükleyin veya klasör oluşturun"
+                    }
                     findViewById<View>(R.id.selectionBar).visibility =
                         if (state.selectionMode) View.VISIBLE else View.GONE
                     findViewById<TextView>(R.id.selectionCount).text = "${state.selectedIds.size} seçili"
                     findViewById<View>(R.id.offlineBanner).visibility =
                         if (state.offline) View.VISIBLE else View.GONE
+                    findViewById<TextView>(R.id.driveSectionTitle).text = when (driveSection) {
+                        DriveSection.HOME -> "Ana sayfa"
+                        DriveSection.STARRED -> "Yıldızlı"
+                        DriveSection.FILES -> "TR Driver"
+                    }
+                    styleDriveNav()
                     if (session.galleryBackupEnabled) {
                         GalleryBackupWorker.schedule(this@MainActivity)
                     }
@@ -427,6 +451,83 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun selectDriveSection(section: DriveSection) {
+        driveSection = section
+        styleDriveNav()
+        when (section) {
+            DriveSection.HOME -> vm.showRecent()
+            DriveSection.FILES -> vm.goToFilesRoot()
+            DriveSection.STARRED -> vm.showStarred()
+        }
+    }
+
+    private fun styleDriveNav() {
+        fun style(btn: Button, active: Boolean) {
+            btn.setTextColor(
+                ContextCompat.getColor(this, if (active) R.color.tr_blue else R.color.tr_ink),
+            )
+            btn.typeface = if (active) {
+                android.graphics.Typeface.DEFAULT_BOLD
+            } else {
+                android.graphics.Typeface.DEFAULT
+            }
+        }
+        style(findViewById(R.id.navHome), driveSection == DriveSection.HOME)
+        style(findViewById(R.id.navFiles), driveSection == DriveSection.FILES)
+        style(findViewById(R.id.navStarred), driveSection == DriveSection.STARRED)
+        style(findViewById(R.id.navMore), false)
+    }
+
+    private fun showFabMenu(anchor: View) {
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, "Dosya yükle")
+            menu.add(0, 2, 1, "Yeni klasör")
+            currentIntakePlate()?.let { plate ->
+                menu.add(0, 3, 2, "Fotoğraf ekle · $plate")
+            }
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> picker.launch("*/*")
+                    2 -> promptNewFolder()
+                    3 -> currentIntakePlate()?.let { openIntakeForPlate(it, vm.state.value.crumbs.last().id) }
+                }
+                true
+            }
+            show()
+        }
+    }
+
+    private fun showFileContextMenu(entry: FileEntry, anchor: View) {
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 9, 0, "Seç")
+            if (entry.kind == "file") menu.add(0, 1, 1, "İndir")
+            menu.add(0, 2, 2, "Paylaş")
+            menu.add(0, 3, 3, if (entry.starred) "Yıldızı kaldır" else "Yıldızla")
+            menu.add(0, 5, 4, "Yeniden adlandır")
+            menu.add(0, 6, 5, "Taşı")
+            menu.add(0, 4, 6, "Sil")
+            setOnMenuItemClickListener { mi ->
+                when (mi.itemId) {
+                    9 -> vm.enterSelection(entry.id)
+                    1 -> vm.download(entry)
+                    2 -> vm.shareEntry(entry)
+                    3 -> vm.toggleStar(entry)
+                    5 -> promptRename(entry)
+                    6 -> promptMove(entry)
+                    4 -> {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setMessage("\"${entry.name}\" silinsin mi?")
+                            .setPositiveButton("Sil") { _, _ -> vm.deleteEntry(entry) }
+                            .setNegativeButton("İptal", null)
+                            .show()
+                    }
+                }
+                true
+            }
+            show()
+        }
+    }
+
     private fun showAccountSheet() {
         val mail = titleEmail.text?.toString().orEmpty().ifBlank { session.email }
         AlertDialog.Builder(this)
@@ -463,8 +564,16 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, 9, 12, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
-                    1 -> vm.showStarred()
-                    2 -> vm.showRecent()
+                    1 -> {
+                        driveSection = DriveSection.STARRED
+                        styleDriveNav()
+                        vm.showStarred()
+                    }
+                    2 -> {
+                        driveSection = DriveSection.HOME
+                        styleDriveNav()
+                        vm.showRecent()
+                    }
                     3 -> showOfflineDownloads()
                     4 -> {
                         val first = vm.state.value.files.firstOrNull()
@@ -552,6 +661,41 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun promptRename(entry: FileEntry) {
+        val input = EditText(this).apply {
+            setText(entry.name)
+            setSelection(entry.name.length)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Yeniden adlandır")
+            .setView(input)
+            .setPositiveButton("Kaydet") { _, _ ->
+                vm.renameEntry(entry, input.text.toString())
+            }
+            .setNegativeButton("İptal", null)
+            .show()
+    }
+
+    private fun promptMove(entry: FileEntry) {
+        val folders = vm.state.value.files.filter { it.kind == "folder" && it.id != entry.id }
+        val labels = mutableListOf("Dosyalarım (kök)")
+        val targets = mutableListOf(session.storageRootId.ifBlank { "" })
+        folders.forEach {
+            labels.add(it.name)
+            targets.add(it.id)
+        }
+        if (labels.size == 1 && targets[0].isBlank()) {
+            Toast.makeText(this, "Taşımak için hedef klasör yok — önce bir klasör oluşturun", Toast.LENGTH_LONG).show()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Taşı: ${entry.name}")
+            .setItems(labels.toTypedArray()) { _, which ->
+                vm.moveEntry(entry, targets[which])
+            }
+            .setNegativeButton("İptal", null)
+            .show()
+    }
+
     private fun refreshMiniPlayer() {
         if (!::miniPlayer.isInitialized) return
         if (MusicService.isSessionActive && MusicService.currentTitle.isNotBlank()) {
@@ -582,6 +726,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun openEntry(entry: FileEntry) {
         if (entry.kind == "folder") {
+            driveSection = DriveSection.FILES
+            styleDriveNav()
             vm.openFolder(entry)
             return
         }
@@ -693,6 +839,8 @@ private class FileAdapter(
     private val onDelete: (FileEntry) -> Unit,
     private val onShare: (FileEntry) -> Unit,
     private val onStar: (FileEntry) -> Unit,
+    private val onRename: (FileEntry) -> Unit,
+    private val onMove: (FileEntry) -> Unit,
     private val onToggleCheck: (FileEntry) -> Unit,
     private val onAddIntakePhotos: (FileEntry) -> Unit,
 ) : RecyclerView.Adapter<FileAdapter.VH>() {
@@ -762,13 +910,17 @@ private class FileAdapter(
                 if (item.kind == "file") menu.add(0, 1, 1, "İndir")
                 menu.add(0, 2, 2, "Paylaş")
                 menu.add(0, 3, 3, if (item.starred) "Yıldızı kaldır" else "Yıldızla")
-                menu.add(0, 4, 4, "Sil")
+                menu.add(0, 5, 4, "Yeniden adlandır")
+                menu.add(0, 6, 5, "Taşı")
+                menu.add(0, 4, 6, "Sil")
                 setOnMenuItemClickListener { mi ->
                     when (mi.itemId) {
                         10 -> onAddIntakePhotos(item)
                         1 -> onDownload(item)
                         2 -> onShare(item)
                         3 -> onStar(item)
+                        5 -> onRename(item)
+                        6 -> onMove(item)
                         4 -> onDelete(item)
                     }
                     true

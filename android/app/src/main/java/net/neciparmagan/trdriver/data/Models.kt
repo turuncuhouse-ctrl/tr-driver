@@ -59,6 +59,12 @@ data class RenameRequest(
 )
 
 @Serializable
+data class MoveRequest(
+    @SerialName("fileId") val fileId: String,
+    @SerialName("parentId") val parentId: String,
+)
+
+@Serializable
 data class RegisterRequest(
     val email: String,
     val password: String,

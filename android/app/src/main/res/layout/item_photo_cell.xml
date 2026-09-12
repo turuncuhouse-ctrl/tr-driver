@@ -12,7 +12,7 @@
         <ImageView
             android:id="@+id/photoThumb"
             android:layout_width="match_parent"
-            android:layout_height="110dp"
+            android:layout_height="140dp"
             android:background="#DCE6F5"
             android:contentDescription="@null"
             android:scaleType="centerCrop" />

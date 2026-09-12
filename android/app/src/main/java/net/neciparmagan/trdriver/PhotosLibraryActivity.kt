@@ -32,6 +32,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.Dispatchers
@@ -174,6 +175,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
         grid.layoutManager = glm
         timelineAdapter.updateAuth(session.token.orEmpty(), session.serverUrl)
 
+        // Bottom nav (Google Photos style)
+        findViewById<Button>(R.id.navPhotos).setOnClickListener { selectTab(Tab.PHOTOS) }
+        findViewById<Button>(R.id.navAlbums).setOnClickListener { selectTab(Tab.ALBUMS) }
+        findViewById<Button>(R.id.navLibrary).setOnClickListener { selectTab(Tab.CLOUD) }
         tabPhotos.setOnClickListener { selectTab(Tab.PHOTOS) }
         tabAlbums.setOnClickListener { selectTab(Tab.ALBUMS) }
         tabCloud.setOnClickListener { selectTab(Tab.CLOUD) }
@@ -289,13 +294,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Don't overwrite detailed tab subtitles while browsing; only when idle on photos root.
-        if (tab == Tab.PHOTOS && viewingAlbum == null && !selectionMode) {
-            // keep loadTimeline subtitle; append session hint via title only if needed
-        }
         if (session.isLoggedIn && session.galleryBackupEnabled) {
             net.neciparmagan.trdriver.backup.GalleryBackupWorker.schedule(this)
         }
+        refreshBackupChip()
     }
 
     override fun onStop() {
@@ -319,10 +321,44 @@ class PhotosLibraryActivity : AppCompatActivity() {
         fun style(btn: Button, active: Boolean) {
             btn.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
             btn.alpha = if (active) 1f else 0.7f
+            btn.setTextColor(
+                ContextCompat.getColor(this, if (active) R.color.tr_blue else R.color.tr_ink),
+            )
         }
         style(tabPhotos, tab == Tab.PHOTOS)
         style(tabAlbums, tab == Tab.ALBUMS)
         style(tabCloud, tab == Tab.CLOUD)
+        findViewById<Button>(R.id.navPhotos).let { style(it, tab == Tab.PHOTOS) }
+        findViewById<Button>(R.id.navAlbums).let { style(it, tab == Tab.ALBUMS) }
+        findViewById<Button>(R.id.navLibrary).let { style(it, tab == Tab.CLOUD) }
+        findViewById<View>(R.id.filterScroll).visibility =
+            if (tab == Tab.PHOTOS || viewingAlbum != null) View.VISIBLE else View.GONE
+        refreshBackupChip()
+    }
+
+    private fun refreshBackupChip() {
+        val chip = findViewById<TextView>(R.id.galleryBackupChip)
+        if (!session.isLoggedIn) {
+            chip.visibility = View.GONE
+            return
+        }
+        chip.visibility = View.VISIBLE
+        chip.text = session.backupStatusLine()
+        chip.setOnClickListener {
+            startActivity(Intent(this, BackupSettingsActivity::class.java))
+        }
+    }
+
+    private fun showEmpty(titleText: String, body: String) {
+        findViewById<View>(R.id.galleryEmpty).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.galleryEmptyTitle).text = titleText
+        findViewById<TextView>(R.id.galleryEmptyBody).text = body
+        grid.visibility = View.GONE
+    }
+
+    private fun hideEmpty() {
+        findViewById<View>(R.id.galleryEmpty).visibility = View.GONE
+        grid.visibility = View.VISIBLE
     }
 
     private fun setMediaFilter(next: MediaFilter) {
@@ -378,10 +414,12 @@ class PhotosLibraryActivity : AppCompatActivity() {
     }
 
     private fun loadAllPhotos() {
-        title.text = "TR Photos"
+        title.text = if (launchedAsGalleryApp) getString(R.string.gallery_launcher_name) else "TR Photos"
         subtitle.text = "Tüm fotoğraf ve videolar · tarihe göre"
+        hideEmpty()
         if (!hasMediaPermission()) {
             subtitle.text = "Galeri izni gerekli"
+            showEmpty("Galeri izni gerekli", "Fotoğraf ve videoları görmek için izin verin.")
             return
         }
         progress.visibility = View.VISIBLE
@@ -391,14 +429,17 @@ class PhotosLibraryActivity : AppCompatActivity() {
             allLocal = withContext(Dispatchers.IO) { MediaCatalog.scan(this@PhotosLibraryActivity, 3000) }
             applyFilter()
             progress.visibility = View.GONE
+            refreshBackupChip()
         }
     }
 
     private fun loadAlbums() {
         title.text = "Albümler"
-        subtitle.text = "Kamera, Ekran görüntüleri ve diğer klasörler"
+        subtitle.text = "Cihaz klasörleri · Google Kitaplık tarzı"
+        hideEmpty()
         if (!hasMediaPermission()) {
             subtitle.text = "Galeri izni gerekli"
+            showEmpty("Galeri izni gerekli", "Albümleri görmek için fotoğraf/video izni verin.")
             return
         }
         progress.visibility = View.VISIBLE
@@ -408,6 +449,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             allAlbums = withContext(Dispatchers.IO) { MediaCatalog.listAlbums(this@PhotosLibraryActivity) }
             applyFilter()
             progress.visibility = View.GONE
+            refreshBackupChip()
         }
     }
 
@@ -440,8 +482,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
         }
         viewingCloudAlbum = null
         showingCloudAlbumList = false
-        title.text = "Bulut"
-        subtitle.text = "TR Photos yedekleri · tarihe göre · albümler için alt yazıya dokunun"
+        title.text = "Kitaplık"
+        subtitle.text = "Bulut yedekleri · albüm listesi için buraya dokunun"
+        hideEmpty()
         subtitle.setOnClickListener { loadCloudAlbums() }
         progress.visibility = View.VISIBLE
         grid.adapter = timelineAdapter
@@ -524,6 +567,15 @@ class PhotosLibraryActivity : AppCompatActivity() {
                         it.name.lowercase(Locale.getDefault()).contains(q)
                     }
                     albumAdapter.submit(albums)
+                    if (albums.isEmpty()) {
+                        showEmpty(
+                            if (q.isNotBlank()) "Sonuç yok" else "Albüm yok",
+                            if (q.isNotBlank()) "\"$searchQuery\" ile eşleşen albüm bulunamadı."
+                            else "Cihazda albüm bulunamadı.",
+                        )
+                    } else {
+                        hideEmpty()
+                    }
                     subtitle.text = "${albums.size} albüm" + if (q.isNotBlank()) " · \"$searchQuery\"" else ""
                 } else {
                     showLocalTimeline(q)
@@ -538,6 +590,11 @@ class PhotosLibraryActivity : AppCompatActivity() {
                         it.name.lowercase(Locale.getDefault()).contains(q)
                     }
                     albumAdapter.submit(albums)
+                    if (albums.isEmpty()) {
+                        showEmpty("Bulut albümü yok", "Wi‑Fi yedek açıkken albümler burada görünür.")
+                    } else {
+                        hideEmpty()
+                    }
                     subtitle.text = "${albums.size} bulut albümü" + if (q.isNotBlank()) " · \"$searchQuery\"" else ""
                 } else {
                     grid.adapter = timelineAdapter
@@ -555,10 +612,18 @@ class PhotosLibraryActivity : AppCompatActivity() {
                         }
                     }
                     timelineAdapter.submitCloud(buildCloudTimeline(files))
+                    if (files.isEmpty()) {
+                        showEmpty(
+                            "Kitaplık boş",
+                            "Buluta henüz medya yok. Yedekleme ayarlarından Wi‑Fi yedeği açın.",
+                        )
+                    } else {
+                        hideEmpty()
+                    }
                     subtitle.text = when {
                         files.isEmpty() -> "Henüz bulutta medya yok · otomatik yedeği açın"
                         q.isNotBlank() -> "${files.size} bulut öğesi · \"$searchQuery\""
-                        else -> "${files.size} bulut öğesi · albümler için alt yazıya dokunun"
+                        else -> "${files.size} bulut öğesi · Kitaplık"
                     }
                 }
             }
@@ -579,6 +644,15 @@ class PhotosLibraryActivity : AppCompatActivity() {
             MediaFilter.VIDEOS -> media.filter { it.isVideo }
         }
         timelineAdapter.submitLocal(buildLocalTimeline(media))
+        if (media.isEmpty()) {
+            showEmpty(
+                if (q.isNotBlank()) "Sonuç yok" else "Fotoğraf yok",
+                if (q.isNotBlank()) "Aramanızla eşleşen öğe bulunamadı."
+                else "Telefon galerisinde görüntülenecek öğe yok.",
+            )
+        } else {
+            hideEmpty()
+        }
         val filterLabel = when (mediaFilter) {
             MediaFilter.ALL -> "tarihe göre"
             MediaFilter.PHOTOS -> "yalnız fotoğraf"
@@ -1041,13 +1115,34 @@ class PhotosLibraryActivity : AppCompatActivity() {
         }
 
         fun submitLocal(next: List<TimelineItem>) {
+            val diff = DiffUtil.calculateDiff(TimelineDiff(items, next))
             items = next
-            notifyDataSetChanged()
+            diff.dispatchUpdatesTo(this)
         }
 
         fun submitCloud(next: List<TimelineItem>) {
+            val diff = DiffUtil.calculateDiff(TimelineDiff(items, next))
             items = next
-            notifyDataSetChanged()
+            diff.dispatchUpdatesTo(this)
+        }
+
+        private class TimelineDiff(
+            private val old: List<TimelineItem>,
+            private val new: List<TimelineItem>,
+        ) : DiffUtil.Callback() {
+            override fun getOldListSize() = old.size
+            override fun getNewListSize() = new.size
+            override fun areItemsTheSame(o: Int, n: Int): Boolean {
+                val a = old[o]
+                val b = new[n]
+                return when {
+                    a is TimelineItem.Header && b is TimelineItem.Header -> a.dayKey == b.dayKey
+                    a is TimelineItem.Photo && b is TimelineItem.Photo -> a.media.mediaKey == b.media.mediaKey
+                    a is TimelineItem.Cloud && b is TimelineItem.Cloud -> a.entry.id == b.entry.id
+                    else -> false
+                }
+            }
+            override fun areContentsTheSame(o: Int, n: Int): Boolean = old[o] == new[n]
         }
 
         fun isHeader(position: Int): Boolean = items.getOrNull(position) is TimelineItem.Header
@@ -1164,8 +1259,15 @@ class PhotosLibraryActivity : AppCompatActivity() {
         private var items: List<MediaAlbum> = emptyList()
 
         fun submit(next: List<MediaAlbum>) {
+            val old = items
             items = next
-            notifyDataSetChanged()
+            DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                override fun getOldListSize() = old.size
+                override fun getNewListSize() = next.size
+                override fun areItemsTheSame(o: Int, n: Int) = old[o].id == next[n].id
+                override fun areContentsTheSame(o: Int, n: Int) =
+                    old[o].name == next[n].name && old[o].count == next[n].count
+            }).dispatchUpdatesTo(this)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {

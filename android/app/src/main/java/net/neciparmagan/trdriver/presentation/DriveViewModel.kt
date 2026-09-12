@@ -360,6 +360,18 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
         loadFiles()
     }
 
+    fun goToFilesRoot() {
+        _state.update {
+            it.copy(
+                crumbs = listOf(Crumb(null, "Dosyalarım")),
+                searching = false,
+                selectionMode = false,
+                selectedIds = emptySet(),
+            )
+        }
+        loadFiles()
+    }
+
     fun createFolder(name: String) {
         val parent = _state.value.crumbs.lastOrNull()?.id
         viewModelScope.launch {
@@ -367,6 +379,34 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 api.createFolder(parent, name.trim())
                 _state.update { it.copy(busy = false, message = "Klasör oluşturuldu") }
+                loadFiles()
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = e.message) }
+            }
+        }
+    }
+
+    fun renameEntry(entry: FileEntry, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty() || trimmed == entry.name) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true) }
+            try {
+                api.rename(entry.id, trimmed)
+                _state.update { it.copy(busy = false, message = "Yeniden adlandırıldı") }
+                loadFiles()
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = e.message) }
+            }
+        }
+    }
+
+    fun moveEntry(entry: FileEntry, parentId: String) {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true) }
+            try {
+                api.move(entry.id, parentId)
+                _state.update { it.copy(busy = false, message = "Taşındı") }
                 loadFiles()
             } catch (e: Exception) {
                 _state.update { it.copy(busy = false, message = e.message) }

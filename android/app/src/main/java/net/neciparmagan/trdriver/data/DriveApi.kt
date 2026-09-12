@@ -215,6 +215,20 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
     }
 
+    suspend fun move(fileId: String, parentId: String) = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(
+            MoveRequest.serializer(),
+            MoveRequest(fileId = fileId, parentId = parentId),
+        )
+        val req = authed(Request.Builder().url("${base()}/api/files/move"))
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+        }
+    }
+
     suspend fun delete(fileId: String) = withContext(Dispatchers.IO) {
         val payload = json.encodeToString(DeleteRequest.serializer(), DeleteRequest(fileId))
         val req = authed(Request.Builder().url("${base()}/api/files/delete"))
