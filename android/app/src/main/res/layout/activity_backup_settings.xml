@@ -23,7 +23,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
-            android:text="Galeri ve seçtiğiniz klasörler TR Driver sunucusuna yüklenir."
+            android:text="Galeri ve seçtiğiniz klasörler yalnızca Wi‑Fi üzerinden yedeklenir. Mobil veri kullanılmaz."
             android:textColor="@color/tr_ink" />
 
         <LinearLayout
@@ -40,30 +40,11 @@
                 android:text="Otomatik foto/video yedekle" />
 
             <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="Ağ tercihi (en az biri açık olmalı)"
-                android:textColor="@color/tr_ink"
-                android:textStyle="bold" />
-
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchBackupWifi"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Wi‑Fi'de yedekle" />
-
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchBackupMobile"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Mobil veride yedekle" />
-
-            <TextView
                 android:id="@+id/networkHint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Mobil veri çoğu kullanıcı için önerilir. Wi‑Fi'de yedekleme pil ve kota dostudur."
+                android:layout_marginTop="8dp"
+                android:text="Yedekleme: yalnız Wi‑Fi. Mobil veri ile yükleme yapılmaz; Wi‑Fi gelince kaldığı yerden devam eder."
                 android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
 
@@ -78,7 +59,7 @@
                 android:id="@+id/btnBackupNow"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Şimdi yedekle" />
+                android:text="Şimdi yedekle (Wi‑Fi)" />
 
             <Button
                 android:id="@+id/btnOpenPhotos"

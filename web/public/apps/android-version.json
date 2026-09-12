@@ -1,7 +1,7 @@
 ﻿{
-    "versionCode": 26,
-    "versionName": "0.8.8",
+    "versionCode": 27,
+    "versionName": "0.8.9",
     "minSupportedCode": 1,
-    "releaseNotes": "Yedekleme cokmesi duzeltildi (Android 14/15/Xiaomi); guvenli foreground service; Wi-Fi/mobil ayri secim",
+    "releaseNotes": "Yedekleme yalniz Wi-Fi; mobil veri ile yukleme tamamen kapali. Wi-Fi gelince kaldigi yerden devam eder.",
     "apkPath": "/download/TRDriver.apk"
 }

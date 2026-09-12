@@ -44,44 +44,35 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean(KEY_GALLERY_ON, false)
         set(value) = prefs.edit().putBoolean(KEY_GALLERY_ON, value).apply()
 
-    /** Wi‑Fi ağında otomatik yedekleme ve yükleme */
+    /**
+     * Galeri yedekleme yalnızca Wi‑Fi / Ethernet üzerinden yapılır.
+     * Mobil veri yedeklemesi bilinçli olarak kapatılmıştır (kota / maliyet).
+     */
     var backupOnWifi: Boolean
-        get() = ensureNetworkPrefsMigrated() && prefs.getBoolean(KEY_BACKUP_WIFI, true)
-        set(value) {
-            ensureNetworkPrefsMigrated()
-            prefs.edit().putBoolean(KEY_BACKUP_WIFI, value).apply()
+        get() = true
+        set(_) {
+            // Always Wi‑Fi-only; ignore writes that would disable Wi‑Fi backup.
+            prefs.edit()
+                .putBoolean(KEY_BACKUP_WIFI, true)
+                .putBoolean(KEY_BACKUP_MOBILE, false)
+                .putBoolean(KEY_WIFI_ONLY, true)
+                .apply()
         }
 
-    /** Mobil veride otomatik yedekleme ve yükleme */
+    /** Always false — mobil veri ile yedekleme yok. */
     var backupOnMobile: Boolean
-        get() = ensureNetworkPrefsMigrated() && prefs.getBoolean(KEY_BACKUP_MOBILE, true)
-        set(value) {
-            ensureNetworkPrefsMigrated()
-            prefs.edit().putBoolean(KEY_BACKUP_MOBILE, value).apply()
+        get() = false
+        set(_) {
+            prefs.edit().putBoolean(KEY_BACKUP_MOBILE, false).apply()
         }
 
-    /** @deprecated Eski tek anahtar; yeni kurulumlarda [backupOnWifi]/[backupOnMobile] kullanın */
+    /** Always true — yalnız Wi‑Fi. */
     var wifiOnlyBackup: Boolean
-        get() = backupOnWifi && !backupOnMobile
-        set(value) {
-            if (value) {
-                backupOnWifi = true
-                backupOnMobile = false
-            } else {
-                backupOnWifi = true
-                backupOnMobile = true
-            }
+        get() = true
+        set(_) {
+            backupOnWifi = true
+            backupOnMobile = false
         }
-
-    private fun ensureNetworkPrefsMigrated(): Boolean {
-        if (prefs.contains(KEY_BACKUP_WIFI) || prefs.contains(KEY_BACKUP_MOBILE)) return true
-        val legacyWifiOnly = prefs.getBoolean(KEY_WIFI_ONLY, false)
-        prefs.edit()
-            .putBoolean(KEY_BACKUP_WIFI, true)
-            .putBoolean(KEY_BACKUP_MOBILE, !legacyWifiOnly)
-            .apply()
-        return true
-    }
 
     var lastBackupMessage: String
         get() = prefs.getString(KEY_LAST_MSG, "") ?: ""

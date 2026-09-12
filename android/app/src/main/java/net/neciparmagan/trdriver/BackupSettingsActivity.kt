@@ -4,7 +4,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -25,8 +24,6 @@ import net.neciparmagan.trdriver.data.UploadedMediaDb
 class BackupSettingsActivity : AppCompatActivity() {
     private lateinit var session: SessionStore
     private lateinit var switchGallery: SwitchMaterial
-    private lateinit var switchBackupWifi: SwitchMaterial
-    private lateinit var switchBackupMobile: SwitchMaterial
     private lateinit var backupStatus: TextView
     private lateinit var networkHint: TextView
     private lateinit var folderList: LinearLayout
@@ -41,7 +38,7 @@ class BackupSettingsActivity : AppCompatActivity() {
                 warnPartialAccessIfNeeded()
                 OemPowerHelper.maybePromptForReliableBackup(this)
                 refreshStatus()
-                Toast.makeText(this, "Galeri yedekleme açıldı", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Galeri yedekleme açıldı (yalnız Wi‑Fi)", Toast.LENGTH_SHORT).show()
             } else {
                 switchGallery.isChecked = false
                 session.galleryBackupEnabled = false
@@ -75,23 +72,20 @@ class BackupSettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_backup_settings)
         session = SessionStore(this)
+        // Enforce Wi‑Fi-only policy on prefs (clears any old mobile-on setting).
+        session.wifiOnlyBackup = true
 
         switchGallery = findViewById(R.id.switchGalleryBackup)
-        switchBackupWifi = findViewById(R.id.switchBackupWifi)
-        switchBackupMobile = findViewById(R.id.switchBackupMobile)
         backupStatus = findViewById(R.id.backupStatus)
         networkHint = findViewById(R.id.networkHint)
         folderList = findViewById(R.id.folderList)
 
         switchGallery.isChecked = session.galleryBackupEnabled
-        switchBackupWifi.isChecked = session.backupOnWifi
-        switchBackupMobile.isChecked = session.backupOnMobile
 
         switchGallery.setOnCheckedChangeListener { _, checked ->
             if (checked) {
                 if (MediaAccess.hasMediaAccess(this)) {
                     session.galleryBackupEnabled = true
-                    ensureNetworkEnabled()
                     GalleryBackupWorker.schedule(this)
                     OemPowerHelper.maybePromptForReliableBackup(this)
                     warnPartialAccessIfNeeded()
@@ -106,12 +100,6 @@ class BackupSettingsActivity : AppCompatActivity() {
                 refreshStatus()
             }
         }
-        switchBackupWifi.setOnCheckedChangeListener { _, checked ->
-            applyNetworkToggles(wifi = checked, mobile = switchBackupMobile.isChecked)
-        }
-        switchBackupMobile.setOnCheckedChangeListener { _, checked ->
-            applyNetworkToggles(wifi = switchBackupWifi.isChecked, mobile = checked)
-        }
 
         findViewById<Button>(R.id.btnOemSettings).setOnClickListener {
             OemPowerHelper.maybePromptForReliableBackup(this)
@@ -125,8 +113,12 @@ class BackupSettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "Önce otomatik yedeklemeyi açın", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            if (!session.backupOnWifi && !session.backupOnMobile) {
-                Toast.makeText(this, "En az bir ağ seçeneğini açın (Wi‑Fi veya mobil)", Toast.LENGTH_LONG).show()
+            if (!UploadNetworkGate.isWifi(this)) {
+                Toast.makeText(
+                    this,
+                    "Wi‑Fi gerekli. Mobil veri ile yedekleme kapalı; Wi‑Fi’ye bağlanınca devam eder.",
+                    Toast.LENGTH_LONG,
+                ).show()
                 return@setOnClickListener
             }
             if (!MediaAccess.hasMediaAccess(this) && session.backupFolderUris.isEmpty()) {
@@ -135,7 +127,7 @@ class BackupSettingsActivity : AppCompatActivity() {
             }
             try {
                 GalleryBackupWorker.runNow(this)
-                Toast.makeText(this, "Yedekleme başlatıldı", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Wi‑Fi yedekleme başlatıldı", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this, "Yedek başlatılamadı: ${e.message}", Toast.LENGTH_LONG).show()
             }
@@ -163,40 +155,13 @@ class BackupSettingsActivity : AppCompatActivity() {
         renderFolders()
     }
 
-    private fun applyNetworkToggles(wifi: Boolean, mobile: Boolean) {
-        if (!wifi && !mobile) {
-            Toast.makeText(this, "En az Wi‑Fi veya mobil veri açık olmalı", Toast.LENGTH_LONG).show()
-            switchBackupWifi.isChecked = true
-            switchBackupMobile.isChecked = true
-            session.backupOnWifi = true
-            session.backupOnMobile = true
-        } else {
-            session.backupOnWifi = wifi
-            session.backupOnMobile = mobile
-        }
-        if (session.galleryBackupEnabled) {
-            GalleryBackupWorker.schedule(this)
-        }
-        refreshStatus()
-    }
-
-    private fun ensureNetworkEnabled() {
-        if (!session.backupOnWifi && !session.backupOnMobile) {
-            session.backupOnWifi = true
-            session.backupOnMobile = true
-            switchBackupWifi.isChecked = true
-            switchBackupMobile.isChecked = true
-        }
-    }
-
     private fun warnPartialAccessIfNeeded() {
         if (!MediaAccess.hasPartialMediaAccess(this)) return
         AlertDialog.Builder(this)
             .setTitle("Sınırlı galeri erişimi")
             .setMessage(
                 "Telefon yalnızca seçtiğiniz fotoğraflara izin veriyor. " +
-                    "Tüm galeriyi yedeklemek için izinleri \"Tüm fotoğraflar\" olarak güncelleyin. " +
-                    "(Note 15 / Android 15'te sık görülür)",
+                    "Tüm galeriyi yedeklemek için izinleri \"Tüm fotoğraflar\" olarak güncelleyin.",
             )
             .setPositiveButton("İzin ayarları") { _, _ -> MediaAccess.openAppSettings(this) }
             .setNegativeButton("Tamam", null)
@@ -256,16 +221,12 @@ class BackupSettingsActivity : AppCompatActivity() {
         val freeable = UploadedMediaDb(this).countNotFreed()
         val oem = if (OemPowerHelper.isXiaomiFamily()) " · Xiaomi/HyperOS" else ""
         val partial = if (MediaAccess.hasPartialMediaAccess(this)) " · ⚠ sınırlı galeri" else ""
+        val wifiNow = if (UploadNetworkGate.isWifi(this)) " · Wi‑Fi bağlı" else " · Wi‑Fi bekleniyor"
         backupStatus.text =
-            "Durum: $on · $net · İşlenen: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
+            "Durum: $on · $net$wifiNow · İşlenen: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
                 "Galeri → TR Photos · Klasörler → TR Backup / ${session.deviceName}"
-        networkHint.text = when {
-            session.backupOnWifi && session.backupOnMobile ->
-                "Wi‑Fi ve mobil veri açık — çoğu kullanıcı için önerilen ayar."
-            session.backupOnMobile -> "Yalnız mobil veri — Wi‑Fi'de yedekleme bekler."
-            session.backupOnWifi -> "Yalnız Wi‑Fi — mobil veride yedekleme yapılmaz."
-            else -> "Ağ kapalı — yedekleme çalışmaz."
-        }
+        networkHint.text =
+            "Yedekleme yalnız Wi‑Fi üzerinden yapılır. Mobil veri kullanılmaz; Wi‑Fi gelince kaldığı yerden devam eder."
     }
 
     private fun mediaPermissions(): Array<String> = MediaAccess.mediaPermissionsForRequest()
@@ -283,4 +244,3 @@ class BackupSettingsActivity : AppCompatActivity() {
         permissionLauncher.launch(mediaPermissions())
     }
 }
-

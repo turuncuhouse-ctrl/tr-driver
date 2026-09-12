@@ -55,17 +55,22 @@ object GalleryBackupEngine {
             BackupStatusWidget.refreshAll(app)
             return GalleryBackupBatchResult(morePending = false, scheduleContinue = false)
         }
-        if (!session.backupOnWifi && !session.backupOnMobile) {
+        if (!UploadNetworkGate.isWifi(app)) {
             session.updateBackupProgress(
                 active = false,
                 currentFile = "",
                 doneCount = session.backupDoneCount,
-                pendingCount = session.backupPendingCount,
-                message = "Yedek: ağ kapalı — Wi‑Fi veya mobil veriyi açın",
+                pendingCount = session.backupPendingCount.coerceAtLeast(1),
+                message = "Wi‑Fi bekleniyor (mobil veri ile yedekleme kapalı)",
                 clearFileBytes = true,
             )
             BackupStatusWidget.refreshAll(app)
-            return GalleryBackupBatchResult(morePending = false, scheduleContinue = false)
+            return GalleryBackupBatchResult(
+                morePending = true,
+                scheduleContinue = true,
+                continueDelaySec = 30L,
+                message = "Wi‑Fi bekleniyor",
+            )
         }
 
         val db = UploadedMediaDb(app)

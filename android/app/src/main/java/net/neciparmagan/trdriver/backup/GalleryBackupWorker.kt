@@ -1,8 +1,6 @@
 package net.neciparmagan.trdriver.backup
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -14,7 +12,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
-import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadNetworkGate
 import net.neciparmagan.trdriver.widget.BackupStatusWidget
@@ -30,9 +27,6 @@ class GalleryBackupWorker(
         if (!session.isLoggedIn || !session.galleryBackupEnabled) {
             session.clearBackupProgress()
             BackupStatusWidget.refreshAll(applicationContext)
-            return Result.success()
-        }
-        if (!session.backupOnWifi && !session.backupOnMobile) {
             return Result.success()
         }
 
@@ -81,12 +75,7 @@ class GalleryBackupWorker(
         const val UNIQUE_CONTINUE = "trdriver_gallery_continue"
 
         private fun continueDelaySeconds(context: Context, session: SessionStore): Long {
-            if (session.backupOnMobile) return 2L
-            val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                ?: return 1L
-            val network = cm.activeNetwork ?: return 1L
-            val caps = cm.getNetworkCapabilities(network) ?: return 1L
-            return if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) 1L else 2L
+            return if (UploadNetworkGate.isWifi(context)) 2L else 30L
         }
 
         fun schedule(context: Context) {
@@ -100,7 +89,6 @@ class GalleryBackupWorker(
                 BackupStatusWidget.refreshAll(context)
                 return
             }
-            if (!session.backupOnWifi && !session.backupOnMobile) return
             val constraints = constraints(session)
             val periodic = PeriodicWorkRequestBuilder<GalleryBackupWorker>(30, TimeUnit.MINUTES)
                 .setConstraints(constraints)
@@ -120,7 +108,6 @@ class GalleryBackupWorker(
             if (!session.galleryBackupEnabled) {
                 session.galleryBackupEnabled = true
             }
-            ensureNetwork(session)
             session.updateBackupProgress(
                 active = true,
                 currentFile = "",
@@ -140,7 +127,6 @@ class GalleryBackupWorker(
         fun scheduleContinue(context: Context, delaySeconds: Long = 1) {
             val session = SessionStore(context)
             if (!session.galleryBackupEnabled || !session.isLoggedIn) return
-            if (!session.backupOnWifi && !session.backupOnMobile) return
             val builder = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
                 .setConstraints(constraints(session))
                 .setInitialDelay(delaySeconds.coerceAtLeast(0), TimeUnit.SECONDS)
@@ -164,11 +150,5 @@ class GalleryBackupWorker(
             .setRequiredNetworkType(UploadNetworkGate.workManagerNetworkType(session))
             .build()
 
-        private fun ensureNetwork(session: SessionStore) {
-            if (!session.backupOnWifi && !session.backupOnMobile) {
-                session.backupOnWifi = true
-                session.backupOnMobile = true
-            }
-        }
     }
 }

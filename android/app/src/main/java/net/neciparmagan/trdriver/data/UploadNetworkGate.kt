@@ -14,7 +14,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
-/** Unified Wi‑Fi / mobile policy for gallery backup, intake, and manual uploads. */
+/**
+ * Gallery backup and cloud uploads run only on Wi‑Fi / Ethernet.
+ * Mobile (cellular) data is never used for uploads.
+ */
 object UploadNetworkGate {
     private const val VALIDATED_FALLBACK_MS = 18_000L
 
@@ -43,7 +46,7 @@ object UploadNetworkGate {
 
     fun allowsUploadNow(context: Context, session: SessionStore, fileBytes: Long): Boolean {
         if (!hasInternet(context)) return false
-        return networkAllowed(context, session)
+        return isWifi(context)
     }
 
     suspend fun awaitUploadAllowed(
@@ -57,7 +60,7 @@ object UploadNetworkGate {
         val started = SystemClock.elapsedRealtime()
         withTimeoutOrNull(timeoutMs) {
             while (!allowsUploadNow(context, session, fileBytes)) {
-                awaitMatchingNetwork(context, session, started)
+                awaitWifiNetwork(context, started)
                 delay(500)
             }
         } ?: throw UploadNetworkBlockedException(reason)
@@ -65,41 +68,26 @@ object UploadNetworkGate {
 
     fun blockReason(context: Context, session: SessionStore, fileBytes: Long): String {
         if (!hasInternet(context)) return "İnternet bağlantısı yok"
-        if (!session.backupOnWifi && !session.backupOnMobile) {
-            return "Yedekleme ağı kapalı (Wi‑Fi ve mobil kapalı)"
+        if (isCellular(context) && !isWifi(context)) {
+            return "Wi‑Fi bekleniyor (mobil veri ile yedekleme kapalı)"
         }
-        if (isWifi(context) && !session.backupOnWifi) {
-            return "Wi‑Fi yedekleme kapalı (ayarlardan açın)"
-        }
-        if (isCellular(context) && !isWifi(context) && !session.backupOnMobile) {
-            return "Mobil veri yedekleme kapalı (ayarlardan açın)"
-        }
+        if (!isWifi(context)) return "Wi‑Fi bekleniyor"
         return "Ağ uygun değil"
     }
 
-    fun workManagerNetworkType(session: SessionStore): NetworkType {
-        return when {
-            session.backupOnWifi && session.backupOnMobile -> NetworkType.CONNECTED
-            session.backupOnWifi && !session.backupOnMobile -> NetworkType.UNMETERED
-            !session.backupOnWifi && session.backupOnMobile -> NetworkType.CONNECTED
-            else -> NetworkType.CONNECTED
-        }
-    }
+    fun workManagerNetworkType(session: SessionStore): NetworkType = NetworkType.UNMETERED
 
-    fun networkPolicyLabel(session: SessionStore): String {
-        return when {
-            session.backupOnWifi && session.backupOnMobile -> "Wi‑Fi + mobil veri"
-            session.backupOnWifi -> "yalnız Wi‑Fi"
-            session.backupOnMobile -> "yalnız mobil veri"
-            else -> "ağ kapalı"
-        }
-    }
+    fun networkPolicyLabel(session: SessionStore): String = "yalnız Wi‑Fi (mobil veri yok)"
 
     fun bindUploadNetwork(context: Context): Network? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
         val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return null
         val network = cm.activeNetwork ?: return null
+        val caps = cm.getNetworkCapabilities(network) ?: return null
+        val wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        if (!wifi) return null
         runCatching { cm.bindProcessToNetwork(network) }
         return network
     }
@@ -109,13 +97,6 @@ object UploadNetworkGate {
         val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return
         runCatching { cm.bindProcessToNetwork(null) }
-    }
-
-    private fun networkAllowed(context: Context, session: SessionStore): Boolean {
-        if (!session.backupOnWifi && !session.backupOnMobile) return false
-        if (isWifi(context)) return session.backupOnWifi
-        if (isCellular(context)) return session.backupOnMobile
-        return session.backupOnWifi || session.backupOnMobile
     }
 
     private fun hasUsableInternet(context: Context, waitStartedMs: Long): Boolean {
@@ -131,28 +112,24 @@ object UploadNetworkGate {
         return cm.getNetworkCapabilities(network)
     }
 
-    private suspend fun awaitMatchingNetwork(context: Context, session: SessionStore, startedMs: Long) {
+    private suspend fun awaitWifiNetwork(context: Context, startedMs: Long) {
         val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return
-        if (allowsUploadNow(context, session, -1L)) return
+        if (isWifi(context) && hasUsableInternet(context, startedMs)) return
         suspendCancellableCoroutine { cont ->
             val done = AtomicBoolean(false)
             val request = NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .apply {
-                    if (session.backupOnWifi && !session.backupOnMobile) {
-                        addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                        addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
-                    }
-                }
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
                 .build()
             val callback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    tryResume(context, session, startedMs, cm, this, done, cont)
+                    tryResume(context, startedMs, cm, this, done, cont)
                 }
 
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                    tryResume(context, session, startedMs, cm, this, done, cont)
+                    tryResume(context, startedMs, cm, this, done, cont)
                 }
             }
             try {
@@ -164,20 +141,19 @@ object UploadNetworkGate {
             cont.invokeOnCancellation {
                 runCatching { cm.unregisterNetworkCallback(callback) }
             }
-            tryResume(context, session, startedMs, cm, callback, done, cont)
+            tryResume(context, startedMs, cm, callback, done, cont)
         }
     }
 
     private fun tryResume(
         context: Context,
-        session: SessionStore,
         startedMs: Long,
         cm: ConnectivityManager,
         callback: ConnectivityManager.NetworkCallback,
         done: AtomicBoolean,
         cont: kotlinx.coroutines.CancellableContinuation<Unit>,
     ) {
-        if (hasUsableInternet(context, startedMs) && networkAllowed(context, session) &&
+        if (isWifi(context) && hasUsableInternet(context, startedMs) &&
             done.compareAndSet(false, true)
         ) {
             runCatching { cm.unregisterNetworkCallback(callback) }
