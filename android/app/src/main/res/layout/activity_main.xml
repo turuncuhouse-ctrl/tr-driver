@@ -218,7 +218,7 @@
                 android:minWidth="0dp"
                 android:paddingHorizontal="10dp"
                 android:backgroundTint="#E8F2FC"
-                android:text="Galeri"
+                android:text="TR Galeri"
                 android:textColor="@color/tr_blue"
                 android:textStyle="bold"
                 android:textAllCaps="false" />

@@ -171,7 +171,10 @@ object GalleryBackupEngine {
                         onNotification?.invoke("Ağ değişti ($attempt) · ${item.displayName}")
                     },
                 )
-                db.markUploaded(item.mediaKey, entry.id, item.sizeBytes, item.uri)
+                if (entry.id.isNotBlank() && item.mediaKey.isNotBlank()) {
+                    val size = item.sizeBytes.coerceAtLeast(1L)
+                    db.markUploaded(item.mediaKey, entry.id, size, item.uri)
+                }
                 alreadyDone += 1
                 pendingLeft -= 1
                 session.updateBackupProgress(

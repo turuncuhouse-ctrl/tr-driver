@@ -175,6 +175,14 @@ class PhotosLibraryActivity : AppCompatActivity() {
         zoomMonth = findViewById(R.id.zoomMonth)
         zoomYear = findViewById(R.id.zoomYear)
 
+        findViewById<Button>(R.id.btnOpenDrive).setOnClickListener {
+            startActivity(
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+            )
+        }
+
         pickMode = intent?.action == Intent.ACTION_PICK ||
             intent?.action == Intent.ACTION_GET_CONTENT
         launchedAsGalleryApp = !pickMode && (
@@ -550,7 +558,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             menu.add(0, 1, 0, "Yer aç (yedeklenenler)")
             menu.add(0, 2, 1, "Yedek ayarları")
             menu.add(0, 3, 2, "Şimdi yedekle")
-            menu.add(0, 4, 3, "TR Driver dosyaları")
+            menu.add(0, 4, 3, "TR Drive dosyaları")
             menu.add(0, 5, 4, "Seçim modu")
             menu.add(0, 6, 5, "Ana ekrana TR Galeri ekle")
             setOnMenuItemClickListener { item ->
@@ -565,7 +573,11 @@ class PhotosLibraryActivity : AppCompatActivity() {
                             Toast.makeText(this@PhotosLibraryActivity, "Yedekleme başlatıldı", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    4 -> startActivity(Intent(this@PhotosLibraryActivity, MainActivity::class.java))
+                    4 -> startActivity(
+                        Intent(this@PhotosLibraryActivity, MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        },
+                    )
                     5 -> if (selectionMode) exitSelection() else enterSelection()
                     6 -> offerGalleryHomeShortcut()
                 }
@@ -1149,7 +1161,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
                     for (item in items) {
                         val parent = api.ensurePhotosAlbumFolder(item)
                         db.enqueue(
-                            source = "gallery",
+                            source = "gallery:${item.mediaKey}",
                             parentId = parent,
                             localUri = item.uri.toString(),
                             displayName = item.displayName,
@@ -1347,13 +1359,18 @@ class PhotosLibraryActivity : AppCompatActivity() {
             Toast.makeText(this, "Seçili öğe yok", Toast.LENGTH_SHORT).show()
             return
         }
+        val notBackedUp = localItems.count { it.mediaKey !in uploadedKeys }
         val msg = buildString {
             if (localItems.isNotEmpty()) append("${localItems.size} yerel dosya silinecek")
+            if (notBackedUp > 0) {
+                append("\n⚠ $notBackedUp dosya henüz yedeklenmemiş — bulutta kopyası olmayabilir")
+            }
             if (cloudIds.isNotEmpty()) {
                 if (isNotEmpty()) append("\n")
                 append("${cloudIds.size} bulut dosyası sunucudan silinecek")
             }
             append("\n\nBu işlem geri alınamaz.")
+            append("\n\nNot: “Yer aç” yalnızca yedeklenenleri siler; bu Sil düğmesi seçiminizi siler.")
         }
         AlertDialog.Builder(this)
             .setTitle("Silinsin mi?")

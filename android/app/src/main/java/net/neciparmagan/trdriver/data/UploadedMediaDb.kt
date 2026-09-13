@@ -64,6 +64,7 @@ class UploadedMediaDb(context: Context) :
     }
 
     fun markUploaded(mediaKey: String, remoteId: String, sizeBytes: Long, localUri: Uri? = null) {
+        if (mediaKey.isBlank() || remoteId.isBlank()) return
         writableDatabase.execSQL(
             """
             INSERT OR REPLACE INTO uploaded_media(media_key, remote_id, size_bytes, uploaded_at, local_uri, freed_at)
@@ -72,7 +73,7 @@ class UploadedMediaDb(context: Context) :
             arrayOf(
                 mediaKey,
                 remoteId,
-                sizeBytes,
+                sizeBytes.coerceAtLeast(0L),
                 System.currentTimeMillis(),
                 localUri?.toString().orEmpty(),
             ),

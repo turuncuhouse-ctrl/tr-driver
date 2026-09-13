@@ -1,7 +1,7 @@
 ﻿{
   "minSupportedCode": 1,
-  "versionCode": 34,
-  "versionName": "0.8.16",
+  "versionCode": 35,
+  "versionName": "0.8.17",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "Yedek sadece Wi-Fi; galeri mobil veride; okunakli butonlar; album onizleme; izin/bootstrap; arka plan keep-alive; otomatik guncelleme indirme"
+  "releaseNotes": "Yer ac guvenligi: sadece yedekli + boyut eslesen + sunucu dogrulanan silinir; Galeri-Drive gecis; yedeksiz silme uyarisi"
 }

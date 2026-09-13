@@ -68,7 +68,13 @@
         android:id="@+id/btnOpenPhotos"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="TR Photos’u aç" />
+        android:text="TR Galeri’yi aç" />
+
+    <Button
+        android:id="@+id/btnOpenDrive"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="TR Drive’ı aç" />
 
     <Button
         android:id="@+id/btnCloseFreeUp"

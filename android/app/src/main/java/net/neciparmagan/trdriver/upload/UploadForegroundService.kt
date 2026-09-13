@@ -89,7 +89,7 @@ class UploadForegroundService : Service() {
                 UploadConflictPolicy.valueOf(row.conflictPolicy.uppercase())
             }.getOrDefault(UploadConflictPolicy.ASK)
             try {
-                UploadExecutor.uploadUri(
+                val entry = UploadExecutor.uploadUri(
                     context = this,
                     api = api,
                     session = session,
@@ -111,6 +111,26 @@ class UploadForegroundService : Service() {
                     },
                     onConflictAsk = UploadConflictUi.askHandler ?: { UploadConflictPolicy.RENAME },
                 )
+                // Record successful gallery uploads so Yer aç never misses them.
+                if (row.source.startsWith("gallery:") || row.source == "gallery") {
+                    val mediaKey = if (row.source.startsWith("gallery:")) {
+                        row.source.removePrefix("gallery:")
+                    } else {
+                        row.localUri
+                    }
+                    val localUri = Uri.parse(row.localUri)
+                    val size = net.neciparmagan.trdriver.data.MediaAccess
+                        .resolveContentLength(this, localUri, -1L)
+                        .coerceAtLeast(entry.sizeBytes)
+                    if (mediaKey.isNotBlank() && entry.id.isNotBlank() && size > 0L) {
+                        net.neciparmagan.trdriver.data.UploadedMediaDb(this).markUploaded(
+                            mediaKey = mediaKey,
+                            remoteId = entry.id,
+                            sizeBytes = size,
+                            localUri = localUri,
+                        )
+                    }
+                }
                 db.markDone(row.id)
                 done++
             } catch (e: SkipUploadException) {

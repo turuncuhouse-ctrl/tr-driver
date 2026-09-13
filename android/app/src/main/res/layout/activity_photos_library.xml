@@ -56,6 +56,19 @@
             android:textStyle="bold" />
 
         <Button
+            android:id="@+id/btnOpenDrive"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:minWidth="0dp"
+            android:paddingHorizontal="10dp"
+            android:backgroundTint="@color/tr_blue"
+            android:text="Drive"
+            android:textAllCaps="false"
+            android:textColor="@android:color/white"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <Button
             android:id="@+id/btnPhotosMore"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
