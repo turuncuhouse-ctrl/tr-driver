@@ -17,6 +17,7 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 import net.neciparmagan.trdriver.backup.CommsBackupEngine
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
 import net.neciparmagan.trdriver.backup.OemPowerHelper
+import net.neciparmagan.trdriver.backup.TrKeepAliveService
 import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadNetworkGate
@@ -124,6 +125,7 @@ class BackupSettingsActivity : AppCompatActivity() {
                 if (MediaAccess.hasMediaAccess(this)) {
                     session.galleryBackupEnabled = true
                     GalleryBackupWorker.schedule(this)
+                    TrKeepAliveService.startIfNeeded(this)
                     OemPowerHelper.maybePromptForReliableBackup(this)
                     warnPartialAccessIfNeeded()
                     refreshStatus()
@@ -134,6 +136,7 @@ class BackupSettingsActivity : AppCompatActivity() {
             } else {
                 session.galleryBackupEnabled = false
                 GalleryBackupWorker.schedule(this)
+                if (!session.anyBackupEnabled()) TrKeepAliveService.stop(this)
                 refreshStatus()
             }
         }
@@ -143,6 +146,7 @@ class BackupSettingsActivity : AppCompatActivity() {
                 if (CommsBackupEngine.hasSmsPermission(this)) {
                     session.smsBackupEnabled = true
                     GalleryBackupWorker.schedule(this)
+                    TrKeepAliveService.startIfNeeded(this)
                     refreshStatus()
                 } else {
                     switchSms.isChecked = false
@@ -151,6 +155,7 @@ class BackupSettingsActivity : AppCompatActivity() {
             } else {
                 session.smsBackupEnabled = false
                 GalleryBackupWorker.schedule(this)
+                if (!session.anyBackupEnabled()) TrKeepAliveService.stop(this)
                 refreshStatus()
             }
         }
@@ -160,6 +165,7 @@ class BackupSettingsActivity : AppCompatActivity() {
                 if (CommsBackupEngine.hasCallLogPermission(this)) {
                     session.callLogBackupEnabled = true
                     GalleryBackupWorker.schedule(this)
+                    TrKeepAliveService.startIfNeeded(this)
                     refreshStatus()
                 } else {
                     switchCallLog.isChecked = false
@@ -168,6 +174,7 @@ class BackupSettingsActivity : AppCompatActivity() {
             } else {
                 session.callLogBackupEnabled = false
                 GalleryBackupWorker.schedule(this)
+                if (!session.anyBackupEnabled()) TrKeepAliveService.stop(this)
                 refreshStatus()
             }
         }

@@ -133,6 +133,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             if (result.values.any { it }) reload()
             else Toast.makeText(this, "Galeri izni gerekli", Toast.LENGTH_LONG).show()
+            finishBootstrapAfterPermissions()
         }
 
     private val deleteRequestLauncher =
@@ -198,6 +199,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
         applyTimelineLayout()
         timelineAdapter.updateAuth(session.token.orEmpty(), session.serverUrl)
+        albumAdapter.updateAuth(session.token.orEmpty(), session.serverUrl)
         grid.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 updateStickyHeader()
@@ -289,8 +291,16 @@ class PhotosLibraryActivity : AppCompatActivity() {
             }
         })
 
-        if (!hasMediaPermission()) permissionLauncher.launch(mediaPermissions())
-        else if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
+        if (!AppBootstrap.isBootstrapped(this)) {
+            val needed = AppBootstrap.neededPermissions(this)
+            if (needed.isNotEmpty()) {
+                permissionLauncher.launch(needed)
+            } else {
+                finishBootstrapAfterPermissions()
+            }
+        } else if (!hasMediaPermission()) {
+            permissionLauncher.launch(mediaPermissions())
+        } else if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
             val uri = intent.data!!
             val name = intent.getStringExtra(Intent.EXTRA_TITLE)
                 ?: uri.lastPathSegment
@@ -313,8 +323,23 @@ class PhotosLibraryActivity : AppCompatActivity() {
         // Keep session / Wi‑Fi backup alive while gallery is used.
         if (session.isLoggedIn && session.galleryBackupEnabled) {
             net.neciparmagan.trdriver.backup.GalleryBackupWorker.schedule(this)
+            net.neciparmagan.trdriver.backup.TrKeepAliveService.startIfNeeded(this)
         }
         refreshGallerySubtitle()
+    }
+
+    private fun finishBootstrapAfterPermissions() {
+        if (!AppBootstrap.isBootstrapped(this)) {
+            AppBootstrap.maybePinGalleryShortcut(this)
+            if (!AppBootstrap.requestGalleryRole(this)) {
+                AppBootstrap.maybeOfferDefaultGallery(this)
+            }
+            AppBootstrap.markBootstrapped(this)
+        }
+        if (intent?.action == Intent.ACTION_VIEW && intent.data != null && hasMediaPermission()) {
+            // handled only on cold start path; reload timeline
+        }
+        selectTab(Tab.PHOTOS)
     }
 
     private fun refreshGallerySubtitle() {
@@ -415,7 +440,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun styleFilters() {
         fun style(btn: Button, active: Boolean) {
             btn.setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
-            btn.alpha = if (active) 1f else 0.7f
+            btn.setTextColor(
+                ContextCompat.getColor(this, if (active) R.color.tr_blue else R.color.tr_ink),
+            )
+            btn.alpha = 1f
         }
         style(filterAll, mediaFilter == MediaFilter.ALL)
         style(filterPhotos, mediaFilter == MediaFilter.PHOTOS)
@@ -628,14 +656,52 @@ class PhotosLibraryActivity : AppCompatActivity() {
         title.text = album.name
         subtitle.text = "${album.count} öğe · tarihe göre"
         progress.visibility = View.VISIBLE
+        hideEmpty()
         grid.adapter = timelineAdapter
-        (grid.layoutManager as GridLayoutManager).spanCount = 3
+        applyTimelineLayout()
         lifecycleScope.launch {
-            allLocal = withContext(Dispatchers.IO) {
+            var items = withContext(Dispatchers.IO) {
                 MediaCatalog.scanAlbum(this@PhotosLibraryActivity, album.id)
             }
+            // Fallback: some OEMs return empty bucket queries — use full scan filter.
+            if (items.isEmpty() && album.count > 0) {
+                items = withContext(Dispatchers.IO) {
+                    MediaCatalog.scan(this@PhotosLibraryActivity, 4000)
+                        .filter { it.albumId == album.id }
+                }
+            }
+            if (items.isEmpty() && album.coverUri != null) {
+                // At least show the cover item so the album is never a blank black grid.
+                val cover = album.coverUri
+                items = withContext(Dispatchers.IO) {
+                    MediaCatalog.scan(this@PhotosLibraryActivity, 4000)
+                        .filter { it.uri == cover || it.albumName == album.name }
+                        .ifEmpty {
+                            listOf(
+                                LocalMedia(
+                                    mediaKey = cover.toString(),
+                                    uri = cover,
+                                    displayName = album.name,
+                                    mimeType = contentResolver.getType(cover) ?: "image/jpeg",
+                                    sizeBytes = 0L,
+                                    dateTakenMs = System.currentTimeMillis(),
+                                    isVideo = (contentResolver.getType(cover) ?: "").startsWith("video/"),
+                                    albumName = album.name,
+                                    albumId = album.id,
+                                ),
+                            )
+                        }
+                }
+            }
+            allLocal = items
             applyFilter()
             progress.visibility = View.GONE
+            if (items.isEmpty()) {
+                showEmpty(
+                    "Albüm boş görünüyor",
+                    "Bu klasörde medya okunamadı. Galeri iznini tam verin veya Wi‑Fi yedek ile eşitlemeyi bekleyin.",
+                )
+            }
         }
     }
 
@@ -677,8 +743,20 @@ class PhotosLibraryActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val folders = withContext(Dispatchers.IO) { api.listCloudPhotoAlbums() }
-                allAlbums = folders.map {
-                    MediaAlbum(id = "cloud:${it.id}", name = it.name, count = 0, coverUri = null)
+                allAlbums = withContext(Dispatchers.IO) {
+                    folders.map { folder ->
+                        val kids = runCatching { api.listFiles(folder.id) }.getOrDefault(emptyList())
+                        val mediaKids = kids.filter { it.kind != "folder" }
+                        val cover = mediaKids.firstOrNull { !MainActivity.resolveMime(it).startsWith("video/") }
+                            ?: mediaKids.firstOrNull()
+                        MediaAlbum(
+                            id = "cloud:${folder.id}",
+                            name = folder.name,
+                            count = mediaKids.size,
+                            coverUri = null,
+                            coverRemoteId = cover?.id,
+                        )
+                    }
                 }
                 applyFilter()
             } catch (e: Exception) {
@@ -1529,6 +1607,13 @@ class PhotosLibraryActivity : AppCompatActivity() {
         private val onOpen: (MediaAlbum) -> Unit,
     ) : RecyclerView.Adapter<AlbumGridAdapter.VH>() {
         private var items: List<MediaAlbum> = emptyList()
+        private var authToken: String = ""
+        private var serverUrl: String = ""
+
+        fun updateAuth(token: String, server: String) {
+            authToken = token
+            serverUrl = server.trimEnd('/')
+        }
 
         fun submit(next: List<MediaAlbum>) {
             val old = items
@@ -1538,7 +1623,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
                 override fun getNewListSize() = next.size
                 override fun areItemsTheSame(o: Int, n: Int) = old[o].id == next[n].id
                 override fun areContentsTheSame(o: Int, n: Int) =
-                    old[o].name == next[n].name && old[o].count == next[n].count
+                    old[o].name == next[n].name &&
+                        old[o].count == next[n].count &&
+                        old[o].coverUri == next[n].coverUri &&
+                        old[o].coverRemoteId == next[n].coverRemoteId
             }).dispatchUpdatesTo(this)
         }
 
@@ -1553,13 +1641,25 @@ class PhotosLibraryActivity : AppCompatActivity() {
             val album = items[position]
             holder.name.text = album.name
             holder.count.text = if (album.count > 0) "${album.count} öğe" else "Albüm"
-            holder.cover.clearColorFilter()
-            holder.cover.setBackgroundColor(Color.parseColor("#0B5CAD"))
+            holder.cover.setBackgroundColor(Color.parseColor("#DCE6F5"))
             val cover = album.coverUri
-            if (cover != null) {
-                MediaThumbLoader.loadLocal(holder.cover, cover, "album:${album.id}")
-            } else {
-                holder.cover.setImageDrawable(null)
+            val remoteId = album.coverRemoteId
+            when {
+                cover != null -> MediaThumbLoader.loadLocal(holder.cover, cover, "album:${album.id}")
+                !remoteId.isNullOrBlank() && serverUrl.isNotBlank() -> {
+                    val url = "$serverUrl/api/files/download/$remoteId?inline=1"
+                    MediaThumbLoader.loadRemote(
+                        holder.cover,
+                        url,
+                        authToken,
+                        "album-cloud:$remoteId",
+                        isVideo = false,
+                    )
+                }
+                else -> {
+                    MediaThumbLoader.cancelLoad(holder.cover)
+                    holder.cover.setImageDrawable(null)
+                }
             }
             holder.itemView.setOnClickListener { onOpen(album) }
         }

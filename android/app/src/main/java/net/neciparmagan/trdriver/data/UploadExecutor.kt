@@ -24,7 +24,8 @@ object UploadExecutor {
         onConflictAsk: (suspend (existingName: String) -> UploadConflictPolicy)? = null,
     ): FileEntry = withContext(Dispatchers.IO) {
         val resolvedSize = MediaAccess.resolveContentLength(context, uri, sizeHint)
-        UploadNetworkGate.awaitUploadAllowed(context, session, resolvedSize)
+        // Manual / in-app uploads: mobile data OK
+        UploadNetworkGate.awaitUploadAllowed(context, session, resolvedSize, wifiOnly = false)
         val policy = resolveConflictPolicy(
             api = api,
             parentId = parentId,
@@ -33,16 +34,16 @@ object UploadExecutor {
             onConflictAsk = onConflictAsk,
         )
         if (policy == UploadConflictPolicy.SKIP) throw SkipUploadException()
-        val network = UploadNetworkGate.bindUploadNetwork(context)
         try {
             val attempts = retryAttemptsForSize(resolvedSize)
             UploadRetry.run(
                 context = context,
                 attempts = attempts,
                 fileBytes = resolvedSize,
+                wifiOnly = false,
                 onRetry = onRetry,
             ) {
-                UploadNetworkGate.awaitUploadAllowed(context, session, resolvedSize)
+                UploadNetworkGate.awaitUploadAllowed(context, session, resolvedSize, wifiOnly = false)
                 api.upload(
                     parentId = parentId,
                     uri = uri,
@@ -68,10 +69,11 @@ object UploadExecutor {
         onRetry: ((Int, Throwable) -> Unit)? = null,
     ): FileEntry = withContext(Dispatchers.IO) {
         val size = MediaAccess.resolveContentLength(context, media.uri, media.sizeBytes)
-        UploadNetworkGate.awaitUploadAllowed(context, session, size)
+        // Gallery backup: Wi‑Fi only
+        UploadNetworkGate.awaitUploadAllowed(context, session, size, wifiOnly = true)
         val policy = resolveConflictPolicy(api, parentId, media.displayName, conflict, null)
         if (policy == UploadConflictPolicy.SKIP) throw SkipUploadException()
-        val network = UploadNetworkGate.bindUploadNetwork(context)
+        val network = UploadNetworkGate.bindUploadNetwork(context, wifiOnly = true)
         val previousBackupMode = UploadBandwidthLimiter.backupMode
         UploadBandwidthLimiter.backupMode = true
         try {
@@ -79,9 +81,10 @@ object UploadExecutor {
                 context = context,
                 attempts = retryAttemptsForSize(size),
                 fileBytes = size,
+                wifiOnly = true,
                 onRetry = onRetry,
             ) {
-                UploadNetworkGate.awaitUploadAllowed(context, session, size)
+                UploadNetworkGate.awaitUploadAllowed(context, session, size, wifiOnly = true)
                 api.uploadMedia(
                     parentId = parentId,
                     media = media,

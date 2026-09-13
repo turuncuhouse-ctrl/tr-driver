@@ -13,9 +13,11 @@ class BootReceiver : BroadcastReceiver() {
         ) {
             return
         }
-        val session = SessionStore(context.applicationContext)
+        val app = context.applicationContext
+        val session = SessionStore(app)
         if (session.isLoggedIn && session.anyBackupEnabled()) {
-            GalleryBackupWorker.schedule(context.applicationContext)
+            GalleryBackupWorker.schedule(app)
+            TrKeepAliveService.startIfNeeded(app)
         }
     }
 }

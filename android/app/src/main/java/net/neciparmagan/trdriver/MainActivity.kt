@@ -425,8 +425,43 @@ class MainActivity : AppCompatActivity() {
         if (::backupChip.isInitialized) refreshBackupUi()
         refreshMiniPlayer()
         AppUpdateHelper.onMainResume(this)
+        if (intent?.getBooleanExtra("tr_install_update", false) == true) {
+            intent.removeExtra("tr_install_update")
+        }
         if (session.isLoggedIn) {
             AppUpdateHelper.check(this, force = false, silentIfCurrent = true)
+        }
+        runAppBootstrapIfNeeded()
+    }
+
+    private val bootstrapPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            AppBootstrap.maybePinGalleryShortcut(this)
+            if (!AppBootstrap.requestGalleryRole(this)) {
+                AppBootstrap.maybeOfferDefaultGallery(this)
+            }
+            AppBootstrap.markBootstrapped(this)
+            if (session.anyBackupEnabled()) {
+                net.neciparmagan.trdriver.backup.TrKeepAliveService.startIfNeeded(this)
+            }
+        }
+
+    private fun runAppBootstrapIfNeeded() {
+        if (AppBootstrap.isBootstrapped(this)) {
+            if (session.anyBackupEnabled() && session.isLoggedIn) {
+                net.neciparmagan.trdriver.backup.TrKeepAliveService.startIfNeeded(this)
+            }
+            return
+        }
+        val needed = AppBootstrap.neededPermissions(this)
+        if (needed.isNotEmpty()) {
+            bootstrapPermLauncher.launch(needed)
+        } else {
+            AppBootstrap.maybePinGalleryShortcut(this)
+            if (!AppBootstrap.requestGalleryRole(this)) {
+                AppBootstrap.maybeOfferDefaultGallery(this)
+            }
+            AppBootstrap.markBootstrapped(this)
         }
     }
 

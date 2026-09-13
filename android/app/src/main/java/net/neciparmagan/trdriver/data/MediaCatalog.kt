@@ -39,6 +39,8 @@ data class MediaAlbum(
     val count: Int,
     val coverUri: Uri?,
     val isVideoHeavy: Boolean = false,
+    /** Cloud album cover file id (download URL built at bind time). */
+    val coverRemoteId: String? = null,
 )
 
 object MediaCatalog {

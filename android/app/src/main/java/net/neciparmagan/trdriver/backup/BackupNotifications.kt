@@ -17,6 +17,7 @@ object BackupNotifications {
     const val CHANNEL_ID = "trdriver_gallery_backup"
     const val WORKER_NOTIFICATION_ID = 4101
     const val SERVICE_NOTIFICATION_ID = 4103
+    const val KEEPALIVE_NOTIFICATION_ID = 4105
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

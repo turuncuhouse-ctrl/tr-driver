@@ -110,11 +110,19 @@ class MediaPreviewActivity : AppCompatActivity() {
         }
 
         when {
-            mime.startsWith("image/") -> {
+            mime.startsWith("image/") || mime == "application/octet-stream" || mime.isBlank() -> {
                 image.visibility = View.VISIBLE
                 val req = ImageRequest.Builder(this)
                     .data(dataSource)
                     .target(image)
+                    .listener(
+                        onError = { _, _ ->
+                            findViewById<TextView>(R.id.previewAudioHint).apply {
+                                visibility = View.VISIBLE
+                                text = "Önizleme yüklenemedi.\n$displayName\n\n\"Birlikte aç\" ile deneyin."
+                            }
+                        },
+                    )
                 if (localUri == null && token.isNotBlank()) {
                     req.addHeader("Authorization", "Bearer $token")
                 }

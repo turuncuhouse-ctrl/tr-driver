@@ -1,31 +1,41 @@
 package net.neciparmagan.trdriver
 
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import net.neciparmagan.trdriver.BuildConfig
 import net.neciparmagan.trdriver.data.AndroidVersionInfo
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.SessionStore
 import java.io.File
 
+/**
+ * Auto-update: checks server, downloads APK in background, notifies for one-tap install.
+ * Fully silent install (no user tap) requires device-owner / enterprise — not available for normal installs.
+ */
 object AppUpdateHelper {
     private const val THROTTLE_MS = 12_000L
+    private const val CHANNEL_ID = "trdriver_updates"
+    private const val NOTIFY_ID = 4201
     private var lastCheckAt = 0L
     private var skippedVersionCode = 0
     private var dialogShowing = false
     private var downloading = false
-    /** After user grants unknown-sources, resume download on next MainActivity resume. */
     private var pendingDownloadInfo: AndroidVersionInfo? = null
+    private var pendingInstallFile: File? = null
 
     fun check(
         activity: MainActivity,
@@ -53,24 +63,42 @@ object AppUpdateHelper {
                     return@launch
                 }
                 if (!force && info.versionCode == skippedVersionCode) return@launch
-                showUpdateDialog(activity, api, info)
+
+                if (force) {
+                    showUpdateDialog(activity, api, info)
+                } else {
+                    // Silent auto-download; user only taps install notification.
+                    startDownload(activity, api, info, silent = true)
+                }
             } catch (e: Exception) {
                 if (force) toast(activity, "Güncelleme kontrolü başarısız: ${e.message}")
             }
         }
     }
 
-    /** Call from MainActivity.onResume so install-permission return can continue. */
     fun onMainResume(activity: MainActivity) {
-        val info = pendingDownloadInfo ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            !activity.packageManager.canRequestPackageInstalls()
-        ) {
+        val info = pendingDownloadInfo
+        if (info != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !activity.packageManager.canRequestPackageInstalls()
+            ) {
+                return
+            }
+            pendingDownloadInfo = null
+            val api = DriveApi(SessionStore(activity), activity.applicationContext)
+            startDownload(activity, api, info, silent = true)
             return
         }
-        pendingDownloadInfo = null
-        val api = DriveApi(SessionStore(activity), activity.applicationContext)
-        startDownload(activity, api, info)
+        val file = pendingInstallFile
+        if (file != null && file.exists()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !activity.packageManager.canRequestPackageInstalls()
+            ) {
+                return
+            }
+            pendingInstallFile = null
+            installApk(activity, file)
+        }
     }
 
     private fun showUpdateDialog(activity: MainActivity, api: DriveApi, info: AndroidVersionInfo) {
@@ -85,7 +113,7 @@ object AppUpdateHelper {
             )
             .setPositiveButton("Güncelle") { _, _ ->
                 dialogShowing = false
-                startDownload(activity, api, info)
+                startDownload(activity, api, info, silent = false)
             }
             .setNegativeButton("Sonra") { _, _ ->
                 skippedVersionCode = info.versionCode
@@ -95,19 +123,25 @@ object AppUpdateHelper {
             .show()
     }
 
-    private fun startDownload(activity: MainActivity, api: DriveApi, info: AndroidVersionInfo) {
+    private fun startDownload(
+        activity: MainActivity,
+        api: DriveApi,
+        info: AndroidVersionInfo,
+        silent: Boolean,
+    ) {
         if (downloading) return
         if (!ensureInstallPermission(activity, info)) return
         downloading = true
-        toast(activity, "Güncelleme indiriliyor…")
+        if (!silent) toast(activity, "Güncelleme indiriliyor…")
         activity.lifecycleScope.launch {
             try {
                 val file = withContext(Dispatchers.IO) {
                     api.downloadApkUpdate(info.downloadURL.ifBlank { info.apkPath })
                 }
-                installApk(activity, file)
+                notifyReadyToInstall(activity, file, info)
+                if (!silent) installApk(activity, file)
             } catch (e: Exception) {
-                toast(activity, "İndirme başarısız: ${e.message}")
+                if (!silent) toast(activity, "İndirme başarısız: ${e.message}")
             } finally {
                 downloading = false
             }
@@ -121,8 +155,8 @@ object AppUpdateHelper {
         AlertDialog.Builder(activity)
             .setTitle("Kurulum izni")
             .setMessage(
-                "Güncellemek için bu uygulamaya paket kurma izni verin. " +
-                    "Ayarlardan dönünce indirme otomatik devam eder.",
+                "Otomatik güncelleme için paket kurma izni gerekli. " +
+                    "Ayarlardan dönünce indirme devam eder.",
             )
             .setPositiveButton("Ayarlar") { _, _ ->
                 val intent = Intent(
@@ -136,6 +170,38 @@ object AppUpdateHelper {
             }
             .show()
         return false
+    }
+
+    private fun notifyReadyToInstall(context: Context, file: File, info: AndroidVersionInfo) {
+        pendingInstallFile = file
+        ensureUpdateChannel(context)
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("tr_install_update", true)
+        }
+        val pi = PendingIntent.getActivity(
+            context,
+            91,
+            open,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val n = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_backup)
+            .setContentTitle("TR Driver güncelleme hazır")
+            .setContentText("v${info.versionName} — kurmak için dokunun")
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(NOTIFY_ID, n)
+    }
+
+    private fun ensureUpdateChannel(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = context.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Uygulama güncellemeleri", NotificationManager.IMPORTANCE_DEFAULT),
+        )
     }
 
     private fun installApk(activity: Activity, file: File) {

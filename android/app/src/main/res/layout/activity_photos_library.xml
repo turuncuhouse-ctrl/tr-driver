@@ -44,32 +44,39 @@
 
         <Button
             android:id="@+id/btnPhotosSelect"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
             android:minWidth="0dp"
-            android:paddingHorizontal="8dp"
+            android:paddingHorizontal="10dp"
+            android:backgroundTint="#E8F2FC"
             android:text="Seç"
-            android:textSize="13sp" />
+            android:textAllCaps="false"
+            android:textColor="@color/tr_ink"
+            android:textSize="13sp"
+            android:textStyle="bold" />
 
         <Button
             android:id="@+id/btnPhotosMore"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
             android:minWidth="0dp"
-            android:paddingHorizontal="8dp"
+            android:paddingHorizontal="10dp"
+            android:backgroundTint="#E8F2FC"
             android:text="⋯"
+            android:textAllCaps="false"
+            android:textColor="@color/tr_ink"
             android:textSize="16sp" />
 
         <Button
             android:id="@+id/btnPhotosClose"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
             android:minWidth="0dp"
-            android:paddingHorizontal="8dp"
-            android:text="Kapat"
+            android:paddingHorizontal="10dp"
+            android:backgroundTint="#E8F2FC"
+            android:text="Geri"
+            android:textAllCaps="false"
+            android:textColor="@color/tr_ink"
             android:textSize="13sp" />
     </LinearLayout>
 
@@ -132,30 +139,36 @@
 
             <Button
                 android:id="@+id/filterAll"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:minWidth="0dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="Tümü"
+                android:textAllCaps="false"
+                android:textColor="@color/tr_ink"
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
             <Button
                 android:id="@+id/filterPhotos"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:minWidth="0dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="Fotoğraf"
+                android:textAllCaps="false"
+                android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
 
             <Button
                 android:id="@+id/filterVideos"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:minWidth="0dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="Video"
+                android:textAllCaps="false"
+                android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
 
             <View
@@ -166,30 +179,36 @@
 
             <Button
                 android:id="@+id/zoomDay"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:minWidth="0dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="Gün"
+                android:textAllCaps="false"
+                android:textColor="@color/tr_ink"
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
             <Button
                 android:id="@+id/zoomMonth"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:minWidth="0dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="Ay"
+                android:textAllCaps="false"
+                android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
 
             <Button
                 android:id="@+id/zoomYear"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:minWidth="0dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="Yıl"
+                android:textAllCaps="false"
+                android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
         </LinearLayout>
     </HorizontalScrollView>
@@ -274,32 +293,35 @@
 
             <Button
                 android:id="@+id/navPhotos"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="0dp"
                 android:layout_height="44dp"
                 android:layout_weight="1"
+                android:background="@android:color/transparent"
                 android:text="Fotoğraflar"
+                android:textAllCaps="false"
                 android:textColor="@color/tr_blue"
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
             <Button
                 android:id="@+id/navAlbums"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="0dp"
                 android:layout_height="44dp"
                 android:layout_weight="1"
+                android:background="@android:color/transparent"
                 android:text="Albümler"
+                android:textAllCaps="false"
                 android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
 
             <Button
                 android:id="@+id/navLibrary"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="0dp"
                 android:layout_height="44dp"
                 android:layout_weight="1"
+                android:background="@android:color/transparent"
                 android:text="Kitaplık"
+                android:textAllCaps="false"
                 android:textColor="@color/tr_ink"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -331,13 +353,13 @@
                     android:textSize="13sp"
                     android:textStyle="bold" />
 
-                <Button style="?android:attr/borderlessButtonStyle" android:id="@+id/btnSelectAll" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:text="Tümü" android:textSize="13sp" />
-                <Button style="?android:attr/borderlessButtonStyle" android:id="@+id/btnShareSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:text="Paylaş" android:textSize="13sp" />
-                <Button style="?android:attr/borderlessButtonStyle" android:id="@+id/btnUploadSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:text="Buluta" android:textSize="13sp" />
-                <Button style="?android:attr/borderlessButtonStyle" android:id="@+id/btnOpenSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:text="Aç" android:textSize="13sp" />
-                <Button style="?android:attr/borderlessButtonStyle" android:id="@+id/btnInfoSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:text="Bilgi" android:textSize="13sp" />
-                <Button style="?android:attr/borderlessButtonStyle" android:id="@+id/btnDeleteSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:text="Sil" android:textSize="13sp" />
-                <Button style="?android:attr/borderlessButtonStyle" android:id="@+id/btnCancelSelect" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:text="İptal" android:textSize="13sp" />
+                <Button android:id="@+id/btnSelectAll" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:background="@android:color/transparent" android:text="Tümü" android:textAllCaps="false" android:textColor="@color/tr_ink" android:textSize="13sp" />
+                <Button android:id="@+id/btnShareSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:background="@android:color/transparent" android:text="Paylaş" android:textAllCaps="false" android:textColor="@color/tr_ink" android:textSize="13sp" />
+                <Button android:id="@+id/btnUploadSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:background="@android:color/transparent" android:text="Buluta" android:textAllCaps="false" android:textColor="@color/tr_ink" android:textSize="13sp" />
+                <Button android:id="@+id/btnOpenSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:background="@android:color/transparent" android:text="Aç" android:textAllCaps="false" android:textColor="@color/tr_ink" android:textSize="13sp" />
+                <Button android:id="@+id/btnInfoSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:background="@android:color/transparent" android:text="Bilgi" android:textAllCaps="false" android:textColor="@color/tr_ink" android:textSize="13sp" />
+                <Button android:id="@+id/btnDeleteSelected" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:background="@android:color/transparent" android:text="Sil" android:textAllCaps="false" android:textColor="@color/tr_ink" android:textSize="13sp" />
+                <Button android:id="@+id/btnCancelSelect" android:layout_width="wrap_content" android:layout_height="44dp" android:minWidth="0dp" android:background="@android:color/transparent" android:text="İptal" android:textAllCaps="false" android:textColor="@color/tr_ink" android:textSize="13sp" />
             </LinearLayout>
         </HorizontalScrollView>
     </FrameLayout>

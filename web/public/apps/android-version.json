@@ -1,7 +1,7 @@
 ﻿{
-    "minSupportedCode":  1,
-    "versionCode":  33,
-    "versionName":  "0.8.15",
-    "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "Buton renkleri duzeltildi; SMS ve arama kaydi Wi-Fi yedegi (WhatsApp okunamaz)"
+  "minSupportedCode": 1,
+  "versionCode": 34,
+  "versionName": "0.8.16",
+  "apkPath": "/download/TRDriver.apk",
+  "releaseNotes": "Yedek sadece Wi-Fi; galeri mobil veride; okunakli butonlar; album onizleme; izin/bootstrap; arka plan keep-alive; otomatik guncelleme indirme"
 }

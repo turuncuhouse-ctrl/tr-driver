@@ -11,9 +11,9 @@ object UploadBandwidthLimiter {
     @Volatile
     var bytesPerSecond: Long = 640L * 1024L
 
-    /** Slightly slower for automatic gallery backup. */
+    /** Slightly slower for automatic gallery backup (~0.4 MB/s). */
     @Volatile
-    var backupBytesPerSecond: Long = 480L * 1024L
+    var backupBytesPerSecond: Long = 400L * 1024L
 
     @Volatile
     var backupMode: Boolean = false

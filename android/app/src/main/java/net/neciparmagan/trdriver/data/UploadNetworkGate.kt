@@ -15,8 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 /**
- * Gallery backup and cloud uploads run only on Wi‑Fi / Ethernet.
- * Mobile (cellular) data is never used for uploads.
+ * Network policy:
+ * - App browse / download / manual upload: any internet (Wi‑Fi or mobile).
+ * - Automatic backup (gallery/SMS/calls): Wi‑Fi / Ethernet only.
  */
 object UploadNetworkGate {
     private const val VALIDATED_FALLBACK_MS = 18_000L
@@ -44,9 +45,17 @@ object UploadNetworkGate {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    fun allowsUploadNow(context: Context, session: SessionStore, fileBytes: Long): Boolean {
+    /**
+     * @param wifiOnly true for automatic backup; false for normal app usage uploads.
+     */
+    fun allowsUploadNow(
+        context: Context,
+        session: SessionStore,
+        fileBytes: Long,
+        wifiOnly: Boolean = false,
+    ): Boolean {
         if (!hasInternet(context)) return false
-        return isWifi(context)
+        return if (wifiOnly) isWifi(context) else true
     }
 
     suspend fun awaitUploadAllowed(
@@ -54,32 +63,56 @@ object UploadNetworkGate {
         session: SessionStore,
         fileBytes: Long,
         timeoutMs: Long = 120_000L,
+        wifiOnly: Boolean = false,
     ) {
-        if (allowsUploadNow(context, session, fileBytes)) return
-        val reason = blockReason(context, session, fileBytes)
+        if (allowsUploadNow(context, session, fileBytes, wifiOnly)) return
+        val reason = blockReason(context, session, fileBytes, wifiOnly)
+        if (!wifiOnly) {
+            // Mobile / any network: just wait briefly for general internet
+            val started = SystemClock.elapsedRealtime()
+            withTimeoutOrNull(timeoutMs) {
+                while (!hasInternet(context)) {
+                    delay(500)
+                    if (SystemClock.elapsedRealtime() - started > timeoutMs) break
+                }
+            } ?: throw UploadNetworkBlockedException(reason)
+            if (!hasInternet(context)) throw UploadNetworkBlockedException(reason)
+            return
+        }
         val started = SystemClock.elapsedRealtime()
         withTimeoutOrNull(timeoutMs) {
-            while (!allowsUploadNow(context, session, fileBytes)) {
+            while (!allowsUploadNow(context, session, fileBytes, wifiOnly = true)) {
                 awaitWifiNetwork(context, started)
                 delay(500)
             }
         } ?: throw UploadNetworkBlockedException(reason)
     }
 
-    fun blockReason(context: Context, session: SessionStore, fileBytes: Long): String {
+    fun blockReason(
+        context: Context,
+        session: SessionStore,
+        fileBytes: Long,
+        wifiOnly: Boolean = false,
+    ): String {
         if (!hasInternet(context)) return "İnternet bağlantısı yok"
-        if (isCellular(context) && !isWifi(context)) {
-            return "Wi‑Fi bekleniyor (mobil veri ile yedekleme kapalı)"
+        if (wifiOnly) {
+            if (isCellular(context) && !isWifi(context)) {
+                return "Yedekleme için Wi‑Fi gerekli (mobil veri ile yedek kapalı)"
+            }
+            if (!isWifi(context)) return "Yedekleme için Wi‑Fi bekleniyor"
         }
-        if (!isWifi(context)) return "Wi‑Fi bekleniyor"
         return "Ağ uygun değil"
     }
 
+    /** WorkManager constraints for backup jobs only. */
     fun workManagerNetworkType(session: SessionStore): NetworkType = NetworkType.UNMETERED
 
-    fun networkPolicyLabel(session: SessionStore): String = "yalnız Wi‑Fi (mobil veri yok)"
+    fun networkPolicyLabel(session: SessionStore): String =
+        "yedek: yalnız Wi‑Fi · uygulama: mobil veri OK"
 
-    fun bindUploadNetwork(context: Context): Network? {
+    /** Bind process to Wi‑Fi only during backup uploads (optional). */
+    fun bindUploadNetwork(context: Context, wifiOnly: Boolean = true): Network? {
+        if (!wifiOnly) return null
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
         val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return null

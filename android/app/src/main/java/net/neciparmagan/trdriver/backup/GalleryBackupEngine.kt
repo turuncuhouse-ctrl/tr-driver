@@ -133,8 +133,8 @@ object GalleryBackupEngine {
             if (lastWidgetRefresh == 0L) BackupStatusWidget.refreshAll(app)
 
             try {
-                if (!UploadNetworkGate.allowsUploadNow(app, session, item.sizeBytes)) {
-                    UploadNetworkGate.awaitUploadAllowed(app, session, item.sizeBytes)
+                if (!UploadNetworkGate.allowsUploadNow(app, session, item.sizeBytes, wifiOnly = true)) {
+                    UploadNetworkGate.awaitUploadAllowed(app, session, item.sizeBytes, wifiOnly = true)
                 }
                 val parent = parentCache.getOrPut(parentCacheKey(item)) { resolveParent(api, item) }
                 val lastEmitMs = AtomicLong(0L)
@@ -186,8 +186,8 @@ object GalleryBackupEngine {
                     },
                     clearFileBytes = true,
                 )
-                // Leave Wi‑Fi free for WhatsApp / other apps between files.
-                if (pendingLeft > 0) delay(1_500L)
+                // Leave Wi‑Fi free for WhatsApp / YouTube / other apps between files.
+                if (pendingLeft > 0) delay(2_500L)
             } catch (e: CancellationException) {
                 session.updateBackupProgress(
                     active = false,
