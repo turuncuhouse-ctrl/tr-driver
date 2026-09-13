@@ -12,7 +12,7 @@ class TrDriverApp : Application() {
         // Enforce Wi‑Fi-only policy and keep session prefs warm.
         session.wifiOnlyBackup = true
         WifiBackupWatcher.start(this)
-        if (session.galleryBackupEnabled && session.isLoggedIn) {
+        if (session.anyBackupEnabled() && session.isLoggedIn) {
             GalleryBackupWorker.schedule(this)
         }
     }

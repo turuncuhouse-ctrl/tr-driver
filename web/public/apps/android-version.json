@@ -1,7 +1,7 @@
 ﻿{
     "minSupportedCode":  1,
-    "versionCode":  32,
-    "versionName":  "0.8.14",
+    "versionCode":  33,
+    "versionName":  "0.8.15",
     "apkPath":  "/download/TRDriver.apk",
-    "releaseNotes":  "TR Galeri gercek launcher (BlueStacks); Liste/Izgara geri; ust tıklamada Kapat hatasi duzeltildi; arama iyilestirildi"
+    "releaseNotes":  "Buton renkleri duzeltildi; SMS ve arama kaydi Wi-Fi yedegi (WhatsApp okunamaz)"
 }

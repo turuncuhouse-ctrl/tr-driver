@@ -44,6 +44,19 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean(KEY_GALLERY_ON, false)
         set(value) = prefs.edit().putBoolean(KEY_GALLERY_ON, value).apply()
 
+    /** SMS inbox/sent backup to TR Backup / device / SMS */
+    var smsBackupEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SMS_BACKUP, false)
+        set(value) = prefs.edit().putBoolean(KEY_SMS_BACKUP, value).apply()
+
+    /** Call log backup to TR Backup / device / AramaKayitlari */
+    var callLogBackupEnabled: Boolean
+        get() = prefs.getBoolean(KEY_CALL_BACKUP, false)
+        set(value) = prefs.edit().putBoolean(KEY_CALL_BACKUP, value).apply()
+
+    fun anyBackupEnabled(): Boolean =
+        galleryBackupEnabled || smsBackupEnabled || callLogBackupEnabled
+
     /**
      * Galeri yedekleme yalnızca Wi‑Fi / Ethernet üzerinden yapılır.
      * Mobil veri yedeklemesi bilinçli olarak kapatılmıştır (kota / maliyet).
@@ -323,7 +336,7 @@ class SessionStore(context: Context) {
     }
 
     fun backupStatusLine(): String {
-        if (!galleryBackupEnabled) return "Yedek: kapalı"
+        if (!galleryBackupEnabled && !smsBackupEnabled && !callLogBackupEnabled) return "Yedek: kapalı"
         if (backupActive) {
             val name = backupCurrentFile.ifBlank { "dosya" }
             val left = backupPendingCount
@@ -364,6 +377,8 @@ class SessionStore(context: Context) {
         const val KEY_BACKUP_BYTES_TOTAL = "backup_bytes_total"
         const val KEY_LAST_MSG = "last_backup_msg"
         const val KEY_GALLERY_ON = "gallery_on"
+        private const val KEY_SMS_BACKUP = "sms_backup_on"
+        private const val KEY_CALL_BACKUP = "call_backup_on"
 
         fun formatBytes(bytes: Long): String {
             if (bytes < 1024) return "$bytes B"

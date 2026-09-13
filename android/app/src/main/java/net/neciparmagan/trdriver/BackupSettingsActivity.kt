@@ -14,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
 import com.google.android.material.switchmaterial.SwitchMaterial
+import net.neciparmagan.trdriver.backup.CommsBackupEngine
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
 import net.neciparmagan.trdriver.backup.OemPowerHelper
 import net.neciparmagan.trdriver.data.MediaAccess
@@ -24,6 +25,8 @@ import net.neciparmagan.trdriver.data.UploadedMediaDb
 class BackupSettingsActivity : AppCompatActivity() {
     private lateinit var session: SessionStore
     private lateinit var switchGallery: SwitchMaterial
+    private lateinit var switchSms: SwitchMaterial
+    private lateinit var switchCallLog: SwitchMaterial
     private lateinit var backupStatus: TextView
     private lateinit var networkHint: TextView
     private lateinit var folderList: LinearLayout
@@ -46,6 +49,36 @@ class BackupSettingsActivity : AppCompatActivity() {
             }
         }
 
+    private val smsPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                session.smsBackupEnabled = true
+                switchSms.isChecked = true
+                GalleryBackupWorker.schedule(this)
+                refreshStatus()
+                Toast.makeText(this, "SMS yedekleme açıldı", Toast.LENGTH_SHORT).show()
+            } else {
+                switchSms.isChecked = false
+                session.smsBackupEnabled = false
+                Toast.makeText(this, "SMS okuma izni gerekli", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    private val callPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                session.callLogBackupEnabled = true
+                switchCallLog.isChecked = true
+                GalleryBackupWorker.schedule(this)
+                refreshStatus()
+                Toast.makeText(this, "Arama kaydı yedekleme açıldı", Toast.LENGTH_SHORT).show()
+            } else {
+                switchCallLog.isChecked = false
+                session.callLogBackupEnabled = false
+                Toast.makeText(this, "Arama kaydı izni gerekli", Toast.LENGTH_LONG).show()
+            }
+        }
+
     private val notificationLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* optional */ }
 
@@ -55,7 +88,7 @@ class BackupSettingsActivity : AppCompatActivity() {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         session.addBackupFolderUri(uri.toString())
-        if (!session.galleryBackupEnabled) {
+        if (!session.anyBackupEnabled()) {
             Toast.makeText(
                 this,
                 "Klasör eklendi. Yedeklemek için otomatik yedeği açın.",
@@ -76,11 +109,15 @@ class BackupSettingsActivity : AppCompatActivity() {
         session.wifiOnlyBackup = true
 
         switchGallery = findViewById(R.id.switchGalleryBackup)
+        switchSms = findViewById(R.id.switchSmsBackup)
+        switchCallLog = findViewById(R.id.switchCallLogBackup)
         backupStatus = findViewById(R.id.backupStatus)
         networkHint = findViewById(R.id.networkHint)
         folderList = findViewById(R.id.folderList)
 
         switchGallery.isChecked = session.galleryBackupEnabled
+        switchSms.isChecked = session.smsBackupEnabled
+        switchCallLog.isChecked = session.callLogBackupEnabled
 
         switchGallery.setOnCheckedChangeListener { _, checked ->
             if (checked) {
@@ -101,6 +138,40 @@ class BackupSettingsActivity : AppCompatActivity() {
             }
         }
 
+        switchSms.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                if (CommsBackupEngine.hasSmsPermission(this)) {
+                    session.smsBackupEnabled = true
+                    GalleryBackupWorker.schedule(this)
+                    refreshStatus()
+                } else {
+                    switchSms.isChecked = false
+                    smsPermissionLauncher.launch(android.Manifest.permission.READ_SMS)
+                }
+            } else {
+                session.smsBackupEnabled = false
+                GalleryBackupWorker.schedule(this)
+                refreshStatus()
+            }
+        }
+
+        switchCallLog.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                if (CommsBackupEngine.hasCallLogPermission(this)) {
+                    session.callLogBackupEnabled = true
+                    GalleryBackupWorker.schedule(this)
+                    refreshStatus()
+                } else {
+                    switchCallLog.isChecked = false
+                    callPermissionLauncher.launch(android.Manifest.permission.READ_CALL_LOG)
+                }
+            } else {
+                session.callLogBackupEnabled = false
+                GalleryBackupWorker.schedule(this)
+                refreshStatus()
+            }
+        }
+
         findViewById<Button>(R.id.btnOemSettings).setOnClickListener {
             OemPowerHelper.maybePromptForReliableBackup(this)
         }
@@ -109,8 +180,8 @@ class BackupSettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "Önce giriş yapın", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-            if (!session.galleryBackupEnabled) {
-                Toast.makeText(this, "Önce otomatik yedeklemeyi açın", Toast.LENGTH_SHORT).show()
+            if (!session.anyBackupEnabled()) {
+                Toast.makeText(this, "Önce galeri, SMS veya arama yedeğini açın", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             if (!UploadNetworkGate.isWifi(this)) {
@@ -121,7 +192,10 @@ class BackupSettingsActivity : AppCompatActivity() {
                 ).show()
                 return@setOnClickListener
             }
-            if (!MediaAccess.hasMediaAccess(this) && session.backupFolderUris.isEmpty()) {
+            if (session.galleryBackupEnabled &&
+                !MediaAccess.hasMediaAccess(this) &&
+                session.backupFolderUris.isEmpty()
+            ) {
                 requestMediaPermission()
                 return@setOnClickListener
             }
@@ -215,7 +289,9 @@ class BackupSettingsActivity : AppCompatActivity() {
     private fun refreshStatus() {
         val count = UploadedMediaDb(this).countUploaded()
         val net = UploadNetworkGate.networkPolicyLabel(session)
-        val on = if (session.galleryBackupEnabled) "Açık" else "Kapalı"
+        val on = if (session.anyBackupEnabled()) "Açık" else "Kapalı"
+        val sms = if (session.smsBackupEnabled) "SMS:açık" else "SMS:kapalı"
+        val calls = if (session.callLogBackupEnabled) "Arama:açık" else "Arama:kapalı"
         val folders = session.backupFolderUris.size
         val last = session.lastBackupMessage.ifBlank { "Henüz çalışmadı" }
         val freeable = UploadedMediaDb(this).countNotFreed()
@@ -223,10 +299,10 @@ class BackupSettingsActivity : AppCompatActivity() {
         val partial = if (MediaAccess.hasPartialMediaAccess(this)) " · ⚠ sınırlı galeri" else ""
         val wifiNow = if (UploadNetworkGate.isWifi(this)) " · Wi‑Fi bağlı" else " · Wi‑Fi bekleniyor"
         backupStatus.text =
-            "Durum: $on · $net$wifiNow · İşlenen: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
-                "Galeri → TR Photos · Klasörler → TR Backup / ${session.deviceName}"
+            "Durum: $on · $sms · $calls · $net$wifiNow · İşlenen medya: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
+                "Galeri → TR Photos · SMS/Arama → TR Backup / ${session.deviceName}"
         networkHint.text =
-            "Yedekleme yalnız Wi‑Fi, sınırlı hız (~0.5 MB/s). Mobil veri yok. WhatsApp gibi uygulamalar yavaşlamamalı; Wi‑Fi gelince arka planda devam eder."
+            "Yedekleme yalnız Wi‑Fi. SMS ve arama kayıtları cihazın kendi geçmişidir. WhatsApp/Telegram okunamaz."
     }
 
     private fun mediaPermissions(): Array<String> = MediaAccess.mediaPermissionsForRequest()

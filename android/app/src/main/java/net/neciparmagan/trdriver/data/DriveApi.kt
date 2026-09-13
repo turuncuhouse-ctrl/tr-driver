@@ -434,6 +434,30 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
 
     fun downloadUrl(fileId: String): String = "${base()}/api/files/download/$fileId"
 
+    /** Upload a UTF-8 text/CSV backup (SMS, call log, etc.). */
+    suspend fun uploadTextFile(
+        parentId: String?,
+        name: String,
+        content: String,
+        mime: String = "text/csv",
+        conflict: String = "overwrite",
+    ): FileEntry = withContext(Dispatchers.IO) {
+        refreshUploadPaceIfStale()
+        UploadThrottle.run {
+            val bytes = content.toByteArray(Charsets.UTF_8)
+            uploadStream(
+                parentId = parentId,
+                name = name,
+                mime = mime,
+                size = bytes.size.toLong(),
+                conflict = conflict,
+                onProgress = null,
+            ) {
+                java.io.ByteArrayInputStream(bytes)
+            }
+        }
+    }
+
     suspend fun findExistingFile(parentId: String, name: String): FileEntry? = withContext(Dispatchers.IO) {
         if (parentId.isBlank() || name.isBlank()) return@withContext null
         listFiles(parentId).firstOrNull {

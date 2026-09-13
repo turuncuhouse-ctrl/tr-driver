@@ -31,7 +31,7 @@ object OemPowerHelper {
     fun maybePromptForReliableBackup(context: Context, onDone: (() -> Unit)? = null) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val session = SessionStore(context)
-        if (!session.galleryBackupEnabled) {
+        if (!session.anyBackupEnabled()) {
             onDone?.invoke()
             return
         }

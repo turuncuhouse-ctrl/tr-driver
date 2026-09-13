@@ -637,6 +637,9 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btnLayout).text =
             if (gridLayout) "☰ Liste" else "▦ Izgara"
+        findViewById<Button>(R.id.btnLayout).setTextColor(
+            ContextCompat.getColor(this, R.color.tr_ink),
+        )
     }
 
     private fun openVehicleIntake() {

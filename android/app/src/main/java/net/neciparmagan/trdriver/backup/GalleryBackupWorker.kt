@@ -24,7 +24,7 @@ class GalleryBackupWorker(
 
     override suspend fun doWork(): Result {
         val session = SessionStore(applicationContext)
-        if (!session.isLoggedIn || !session.galleryBackupEnabled) {
+        if (!session.isLoggedIn || !session.anyBackupEnabled()) {
             session.clearBackupProgress()
             BackupStatusWidget.refreshAll(applicationContext)
             return Result.success()
@@ -39,18 +39,23 @@ class GalleryBackupWorker(
         }
 
         // Fallback: run inside worker with typed foreground notification (Android 10+).
-        safeSetForeground("Galeri yedekleme…")
+        safeSetForeground("TR Driver yedekleme…")
         return try {
-            val result = GalleryBackupEngine.runBatch(
-                context = applicationContext,
-                isStopped = { isStopped },
-            )
-            if (result.scheduleContinue && session.galleryBackupEnabled) {
-                scheduleContinue(applicationContext, result.continueDelaySec)
+            if (session.smsBackupEnabled || session.callLogBackupEnabled) {
+                CommsBackupEngine.runIfNeeded(applicationContext)
+            }
+            if (session.galleryBackupEnabled) {
+                val result = GalleryBackupEngine.runBatch(
+                    context = applicationContext,
+                    isStopped = { isStopped },
+                )
+                if (result.scheduleContinue && session.galleryBackupEnabled) {
+                    scheduleContinue(applicationContext, result.continueDelaySec)
+                }
             }
             Result.success()
         } catch (e: CancellationException) {
-            if (session.galleryBackupEnabled && session.isLoggedIn) {
+            if (session.anyBackupEnabled() && session.isLoggedIn) {
                 scheduleContinue(applicationContext, continueDelaySeconds(applicationContext, session))
             }
             throw e
@@ -81,7 +86,7 @@ class GalleryBackupWorker(
         fun schedule(context: Context) {
             val session = SessionStore(context)
             val wm = WorkManager.getInstance(context.applicationContext)
-            if (!session.galleryBackupEnabled || !session.isLoggedIn) {
+            if (!session.anyBackupEnabled() || !session.isLoggedIn) {
                 wm.cancelUniqueWork(UNIQUE_PERIODIC)
                 wm.cancelUniqueWork(UNIQUE_ONCE)
                 wm.cancelUniqueWork(UNIQUE_CONTINUE)
@@ -105,7 +110,7 @@ class GalleryBackupWorker(
         fun runNow(context: Context) {
             val session = SessionStore(context)
             if (!session.isLoggedIn) return
-            if (!session.galleryBackupEnabled) {
+            if (!session.anyBackupEnabled()) {
                 session.galleryBackupEnabled = true
             }
             session.updateBackupProgress(
@@ -126,7 +131,7 @@ class GalleryBackupWorker(
 
         fun scheduleContinue(context: Context, delaySeconds: Long = 1) {
             val session = SessionStore(context)
-            if (!session.galleryBackupEnabled || !session.isLoggedIn) return
+            if (!session.anyBackupEnabled() || !session.isLoggedIn) return
             val builder = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
                 .setConstraints(constraints(session))
                 .setInitialDelay(delaySeconds.coerceAtLeast(0), TimeUnit.SECONDS)

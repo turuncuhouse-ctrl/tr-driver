@@ -59,7 +59,7 @@ object WifiBackupWatcher {
         pendingStart?.let { mainHandler.removeCallbacks(it) }
         val task = Runnable {
             val session = SessionStore(context)
-            if (!session.isLoggedIn || !session.galleryBackupEnabled) return@Runnable
+            if (!session.isLoggedIn || !session.anyBackupEnabled()) return@Runnable
             if (!UploadNetworkGate.isWifi(context)) return@Runnable
             if (GalleryBackupForegroundService.running) return@Runnable
             Log.i(TAG, "Wi‑Fi up — scheduling gallery backup")

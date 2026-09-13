@@ -178,45 +178,62 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:background="@android:color/white"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="6dp"
-            android:paddingBottom="2dp">
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="4dp"
+            android:layout_marginHorizontal="8dp"
+            android:layout_marginBottom="4dp">
 
             <Button
                 android:id="@+id/btnSearch"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
                 android:minWidth="0dp"
-                android:text="Ara" />
+                android:paddingHorizontal="12dp"
+                android:backgroundTint="@color/tr_blue"
+                android:text="Ara"
+                android:textColor="@color/tr_white"
+                android:textAllCaps="false" />
 
             <Button
                 android:id="@+id/btnLayout"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="0dp"
                 android:layout_height="40dp"
+                android:layout_marginStart="4dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="▦ Izgara"
-                android:textStyle="bold" />
+                android:textColor="@color/tr_ink"
+                android:textStyle="bold"
+                android:textAllCaps="false" />
 
             <Button
                 android:id="@+id/btnPhotos"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
+                android:layout_marginStart="4dp"
                 android:minWidth="0dp"
+                android:paddingHorizontal="10dp"
+                android:backgroundTint="#E8F2FC"
                 android:text="Galeri"
-                android:textStyle="bold" />
+                android:textColor="@color/tr_blue"
+                android:textStyle="bold"
+                android:textAllCaps="false" />
 
             <Button
                 android:id="@+id/btnActions"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
+                android:layout_marginStart="4dp"
                 android:minWidth="0dp"
-                android:text="⋯" />
+                android:paddingHorizontal="12dp"
+                android:backgroundTint="#E8F2FC"
+                android:text="⋯"
+                android:textColor="@color/tr_ink"
+                android:textAllCaps="false" />
         </LinearLayout>
 
         <LinearLayout
