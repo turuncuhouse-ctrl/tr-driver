@@ -101,10 +101,10 @@ class FreeUpSpaceActivity : AppCompatActivity() {
             "Kayıtlı yedek: ${db.countUploaded()} dosya\n" +
                 "Henüz yer açılmamış: $notFreed · ~${FreeUpSpace.formatBytes(bytes)}\n" +
                 "Aday listesi için “Adayları tara”ya basın.\n\n" +
-                "Kural: yedeklenmemiş hiçbir dosya silinmez."
+                "Kural: yalnızca buluta doğru yedeklenmiş dosyalar cihazdan silinir.\n" +
+                "Yedeklenmemiş hiçbir dosya aday bile olmaz."
         status.text =
-            "Güvenli silme: DB kaydı + boyut eşleşmesi + sunucu doğrulaması. " +
-                "Yedeklenmeyenler aday bile olmaz."
+            "Güvenli silme: yedek kaydı + boyut eşleşmesi + sunucu doğrulaması (çift kontrol)."
         btnFree.isEnabled = false
         planCandidates = emptyList()
     }

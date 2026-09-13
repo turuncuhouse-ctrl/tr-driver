@@ -410,7 +410,11 @@ class PhotosLibraryActivity : AppCompatActivity() {
         findViewById<Button>(R.id.navAlbums).let { style(it, tab == Tab.ALBUMS) }
         findViewById<Button>(R.id.navLibrary).let { style(it, tab == Tab.CLOUD) }
         findViewById<View>(R.id.filterScroll).visibility =
-            if (tab == Tab.PHOTOS || viewingAlbum != null) View.VISIBLE else View.GONE
+            when (tab) {
+                Tab.PHOTOS -> View.VISIBLE
+                Tab.CLOUD -> if (showingCloudAlbumList) View.GONE else View.VISIBLE
+                Tab.ALBUMS -> if (viewingAlbum != null) View.VISIBLE else View.GONE
+            }
         refreshBackupChip()
     }
 
@@ -725,7 +729,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         viewingCloudAlbum = null
         showingCloudAlbumList = false
         title.text = "Kitaplık"
-        subtitle.text = "Bulut yedekleri · albüm listesi için buraya dokunun"
+        subtitle.text = "Bulut yedekleri · gün / ay / yıl"
         hideEmpty()
         subtitle.setOnClickListener { loadCloudAlbums() }
         progress.visibility = View.VISIBLE
@@ -735,6 +739,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             try {
                 allCloud = withContext(Dispatchers.IO) { api.listCloudPhotosFlat(1200) }
                 applyFilter()
+                styleTabs()
             } catch (e: Exception) {
                 Toast.makeText(this@PhotosLibraryActivity, e.message, Toast.LENGTH_LONG).show()
             } finally {
@@ -746,6 +751,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun loadCloudAlbums() {
         viewingCloudAlbum = null
         showingCloudAlbumList = true
+        styleTabs()
         title.text = "Bulut albümleri"
         subtitle.text = "Cihaz klasörleri · zaman çizelgesi için Bulut sekmesi"
         subtitle.setOnClickListener(null)
@@ -781,26 +787,38 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     private fun loadCloudAlbumContents(folder: FileEntry) {
         showingCloudAlbumList = false
+        styleTabs()
         title.text = folder.name
-        subtitle.text = "Bulut albümü"
+        subtitle.text = "Bulut albümü · gün bazında"
         progress.visibility = View.VISIBLE
         grid.adapter = timelineAdapter
-        (grid.layoutManager as GridLayoutManager).spanCount = 3
+        applyTimelineLayout()
         lifecycleScope.launch {
             try {
-                val queue = ArrayDeque<String>()
-                queue.add(folder.id)
+                data class Node(val id: String, val year: Int?, val month: Int?)
                 val out = ArrayList<FileEntry>()
+                val queue = ArrayDeque<Node>()
+                // Folder name may itself be year/device; start without hints.
+                queue.add(Node(folder.id, folder.name.toIntOrNull()?.takeIf { it in 1970..2100 }, null))
                 var guard = 0
                 while (queue.isNotEmpty() && out.size < 1000 && guard < 400) {
                     guard++
-                    val id = queue.removeFirst()
-                    val children = withContext(Dispatchers.IO) { api.listFiles(id) }
+                    val node = queue.removeFirst()
+                    val children = withContext(Dispatchers.IO) { api.listFiles(node.id) }
                     for (c in children) {
-                        if (c.kind == "folder") queue.add(c.id) else out += c
+                        if (c.kind == "folder") {
+                            val asYear = c.name.toIntOrNull()?.takeIf { it in 1970..2100 }
+                            val asMonth = c.name.toIntOrNull()?.takeIf { it in 1..12 && c.name.length <= 2 }
+                            queue.add(Node(c.id, asYear ?: node.year, asMonth ?: node.month))
+                        } else {
+                            out += c.copy(
+                                sortTimeMs = net.neciparmagan.trdriver.data.FileEntryDates
+                                    .resolveSortMs(c, node.year, node.month),
+                            )
+                        }
                     }
                 }
-                allCloud = out
+                allCloud = out.sortedByDescending { it.sortTimeMs }
                 applyFilter()
             } catch (e: Exception) {
                 Toast.makeText(this@PhotosLibraryActivity, e.message, Toast.LENGTH_LONG).show()
@@ -852,7 +870,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
                     subtitle.text = "${albums.size} bulut albümü" + if (q.isNotBlank()) " · \"$searchQuery\"" else ""
                 } else {
                     grid.adapter = timelineAdapter
-                    (grid.layoutManager as GridLayoutManager).spanCount = 3
+                    applyTimelineLayout()
                     var files = if (q.isBlank()) allCloud else allCloud.filter {
                         it.name.lowercase(Locale.getDefault()).contains(q)
                     }
@@ -866,6 +884,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
                         }
                     }
                     timelineAdapter.submitCloud(buildCloudTimeline(files))
+                    grid.post { updateStickyHeader() }
                     if (files.isEmpty()) {
                         showEmpty(
                             "Kitaplık boş",
@@ -877,7 +896,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
                     subtitle.text = when {
                         files.isEmpty() -> "Henüz bulutta medya yok · otomatik yedeği açın"
                         q.isNotBlank() -> "${files.size} bulut öğesi · \"$searchQuery\""
-                        else -> "${files.size} bulut öğesi · Kitaplık"
+                        else -> "${files.size} yedek · gün bazında"
                     }
                 }
             }
@@ -967,8 +986,28 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun buildCloudTimeline(files: List<FileEntry>): List<TimelineItem> {
         val out = ArrayList<TimelineItem>()
         if (files.isEmpty()) return out
-        out += TimelineItem.Header("Kitaplık · yedeklenenler", "cloud")
-        for (f in files) out += TimelineItem.Cloud(f)
+        var lastKey = ""
+        val sorted = files.sortedByDescending { it.sortTimeMs.coerceAtLeast(0L) }
+        for (f in sorted) {
+            val ms = f.sortTimeMs.coerceAtLeast(0L)
+            val key = when {
+                ms <= 0L -> "unknown"
+                timelineZoom == TimelineZoom.DAY -> dayKey(ms)
+                timelineZoom == TimelineZoom.MONTH -> monthKey(ms)
+                else -> yearKey(ms)
+            }
+            if (key != lastKey) {
+                val label = when {
+                    ms <= 0L -> "Tarihsiz yedekler"
+                    timelineZoom == TimelineZoom.DAY -> formatDayLabel(ms)
+                    timelineZoom == TimelineZoom.MONTH -> formatMonthLabel(ms)
+                    else -> formatYearLabel(ms)
+                }
+                out += TimelineItem.Header(label, key)
+                lastKey = key
+            }
+            out += TimelineItem.Cloud(f)
+        }
         return out
     }
 

@@ -18,7 +18,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="12dp"
-        android:text="Yalnızca sunucuda doğrulanan yedekler telefonda silinir. Dosyalar TR Photos’ta kalır."
+        android:text="Yalnızca buluta doğru yedeklenmiş dosyalar telefonda silinir. Yedeklenmemiş hiçbir dosya silinmez."
         android:textColor="@color/tr_ink"
         android:textSize="13sp" />
 

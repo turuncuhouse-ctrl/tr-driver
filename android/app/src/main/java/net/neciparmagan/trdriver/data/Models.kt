@@ -32,6 +32,11 @@ data class FileEntry(
     @SerialName("sizeBytes") val sizeBytes: Long = 0,
     @SerialName("mimeType") val mimeType: String = "",
     val starred: Boolean = false,
+    @SerialName("createdAt") val createdAt: String = "",
+    @SerialName("updatedAt") val updatedAt: String = "",
+    @SerialName("clientModifiedAt") val clientModifiedAt: String? = null,
+    /** Local sort key (taken/backup day); not from JSON. */
+    @Transient val sortTimeMs: Long = 0L,
 )
 
 @Serializable

@@ -275,21 +275,32 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
 
     /**
      * Flat list of all image/video files under TR Photos (device/year/month nested).
-     * Used for Google Photos-style timeline — no folder drilling.
+     * Each item gets [FileEntry.sortTimeMs] for day/month/year timeline grouping.
      */
-    suspend fun listCloudPhotosFlat(maxFiles: Int = 800): List<FileEntry> = withContext(Dispatchers.IO) {
+    suspend fun listCloudPhotosFlat(maxFiles: Int = 1200): List<FileEntry> = withContext(Dispatchers.IO) {
+        data class Node(val id: String, val year: Int?, val month: Int?)
         val root = ensurePhotosRoot()
         val out = ArrayList<FileEntry>()
-        val queue = ArrayDeque<String>()
-        queue.add(root)
+        val queue = ArrayDeque<Node>()
+        queue.add(Node(root, null, null))
         var foldersSeen = 0
-        while (queue.isNotEmpty() && out.size < maxFiles && foldersSeen < 400) {
-            val id = queue.removeFirst()
+        while (queue.isNotEmpty() && out.size < maxFiles && foldersSeen < 500) {
+            val node = queue.removeFirst()
             foldersSeen++
-            val children = runCatching { listFiles(id) }.getOrDefault(emptyList())
+            val children = runCatching { listFiles(node.id) }.getOrDefault(emptyList())
             for (child in children) {
                 when (child.kind) {
-                    "folder" -> queue.add(child.id)
+                    "folder" -> {
+                        val asYear = child.name.toIntOrNull()?.takeIf { it in 1970..2100 }
+                        val asMonth = child.name.toIntOrNull()?.takeIf { it in 1..12 && child.name.length <= 2 }
+                        queue.add(
+                            Node(
+                                id = child.id,
+                                year = asYear ?: node.year,
+                                month = asMonth ?: node.month,
+                            ),
+                        )
+                    }
                     "file" -> {
                         val mime = child.mimeType.lowercase()
                         val name = child.name.lowercase()
@@ -298,14 +309,16 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                             name.endsWith(".webp") || name.endsWith(".heic") || name.endsWith(".mp4") ||
                             name.endsWith(".mov") || name.endsWith(".mkv")
                         if (isMedia) {
-                            out += child
+                            out += child.copy(
+                                sortTimeMs = FileEntryDates.resolveSortMs(child, node.year, node.month),
+                            )
                             if (out.size >= maxFiles) break
                         }
                     }
                 }
             }
         }
-        out
+        out.sortedByDescending { it.sortTimeMs.coerceAtLeast(0L) }
     }
 
     /** Top-level cloud "albums" under TR Photos (usually device folders). */

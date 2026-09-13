@@ -1,7 +1,7 @@
 ﻿{
   "minSupportedCode": 1,
-  "versionCode": 35,
-  "versionName": "0.8.17",
+  "versionCode": 36,
+  "versionName": "0.8.18",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "Yer ac guvenligi: sadece yedekli + boyut eslesen + sunucu dogrulanan silinir; Galeri-Drive gecis; yedeksiz silme uyarisi"
+  "releaseNotes": "Yer ac: sadece buluta dogru gidenler silinir. Kitaplik yedekleri gun/ay/yil sirali."
 }
