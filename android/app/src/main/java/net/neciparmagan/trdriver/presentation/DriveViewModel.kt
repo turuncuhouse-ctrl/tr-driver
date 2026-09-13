@@ -275,7 +275,17 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(busy = true, searchQuery = q, searching = true, message = null) }
             try {
-                val files = api.search(q)
+                var files = api.search(q)
+                if (files.isEmpty()) {
+                    // Fallback: current folder listing filtered locally
+                    val parent = _state.value.crumbs.lastOrNull()?.id
+                    val local = runCatching { api.listFiles(parent) }.getOrDefault(emptyList())
+                    val tokens = q.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+                    files = local.filter { entry ->
+                        val hay = "${entry.name} ${entry.mimeType} ${entry.kind}".lowercase()
+                        tokens.all { hay.contains(it) }
+                    }
+                }
                 _state.update {
                     it.copy(
                         busy = false,
@@ -284,6 +294,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
                         crumbs = listOf(Crumb(null, "Arama: $q")),
                         selectionMode = false,
                         selectedIds = emptySet(),
+                        message = if (files.isEmpty()) "\"$q\" için sonuç yok" else null,
                     )
                 }
             } catch (e: Exception) {

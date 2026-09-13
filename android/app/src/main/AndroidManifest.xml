@@ -57,9 +57,20 @@
         <activity
             android:name=".PhotosLibraryActivity"
             android:exported="true"
+            android:icon="@drawable/ic_gallery_app"
+            android:roundIcon="@drawable/ic_gallery_app"
             android:label="@string/gallery_launcher_name"
             android:theme="@style/Theme.TRDriver">
-            <!-- System gallery / picker / viewer (varsayılan galeri adayı) -->
+            <!-- Ana ekran kısayolu (alias yerine gerçek activity — BlueStacks uyumlu) -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.APP_GALLERY" />
+            </intent-filter>
+            <!-- System gallery / picker / viewer -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -107,53 +118,15 @@
             </intent-filter>
         </activity>
 
-        <!-- Home-screen shortcut: TR Galeri (opens gallery directly) -->
+        <!-- Eski alias: bazı cihazlarda çift ikon üretmesin diye kapalı; gerçek LAUNCHER activity yukarıda -->
         <activity-alias
             android:name=".TrGalleryLauncher"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true"
             android:icon="@drawable/ic_gallery_app"
             android:label="@string/gallery_launcher_name"
             android:roundIcon="@drawable/ic_gallery_app"
-            android:targetActivity=".PhotosLibraryActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-                <category android:name="android.intent.category.APP_GALLERY" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.PICK" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.PICK" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.GET_CONTENT" />
-                <category android:name="android.intent.category.OPENABLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.GET_CONTENT" />
-                <category android:name="android.intent.category.OPENABLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
-        </activity-alias>
+            android:targetActivity=".PhotosLibraryActivity" />
         <activity
             android:name=".VehicleIntakeActivity"
             android:exported="false"

@@ -176,16 +176,24 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
         pickMode = intent?.action == Intent.ACTION_PICK ||
             intent?.action == Intent.ACTION_GET_CONTENT
-        launchedAsGalleryApp = !pickMode && intent?.action == Intent.ACTION_MAIN &&
-            intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
-        if (launchedAsGalleryApp) {
-            title.setText(R.string.gallery_launcher_name)
-            findViewById<Button>(R.id.btnPhotosClose).text = "Driver"
-        }
+        launchedAsGalleryApp = !pickMode && (
+            intent?.action == Intent.ACTION_MAIN ||
+                intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true ||
+                intent?.hasCategory(Intent.CATEGORY_APP_GALLERY) == true
+            )
+        val closeBtn = findViewById<Button>(R.id.btnPhotosClose)
         if (pickMode) {
             title.text = "Fotoğraf seç"
-            findViewById<Button>(R.id.btnPhotosClose).text = "İptal"
+            closeBtn.text = "İptal"
+            closeBtn.visibility = View.VISIBLE
             btnSelect.visibility = View.GONE
+        } else if (launchedAsGalleryApp) {
+            title.setText(R.string.gallery_launcher_name)
+            // Üste yanlışlıkla "Kapat" basılmasın — geri / menü kullan
+            closeBtn.visibility = View.GONE
+        } else {
+            closeBtn.text = "Geri"
+            closeBtn.visibility = View.VISIBLE
         }
 
         applyTimelineLayout()
@@ -219,8 +227,6 @@ class PhotosLibraryActivity : AppCompatActivity() {
             if (pickMode) {
                 setResult(Activity.RESULT_CANCELED)
                 finish()
-            } else if (launchedAsGalleryApp) {
-                startActivity(Intent(this, MainActivity::class.java))
             } else {
                 finish()
             }
@@ -233,13 +239,23 @@ class PhotosLibraryActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnDeleteSelected).setOnClickListener { confirmDeleteSelected() }
         findViewById<Button>(R.id.btnCancelSelect).setOnClickListener { exitSelection() }
 
+        search.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
+                searchJob?.cancel()
+                searchQuery = search.text?.toString()?.trim().orEmpty()
+                applyFilter()
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                imm?.hideSoftInputFromWindow(search.windowToken, 0)
+                true
+            } else false
+        }
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
                 searchJob?.cancel()
                 searchJob = lifecycleScope.launch {
-                    delay(250)
+                    delay(200)
                     searchQuery = s?.toString()?.trim().orEmpty()
                     applyFilter()
                 }
@@ -508,6 +524,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             menu.add(0, 3, 2, "Şimdi yedekle")
             menu.add(0, 4, 3, "TR Driver dosyaları")
             menu.add(0, 5, 4, "Seçim modu")
+            menu.add(0, 6, 5, "Ana ekrana TR Galeri ekle")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> startActivity(Intent(this@PhotosLibraryActivity, FreeUpSpaceActivity::class.java))
@@ -522,11 +539,33 @@ class PhotosLibraryActivity : AppCompatActivity() {
                     }
                     4 -> startActivity(Intent(this@PhotosLibraryActivity, MainActivity::class.java))
                     5 -> if (selectionMode) exitSelection() else enterSelection()
+                    6 -> offerGalleryHomeShortcut()
                 }
                 true
             }
             show()
         }
+    }
+
+    private fun offerGalleryHomeShortcut() {
+        val shortcut = androidx.core.content.pm.ShortcutInfoCompat.Builder(this, "tr_galeri_home")
+            .setShortLabel(getString(R.string.gallery_launcher_name))
+            .setLongLabel(getString(R.string.gallery_launcher_name))
+            .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(this, R.drawable.ic_gallery_app))
+            .setIntent(
+                Intent(this, PhotosLibraryActivity::class.java).apply {
+                    action = Intent.ACTION_MAIN
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+            )
+            .build()
+        val ok = androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(this, shortcut, null)
+        Toast.makeText(
+            this,
+            if (ok) "Ana ekrana ekleme isteği gönderildi" else "Bu cihazda kısayol eklenemiyor — uygulama listesinden TR Galeri’yi bulun",
+            Toast.LENGTH_LONG,
+        ).show()
     }
 
     private fun reload() {
@@ -759,10 +798,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private fun showLocalTimeline(q: String) {
         grid.adapter = timelineAdapter
         applyTimelineLayout()
-        var media = if (q.isBlank()) allLocal else allLocal.filter {
-            it.displayName.lowercase(Locale.getDefault()).contains(q) ||
-                (it.albumName?.lowercase(Locale.getDefault())?.contains(q) == true)
-        }
+        var media = if (q.isBlank()) allLocal else allLocal.filter { matchesMediaQuery(it, q) }
         media = when (mediaFilter) {
             MediaFilter.ALL -> media
             MediaFilter.PHOTOS -> media.filter { !it.isVideo }
@@ -774,7 +810,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             stickyHeader.visibility = View.GONE
             showEmpty(
                 if (q.isNotBlank()) "Sonuç yok" else "Fotoğraf yok",
-                if (q.isNotBlank()) "Aramanızla eşleşen öğe bulunamadı."
+                if (q.isNotBlank()) "\"$searchQuery\" ile eşleşen öğe yok."
                 else "Telefon galerisinde görüntülenecek öğe yok.",
             )
         } else {
@@ -793,6 +829,25 @@ class PhotosLibraryActivity : AppCompatActivity() {
         }
         subtitle.text = "${media.size} öğe · $filterLabel · $zoomLabel · ☁$backed yedekli" +
             if (q.isNotBlank()) " · \"$searchQuery\"" else ""
+    }
+
+    /** Token-based search: name, album, mime, video/photo keywords. */
+    private fun matchesMediaQuery(item: LocalMedia, rawQuery: String): Boolean {
+        val q = rawQuery.trim().lowercase(Locale.getDefault())
+        if (q.isEmpty()) return true
+        val tokens = q.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return true
+        val hay = buildString {
+            append(item.displayName.lowercase(Locale.getDefault()))
+            append(' ')
+            append(item.albumName?.lowercase(Locale.getDefault()).orEmpty())
+            append(' ')
+            append(item.mimeType.lowercase(Locale.getDefault()))
+            append(' ')
+            if (item.isVideo) append("video ") else append("foto fotoğraf image photo ")
+            if (uploadedKeys.contains(item.mediaKey)) append("yedek bulut ")
+        }
+        return tokens.all { hay.contains(it) }
     }
 
     private fun buildLocalTimeline(media: List<LocalMedia>): List<TimelineItem> {

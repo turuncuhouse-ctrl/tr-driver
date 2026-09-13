@@ -113,7 +113,9 @@
             android:background="@color/tr_blue"
             android:foreground="?attr/selectableItemBackground"
             android:orientation="horizontal"
-            android:padding="16dp">
+            android:padding="16dp"
+            android:clickable="false"
+            android:focusable="false">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -144,10 +146,12 @@
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:background="#FFFFFF"
+                android:foreground="?attr/selectableItemBackgroundBorderless"
                 android:gravity="center"
                 android:text="A"
                 android:textColor="@color/tr_blue"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                android:contentDescription="Hesap" />
         </LinearLayout>
 
         <TextView
@@ -171,52 +175,49 @@
             android:maxLines="1"
             android:paddingHorizontal="12dp" />
 
-        <HorizontalScrollView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="4dp"
-            android:scrollbars="none">
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="6dp"
+            android:paddingBottom="2dp">
 
-            <LinearLayout
+            <Button
+                android:id="@+id/btnSearch"
+                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:layout_height="40dp"
+                android:minWidth="0dp"
+                android:text="Ara" />
 
-                <Button
-                    android:id="@+id/btnSearch"
-                    style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="0dp"
-                    android:text="Ara" />
+            <Button
+                android:id="@+id/btnLayout"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="▦ Izgara"
+                android:textStyle="bold" />
 
-                <Button
-                    android:id="@+id/btnLayout"
-                    style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="0dp"
-                    android:text="▦" />
+            <Button
+                android:id="@+id/btnPhotos"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:minWidth="0dp"
+                android:text="Galeri"
+                android:textStyle="bold" />
 
-                <Button
-                    android:id="@+id/btnPhotos"
-                    style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="0dp"
-                    android:text="Galeri"
-                    android:textStyle="bold" />
-
-                <Button
-                    android:id="@+id/btnActions"
-                    style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="0dp"
-                    android:text="⋯" />
-            </LinearLayout>
-        </HorizontalScrollView>
+            <Button
+                android:id="@+id/btnActions"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:minWidth="0dp"
+                android:text="⋯" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/selectionBar"

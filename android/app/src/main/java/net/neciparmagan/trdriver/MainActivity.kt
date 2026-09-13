@@ -248,7 +248,7 @@ class MainActivity : AppCompatActivity() {
             qrLauncher.launch(options)
         }
 
-        findViewById<View>(R.id.headerProfile).setOnClickListener { showAccountSheet() }
+        findViewById<View>(R.id.avatarBadge).setOnClickListener { showAccountSheet() }
         findViewById<Button>(R.id.btnActions).setOnClickListener { showActionsMenu(it) }
         findViewById<Button>(R.id.btnPhotos).setOnClickListener {
             startActivity(Intent(this, PhotosLibraryActivity::class.java))
@@ -259,11 +259,17 @@ class MainActivity : AppCompatActivity() {
             applyFilesLayout()
         }
         findViewById<Button>(R.id.btnSearch).setOnClickListener {
-            vm.search(findViewById<EditText>(R.id.inputSearch).text.toString())
+            runDriveSearch()
         }
-        findViewById<EditText>(R.id.inputSearch).setOnEditorActionListener { _, _, _ ->
-            vm.search(findViewById<EditText>(R.id.inputSearch).text.toString())
-            true
+        findViewById<EditText>(R.id.inputSearch).setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            ) {
+                runDriveSearch()
+                true
+            } else {
+                false
+            }
         }
         findViewById<Button>(R.id.btnCancelSelect).setOnClickListener { vm.clearSelection() }
         findViewById<Button>(R.id.btnDeleteSelected).setOnClickListener {
@@ -451,6 +457,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun runDriveSearch() {
+        val input = findViewById<EditText>(R.id.inputSearch)
+        val q = input.text?.toString().orEmpty().trim()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+        imm?.hideSoftInputFromWindow(input.windowToken, 0)
+        vm.search(q)
+    }
+
     private fun selectDriveSection(section: DriveSection) {
         driveSection = section
         styleDriveNav()
@@ -541,7 +555,10 @@ class MainActivity : AppCompatActivity() {
                 btnRegister.text = "Üye ol"
                 vm.logout()
             }
-            .setNegativeButton("Kapat", null)
+            .setNeutralButton("TR Galeri") { _, _ ->
+                startActivity(Intent(this, PhotosLibraryActivity::class.java))
+            }
+            .setNegativeButton("Tamam", null)
             .show()
     }
 
@@ -618,7 +635,8 @@ class MainActivity : AppCompatActivity() {
         } else {
             LinearLayoutManager(this)
         }
-        findViewById<Button>(R.id.btnLayout).text = if (gridLayout) "☰" else "▦"
+        findViewById<Button>(R.id.btnLayout).text =
+            if (gridLayout) "☰ Liste" else "▦ Izgara"
     }
 
     private fun openVehicleIntake() {
