@@ -1,7 +1,7 @@
 ﻿{
   "minSupportedCode": 1,
-  "versionCode": 36,
-  "versionName": "0.8.18",
+  "versionCode": 37,
+  "versionName": "0.8.19",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "Yer ac: sadece buluta dogru gidenler silinir. Kitaplik yedekleri gun/ay/yil sirali."
+  "releaseNotes": "SMS ve arama kaydi yedeklemesi kaldirildi. Yalniz galeri/fotograf-video yedegi."
 }

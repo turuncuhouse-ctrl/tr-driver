@@ -62,14 +62,6 @@ class GalleryBackupForegroundService : Service() {
         running = true
         try {
             val session = net.neciparmagan.trdriver.data.SessionStore(this)
-            if (session.smsBackupEnabled || session.callLogBackupEnabled) {
-                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-                nm.notify(
-                    BackupNotifications.SERVICE_NOTIFICATION_ID,
-                    BackupNotifications.build(this, "TR Driver yedek", "SMS / arama kayıtları…"),
-                )
-                CommsBackupEngine.runIfNeeded(this)
-            }
             if (!session.galleryBackupEnabled) {
                 return
             }

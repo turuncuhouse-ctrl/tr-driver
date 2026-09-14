@@ -41,9 +41,6 @@ class GalleryBackupWorker(
         // Fallback: run inside worker with typed foreground notification (Android 10+).
         safeSetForeground("TR Driver yedekleme…")
         return try {
-            if (session.smsBackupEnabled || session.callLogBackupEnabled) {
-                CommsBackupEngine.runIfNeeded(applicationContext)
-            }
             if (session.galleryBackupEnabled) {
                 val result = GalleryBackupEngine.runBatch(
                     context = applicationContext,

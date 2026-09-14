@@ -30,8 +30,6 @@ object AppBootstrap {
         out += MediaAccess.mediaPermissionsForRequest().toList()
         out += MediaAccess.notificationPermissionOrEmpty().toList()
         val optional = listOf(
-            Manifest.permission.READ_SMS,
-            Manifest.permission.READ_CALL_LOG,
             Manifest.permission.CAMERA,
         )
         for (p in optional) {

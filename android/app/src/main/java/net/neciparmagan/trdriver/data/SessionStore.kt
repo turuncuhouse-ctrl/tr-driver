@@ -44,18 +44,28 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean(KEY_GALLERY_ON, false)
         set(value) = prefs.edit().putBoolean(KEY_GALLERY_ON, value).apply()
 
-    /** SMS inbox/sent backup to TR Backup / device / SMS */
+    /** SMS/arama yedeği kaldırıldı — her zaman kapalı. */
     var smsBackupEnabled: Boolean
-        get() = prefs.getBoolean(KEY_SMS_BACKUP, false)
-        set(value) = prefs.edit().putBoolean(KEY_SMS_BACKUP, value).apply()
+        get() = false
+        set(_) {
+            prefs.edit().putBoolean(KEY_SMS_BACKUP, false).apply()
+        }
 
-    /** Call log backup to TR Backup / device / AramaKayitlari */
+    /** SMS/arama yedeği kaldırıldı — her zaman kapalı. */
     var callLogBackupEnabled: Boolean
-        get() = prefs.getBoolean(KEY_CALL_BACKUP, false)
-        set(value) = prefs.edit().putBoolean(KEY_CALL_BACKUP, value).apply()
+        get() = false
+        set(_) {
+            prefs.edit().putBoolean(KEY_CALL_BACKUP, false).apply()
+        }
 
-    fun anyBackupEnabled(): Boolean =
-        galleryBackupEnabled || smsBackupEnabled || callLogBackupEnabled
+    fun disableCommsBackup() {
+        prefs.edit()
+            .putBoolean(KEY_SMS_BACKUP, false)
+            .putBoolean(KEY_CALL_BACKUP, false)
+            .apply()
+    }
+
+    fun anyBackupEnabled(): Boolean = galleryBackupEnabled
 
     /**
      * Galeri yedekleme yalnızca Wi‑Fi / Ethernet üzerinden yapılır.
@@ -336,7 +346,7 @@ class SessionStore(context: Context) {
     }
 
     fun backupStatusLine(): String {
-        if (!galleryBackupEnabled && !smsBackupEnabled && !callLogBackupEnabled) return "Yedek: kapalı"
+        if (!galleryBackupEnabled) return "Yedek: kapalı"
         if (backupActive) {
             val name = backupCurrentFile.ifBlank { "dosya" }
             val left = backupPendingCount

@@ -17,7 +17,7 @@ import kotlin.coroutines.resume
 /**
  * Network policy:
  * - App browse / download / manual upload: any internet (Wi‑Fi or mobile).
- * - Automatic backup (gallery/SMS/calls): Wi‑Fi / Ethernet only.
+ * - Automatic gallery backup: Wi‑Fi / Ethernet only.
  */
 object UploadNetworkGate {
     private const val VALIDATED_FALLBACK_MS = 18_000L

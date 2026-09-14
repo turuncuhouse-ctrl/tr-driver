@@ -40,30 +40,6 @@
                 android:text="Otomatik foto/video yedekle"
                 android:textColor="@color/tr_ink" />
 
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchSmsBackup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="SMS mesajlarını yedekle"
-                android:textColor="@color/tr_ink" />
-
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchCallLogBackup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="Arama kayıtlarını yedekle"
-                android:textColor="@color/tr_ink" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="SMS ve arama kaydı: telefonun kendi mesaj / arama geçmişi (izin gerekir). WhatsApp, Telegram, Signal vb. okunamaz."
-                android:textColor="@color/tr_ink"
-                android:textSize="11sp" />
-
             <TextView
                 android:id="@+id/networkHint"
                 android:layout_width="match_parent"

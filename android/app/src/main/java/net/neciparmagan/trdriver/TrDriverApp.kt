@@ -12,6 +12,7 @@ class TrDriverApp : Application() {
         val session = SessionStore(this)
         // Enforce Wi‑Fi-only policy and keep session prefs warm.
         session.wifiOnlyBackup = true
+        session.disableCommsBackup()
         WifiBackupWatcher.start(this)
         if (session.anyBackupEnabled() && session.isLoggedIn) {
             GalleryBackupWorker.schedule(this)
