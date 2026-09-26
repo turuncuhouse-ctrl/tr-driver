@@ -2,7 +2,6 @@ package net.neciparmagan.trdriver
 
 import android.app.Application
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
-import net.neciparmagan.trdriver.backup.TrKeepAliveService
 import net.neciparmagan.trdriver.backup.WifiBackupWatcher
 import net.neciparmagan.trdriver.data.SessionStore
 
@@ -15,8 +14,9 @@ class TrDriverApp : Application() {
         session.disableCommsBackup()
         WifiBackupWatcher.start(this)
         if (session.anyBackupEnabled() && session.isLoggedIn) {
+            // WorkManager only here — starting a foreground service from Application
+            // crashes on Android 12+ when the app is not yet visible.
             GalleryBackupWorker.schedule(this)
-            TrKeepAliveService.startIfNeeded(this)
         }
     }
 }

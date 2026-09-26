@@ -17,7 +17,6 @@ class BootReceiver : BroadcastReceiver() {
         val session = SessionStore(app)
         if (session.isLoggedIn && session.anyBackupEnabled()) {
             GalleryBackupWorker.schedule(app)
-            TrKeepAliveService.startIfNeeded(app)
         }
     }
 }

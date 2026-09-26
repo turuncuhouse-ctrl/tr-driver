@@ -59,12 +59,13 @@ object AppBootstrap {
                 },
             )
             .build()
-        ShortcutManagerCompat.requestPinShortcut(activity, shortcut, null)
+        runCatching { ShortcutManagerCompat.requestPinShortcut(activity, shortcut, null) }
     }
 
     fun maybeOfferDefaultGallery(activity: Activity) {
         val prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (prefs.getBoolean(KEY_DEFAULT_GALLERY, false)) return
+        if (activity.isFinishing) return
         prefs.edit().putBoolean(KEY_DEFAULT_GALLERY, true).apply()
         AlertDialog.Builder(activity)
             .setTitle("TR Galeri varsayılan olsun mu?")

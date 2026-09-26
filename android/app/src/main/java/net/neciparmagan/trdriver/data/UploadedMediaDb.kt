@@ -50,6 +50,34 @@ class UploadedMediaDb(context: Context) :
         ).use { return it.moveToFirst() }
     }
 
+    fun remoteIdFor(mediaKey: String): String? {
+        if (mediaKey.isBlank()) return null
+        readableDatabase.rawQuery(
+            "SELECT remote_id FROM uploaded_media WHERE media_key=? AND remote_id <> '' LIMIT 1",
+            arrayOf(mediaKey),
+        ).use { c ->
+            return if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null
+        }
+    }
+
+    fun allRemoteIds(): Map<String, String> {
+        val out = HashMap<String, String>()
+        readableDatabase.rawQuery(
+            "SELECT media_key, remote_id FROM uploaded_media WHERE remote_id <> ''",
+            null,
+        ).use { c ->
+            val iKey = c.getColumnIndex("media_key")
+            val iRemote = c.getColumnIndex("remote_id")
+            if (iKey < 0 || iRemote < 0) return emptyMap()
+            while (c.moveToNext()) {
+                val key = c.getString(iKey) ?: continue
+                val remote = c.getString(iRemote) ?: continue
+                if (key.isNotBlank() && remote.isNotBlank()) out[key] = remote
+            }
+        }
+        return out
+    }
+
     /** All media keys that have been backed up (for gallery cloud badges). */
     fun allUploadedKeys(): Set<String> {
         val out = HashSet<String>()

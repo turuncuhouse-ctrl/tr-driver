@@ -35,14 +35,24 @@ class GalleryBackupForegroundService : Service() {
         }
         BackupNotifications.ensureChannel(this)
         val notification = BackupNotifications.build(this, "TR Driver yedek", "Galeri yedekleme hazırlanıyor…")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                BackupNotifications.SERVICE_NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            )
-        } else {
-            startForeground(BackupNotifications.SERVICE_NOTIFICATION_ID, notification)
+        val started = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    BackupNotifications.SERVICE_NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+            } else {
+                startForeground(BackupNotifications.SERVICE_NOTIFICATION_ID, notification)
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed", e)
+            false
+        }
+        if (!started) {
+            stopSelf()
+            return START_NOT_STICKY
         }
         if (worker?.isActive == true) {
             return START_STICKY

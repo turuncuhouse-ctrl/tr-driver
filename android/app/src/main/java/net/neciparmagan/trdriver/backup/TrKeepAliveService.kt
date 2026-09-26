@@ -23,7 +23,7 @@ class TrKeepAliveService : Service() {
             "TR Driver",
             "Arka planda hazır · yedek yalnız Wi‑Fi",
         )
-        try {
+        val started = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     BackupNotifications.KEEPALIVE_NOTIFICATION_ID,
@@ -33,8 +33,14 @@ class TrKeepAliveService : Service() {
             } else {
                 startForeground(BackupNotifications.KEEPALIVE_NOTIFICATION_ID, n)
             }
+            true
         } catch (e: Exception) {
             Log.w(TAG, "startForeground failed: ${e.message}")
+            false
+        }
+        if (!started) {
+            stopSelf()
+            return START_NOT_STICKY
         }
         return START_STICKY
     }

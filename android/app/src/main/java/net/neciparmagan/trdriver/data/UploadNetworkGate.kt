@@ -110,19 +110,12 @@ object UploadNetworkGate {
     fun networkPolicyLabel(session: SessionStore): String =
         "yedek: yalnız Wi‑Fi · uygulama: mobil veri OK"
 
-    /** Bind process to Wi‑Fi only during backup uploads (optional). */
-    fun bindUploadNetwork(context: Context, wifiOnly: Boolean = true): Network? {
-        if (!wifiOnly) return null
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
-        val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            ?: return null
-        val network = cm.activeNetwork ?: return null
-        val caps = cm.getNetworkCapabilities(network) ?: return null
-        val wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
-        if (!wifi) return null
-        runCatching { cm.bindProcessToNetwork(network) }
-        return network
+    /**
+     * Never bind the whole process to one network. That hijacks WhatsApp / gallery
+     * preview on mobile data and can crash when Wi‑Fi drops mid-backup.
+     */
+    fun bindUploadNetwork(@Suppress("UNUSED_PARAMETER") context: Context, wifiOnly: Boolean = true): Network? {
+        return null
     }
 
     fun unbindUploadNetwork(context: Context) {

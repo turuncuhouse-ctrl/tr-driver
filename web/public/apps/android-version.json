@@ -1,7 +1,7 @@
 ﻿{
   "minSupportedCode": 1,
-  "versionCode": 37,
-  "versionName": "0.8.19",
+  "versionCode": 38,
+  "versionName": "0.8.20",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "SMS ve arama kaydi yedeklemesi kaldirildi. Yalniz galeri/fotograf-video yedegi."
+  "releaseNotes": "Cokme duzeltmeleri; galeride saga-sola kaydirma; yuklenecek yukari ok; bulut onizleme mobil veride"
 }

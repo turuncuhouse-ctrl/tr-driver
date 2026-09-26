@@ -97,6 +97,25 @@ class UploadQueueDb(context: Context) : SQLiteOpenHelper(context.applicationCont
         )
     }
 
+    fun pendingMediaKeys(): Set<String> {
+        val out = HashSet<String>()
+        readableDatabase.rawQuery(
+            "SELECT source, local_uri FROM upload_queue WHERE state='pending'",
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                val source = c.getString(0).orEmpty()
+                val uri = c.getString(1).orEmpty()
+                if (source.startsWith("gallery:")) {
+                    val key = source.removePrefix("gallery:")
+                    if (key.isNotBlank()) out += key
+                }
+                if (uri.isNotBlank()) out += uri
+            }
+        }
+        return out
+    }
+
     fun countPending(): Int {
         readableDatabase.rawQuery("select count(*) from upload_queue where state='pending'", null).use { c ->
             return if (c.moveToFirst()) c.getInt(0) else 0
@@ -125,6 +144,10 @@ object UploadConflictUi {
         fileName: String,
     ): UploadConflictPolicy = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
         kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            if (activity.isFinishing) {
+                cont.resume(UploadConflictPolicy.RENAME) {}
+                return@suspendCancellableCoroutine
+            }
             val dialog = androidx.appcompat.app.AlertDialog.Builder(activity)
                 .setTitle("Dosya zaten var")
                 .setMessage(

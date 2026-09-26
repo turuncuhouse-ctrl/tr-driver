@@ -46,15 +46,16 @@
 
         <TextView
             android:id="@+id/photoBackupBadge"
-            android:layout_width="18dp"
-            android:layout_height="18dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
             android:layout_gravity="bottom|end"
             android:layout_margin="4dp"
             android:background="#CC0B5CAD"
             android:gravity="center"
             android:text="☁"
             android:textColor="#FFFFFF"
-            android:textSize="10sp"
+            android:textSize="12sp"
+            android:textStyle="bold"
             android:visibility="gone" />
 
         <CheckBox

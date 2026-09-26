@@ -212,7 +212,13 @@ class FreeUpSpaceActivity : AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     pendingDelete = finalList
                     val uris = finalList.map { it.uri }
-                    val request = MediaStore.createDeleteRequest(contentResolver, uris)
+                    val request = runCatching {
+                        MediaStore.createDeleteRequest(contentResolver, uris)
+                    }.getOrNull()
+                    if (request == null) {
+                        status.text = "Silme isteği oluşturulamadı — hiçbir şey silinmedi"
+                        return@launch
+                    }
                     deleteRequestLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
                     return@launch
                 }

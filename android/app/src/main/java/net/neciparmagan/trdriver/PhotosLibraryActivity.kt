@@ -66,6 +66,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private enum class Tab { PHOTOS, ALBUMS, CLOUD }
     private enum class MediaFilter { ALL, PHOTOS, VIDEOS }
     private enum class TimelineZoom { DAY, MONTH, YEAR }
+    private enum class LocalBackupMark { DONE, WAITING, PENDING, NONE }
 
     private sealed class TimelineItem {
         data class Header(val label: String, val dayKey: String) : TimelineItem()
@@ -112,6 +113,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
     private var allLocal: List<LocalMedia> = emptyList()
     private var allAlbums: List<MediaAlbum> = emptyList()
     private var allCloud: List<FileEntry> = emptyList()
+    private var visibleLocal: List<LocalMedia> = emptyList()
+    private var visibleCloud: List<FileEntry> = emptyList()
+    private var remoteIds: Map<String, String> = emptyMap()
+    private var pendingUploadKeys: Set<String> = emptySet()
 
     private val selectedLocal = linkedSetOf<String>() // mediaKey
     private val selectedCloud = linkedSetOf<String>() // file id
@@ -125,7 +130,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         isLocalSelected = { selectedLocal.contains(it.mediaKey) },
         isCloudSelected = { selectedCloud.contains(it.id) },
         selectionActive = { selectionMode },
-        isBackedUp = { uploadedKeys.contains(it.mediaKey) },
+        localMark = { localBackupMark(it) },
     )
     private val albumAdapter = AlbumGridAdapter { openAlbum(it) }
 
@@ -548,13 +553,26 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
     private fun refreshUploadedKeys() {
         lifecycleScope.launch {
-            uploadedKeys = withContext(Dispatchers.IO) {
-                net.neciparmagan.trdriver.data.UploadedMediaDb(this@PhotosLibraryActivity).allUploadedKeys()
+            withContext(Dispatchers.IO) {
+                val db = net.neciparmagan.trdriver.data.UploadedMediaDb(this@PhotosLibraryActivity)
+                uploadedKeys = db.allUploadedKeys()
+                remoteIds = db.allRemoteIds()
+                pendingUploadKeys = net.neciparmagan.trdriver.data.UploadQueueDb(this@PhotosLibraryActivity)
+                    .pendingMediaKeys()
             }
             if (grid.adapter === timelineAdapter) {
                 timelineAdapter.notifyDataSetChanged()
             }
         }
+    }
+
+    private fun localBackupMark(media: LocalMedia): LocalBackupMark {
+        if (uploadedKeys.contains(media.mediaKey)) return LocalBackupMark.DONE
+        if (pendingUploadKeys.contains(media.mediaKey) || pendingUploadKeys.contains(media.uri.toString())) {
+            return LocalBackupMark.WAITING
+        }
+        if (session.galleryBackupEnabled && session.isLoggedIn) return LocalBackupMark.PENDING
+        return LocalBackupMark.NONE
     }
 
     private fun showMoreMenu(anchor: View) {
@@ -883,6 +901,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
                             MainActivity.resolveMime(it).startsWith("video/")
                         }
                     }
+                    visibleCloud = files.filter { it.kind != "folder" }
                     timelineAdapter.submitCloud(buildCloudTimeline(files))
                     grid.post { updateStickyHeader() }
                     if (files.isEmpty()) {
@@ -913,6 +932,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
             MediaFilter.PHOTOS -> media.filter { !it.isVideo }
             MediaFilter.VIDEOS -> media.filter { it.isVideo }
         }
+        visibleLocal = media
         timelineAdapter.submitLocal(buildLocalTimeline(media))
         grid.post { updateStickyHeader() }
         if (media.isEmpty()) {
@@ -1432,10 +1452,23 @@ class PhotosLibraryActivity : AppCompatActivity() {
             }
             if (localItems.isNotEmpty()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    pendingLocalDelete = localItems
-                    val request = MediaStore.createDeleteRequest(contentResolver, localItems.map { it.uri })
-                    deleteRequestLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
-                    return@launch
+                    val mediaStoreUris = localItems.map { it.uri }.filter {
+                        it.scheme == "content" && it.authority?.contains("media") == true
+                    }
+                    if (mediaStoreUris.isEmpty()) {
+                        Toast.makeText(this@PhotosLibraryActivity, "Bu öğeler sistem silme ile silinemedi", Toast.LENGTH_LONG).show()
+                    } else {
+                        pendingLocalDelete = localItems
+                        val request = runCatching {
+                            MediaStore.createDeleteRequest(contentResolver, mediaStoreUris)
+                        }.getOrNull()
+                        if (request == null) {
+                            Toast.makeText(this@PhotosLibraryActivity, "Silme isteği oluşturulamadı", Toast.LENGTH_LONG).show()
+                        } else {
+                            deleteRequestLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+                            return@launch
+                        }
+                    }
                 }
                 var deleted = 0
                 for (item in localItems) {
@@ -1460,13 +1493,11 @@ class PhotosLibraryActivity : AppCompatActivity() {
             finish()
             return
         }
-        startActivity(
-            Intent(this, MediaPreviewActivity::class.java).apply {
-                putExtra(MediaPreviewActivity.EXTRA_NAME, item.displayName)
-                putExtra(MediaPreviewActivity.EXTRA_MIME, item.mimeType)
-                putExtra(MediaPreviewActivity.EXTRA_LOCAL_URI, item.uri.toString())
-            },
-        )
+        val pages = visibleLocal.ifEmpty { listOf(item) }.map {
+            GalleryPreviewItem.fromLocal(it, remoteIds[it.mediaKey])
+        }
+        val index = pages.indexOfFirst { it.key == item.mediaKey }.coerceAtLeast(0)
+        GalleryPreviewSession.open(this, pages, index)
     }
 
     private fun openCloud(entry: FileEntry) {
@@ -1475,13 +1506,10 @@ class PhotosLibraryActivity : AppCompatActivity() {
             loadCloudAlbumContents(entry)
             return
         }
-        startActivity(
-            Intent(this, MediaPreviewActivity::class.java).apply {
-                putExtra(MediaPreviewActivity.EXTRA_ID, entry.id)
-                putExtra(MediaPreviewActivity.EXTRA_NAME, entry.name)
-                putExtra(MediaPreviewActivity.EXTRA_MIME, MainActivity.resolveMime(entry))
-            },
-        )
+        val files = visibleCloud.ifEmpty { listOf(entry) }.filter { it.kind != "folder" }
+        val pages = files.map { GalleryPreviewItem.fromCloud(it, MainActivity.resolveMime(it)) }
+        val index = pages.indexOfFirst { it.key == entry.id }.coerceAtLeast(0)
+        GalleryPreviewSession.open(this, pages, index)
     }
 
     private fun mediaPermissions(): Array<String> = MediaAccess.mediaPermissionsForRequest()
@@ -1498,7 +1526,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         private val isLocalSelected: (LocalMedia) -> Boolean,
         private val isCloudSelected: (FileEntry) -> Boolean,
         private val selectionActive: () -> Boolean,
-        private val isBackedUp: (LocalMedia) -> Boolean,
+        private val localMark: (LocalMedia) -> LocalBackupMark,
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private var items: List<TimelineItem> = emptyList()
         private var token = ""
@@ -1550,9 +1578,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
 
         fun isHeader(position: Int): Boolean = items.getOrNull(position) is TimelineItem.Header
 
-        override fun getItemViewType(position: Int): Int = when (items[position]) {
+        override fun getItemViewType(position: Int): Int = when (items.getOrNull(position)) {
             is TimelineItem.Header -> 0
-            is TimelineItem.Photo, is TimelineItem.Cloud -> 1
+            is TimelineItem.Photo, is TimelineItem.Cloud, null -> 1
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -1568,7 +1596,7 @@ class PhotosLibraryActivity : AppCompatActivity() {
         override fun getItemCount(): Int = items.size
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-            when (val item = items[position]) {
+            when (val item = items.getOrNull(position) ?: return) {
                 is TimelineItem.Header -> (holder as HeaderVH).title.text = item.label
                 is TimelineItem.Photo -> bindLocal(holder as CellVH, item.media)
                 is TimelineItem.Cloud -> bindCloud(holder as CellVH, item.entry)
@@ -1585,7 +1613,24 @@ class PhotosLibraryActivity : AppCompatActivity() {
             holder.badge.visibility = if (media.isVideo) View.VISIBLE else View.GONE
             if (media.isVideo) holder.badge.text = "▶"
             holder.nameHint.visibility = View.GONE
-            holder.backupBadge.visibility = if (isBackedUp(media)) View.VISIBLE else View.GONE
+            when (localMark(media)) {
+                LocalBackupMark.DONE -> {
+                    holder.backupBadge.visibility = View.VISIBLE
+                    holder.backupBadge.text = "☁"
+                    holder.backupBadge.setBackgroundColor(Color.parseColor("#CC0B5CAD"))
+                }
+                LocalBackupMark.WAITING -> {
+                    holder.backupBadge.visibility = View.VISIBLE
+                    holder.backupBadge.text = "↑"
+                    holder.backupBadge.setBackgroundColor(Color.parseColor("#CCE67E22"))
+                }
+                LocalBackupMark.PENDING -> {
+                    holder.backupBadge.visibility = View.VISIBLE
+                    holder.backupBadge.text = "↑"
+                    holder.backupBadge.setBackgroundColor(Color.parseColor("#99607384"))
+                }
+                LocalBackupMark.NONE -> holder.backupBadge.visibility = View.GONE
+            }
             holder.check.visibility = if (selectionActive()) View.VISIBLE else View.GONE
             holder.check.setOnCheckedChangeListener(null)
             holder.check.isChecked = isLocalSelected(media)
