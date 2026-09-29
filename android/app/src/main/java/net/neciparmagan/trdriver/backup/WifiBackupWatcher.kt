@@ -58,13 +58,18 @@ object WifiBackupWatcher {
     private fun scheduleBackupSoon(context: Context) {
         pendingStart?.let { mainHandler.removeCallbacks(it) }
         val task = Runnable {
-            val session = SessionStore(context)
-            if (!session.isLoggedIn || !session.anyBackupEnabled()) return@Runnable
-            if (!UploadNetworkGate.isWifi(context)) return@Runnable
-            if (GalleryBackupForegroundService.running) return@Runnable
-            Log.i(TAG, "Wi‑Fi up — scheduling gallery backup")
-            GalleryBackupWorker.schedule(context)
-            GalleryBackupWorker.scheduleContinue(context, delaySeconds = 3)
+            try {
+                val session = SessionStore(context)
+                if (!session.isLoggedIn || !session.anyBackupEnabled()) return@Runnable
+                if (!UploadNetworkGate.isWifi(context)) return@Runnable
+                if (GalleryBackupForegroundService.running) return@Runnable
+                Log.i(TAG, "Wi‑Fi up — scheduling gallery backup")
+                // schedule() already enqueues a one-shot; continue with delay (no expedited).
+                GalleryBackupWorker.schedule(context)
+                GalleryBackupWorker.scheduleContinue(context, delaySeconds = 3L)
+            } catch (e: Exception) {
+                Log.e(TAG, "scheduleBackupSoon failed", e)
+            }
         }
         pendingStart = task
         // Debounce: wait a few seconds for Wi‑Fi to stabilize.

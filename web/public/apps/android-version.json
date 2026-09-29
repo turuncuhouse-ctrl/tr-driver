@@ -1,7 +1,7 @@
 ﻿{
   "minSupportedCode": 1,
-  "versionCode": 38,
-  "versionName": "0.8.20",
+  "versionCode": 39,
+  "versionName": "0.8.21",
   "apkPath": "/download/TRDriver.apk",
-  "releaseNotes": "Cokme duzeltmeleri; galeride saga-sola kaydirma; yuklenecek yukari ok; bulut onizleme mobil veride"
+  "releaseNotes": "Wi-Fi yedek crash duzeltildi: Expedited + delay ayni anda kullanilmiyor"
 }

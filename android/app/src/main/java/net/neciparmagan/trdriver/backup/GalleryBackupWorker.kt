@@ -126,26 +126,45 @@ class GalleryBackupWorker(
             }
         }
 
+        /**
+         * Schedule the next backup batch.
+         * WorkManager forbids combining setExpedited() with setInitialDelay() —
+         * that IllegalArgumentException crashed Wi‑Fi resume (WifiBackupWatcher).
+         */
         fun scheduleContinue(context: Context, delaySeconds: Long = 1) {
             val session = SessionStore(context)
             if (!session.anyBackupEnabled() || !session.isLoggedIn) return
+            val delay = delaySeconds.coerceAtLeast(0L)
             val builder = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
                 .setConstraints(constraints(session))
-                .setInitialDelay(delaySeconds.coerceAtLeast(0), TimeUnit.SECONDS)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (delay > 0L) {
+                builder.setInitialDelay(delay, TimeUnit.SECONDS)
+            } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                // Immediate only — never pair expedited with a delay.
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             }
-            WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(UNIQUE_CONTINUE, ExistingWorkPolicy.REPLACE, builder.build())
+            runCatching {
+                WorkManager.getInstance(context.applicationContext)
+                    .enqueueUniqueWork(UNIQUE_CONTINUE, ExistingWorkPolicy.REPLACE, builder.build())
+            }.onFailure { e ->
+                Log.e(TAG, "scheduleContinue failed delay=$delay", e)
+            }
         }
 
         private fun enqueueOnce(context: Context, policy: ExistingWorkPolicy) {
             val session = SessionStore(context)
-            val once = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
+            val builder = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
                 .setConstraints(constraints(session))
-                .build()
-            WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(UNIQUE_ONCE, policy, once)
+            // Immediate kickoff may be expedited; no delay here.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            }
+            runCatching {
+                WorkManager.getInstance(context.applicationContext)
+                    .enqueueUniqueWork(UNIQUE_ONCE, policy, builder.build())
+            }.onFailure { e ->
+                Log.e(TAG, "enqueueOnce failed", e)
+            }
         }
 
         private fun constraints(session: SessionStore) = Constraints.Builder()
