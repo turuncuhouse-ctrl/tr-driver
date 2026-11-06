@@ -29,9 +29,10 @@ jobs:
       - name: Test backend
         shell: bash
         run: |
-          set -o pipefail
+          set +e
           go test -race -count=1 ./... 2>&1 | tee /tmp/backend-test.log
           code=${PIPESTATUS[0]}
+          set -e
           if [ "$code" -ne 0 ]; then
             tail -n 120 /tmp/backend-test.log | while IFS= read -r line; do
               echo "::error title=Backend test log::$line"
