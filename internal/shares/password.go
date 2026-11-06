@@ -38,7 +38,7 @@ func hashSharePassword(password string) (string, error) {
 func verifySharePassword(password, stored, legacySalt string) (bool, bool) {
 	if strings.HasPrefix(stored, "argon2id$") {
 		parts := strings.Split(stored, "$")
-		if len(parts) != 6 {
+		if len(parts) != 5 {
 			return false, false
 		}
 		params := map[string]uint64{}
@@ -57,11 +57,11 @@ func verifySharePassword(password, stored, legacySalt string) (bool, bool) {
 		if memory == 0 || time == 0 || threads == 0 {
 			return false, false
 		}
-		salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+		salt, err := base64.RawStdEncoding.DecodeString(parts[3])
 		if err != nil {
 			return false, false
 		}
-		want, err := base64.RawStdEncoding.DecodeString(parts[5])
+		want, err := base64.RawStdEncoding.DecodeString(parts[4])
 		if err != nil {
 			return false, false
 		}
