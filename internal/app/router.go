@@ -42,7 +42,7 @@ func NewRouter(
 ) (http.Handler, error) {
 	mux := http.NewServeMux()
 
-	authHandler := auth.NewHandler(authService)
+	authHandler := auth.NewHandler(authService, cfg.TrustedProxies)
 	adminHandler := admin.NewHandler(adminService, pace, cfg.MaxUploadBatchBytes, cfg.UploadChunkBytes)
 	mailHandler := admin.NewMailHandler(mailService)
 	fileHandler := files.NewHandler(fileService)
@@ -54,7 +54,7 @@ func NewRouter(
 	collabHandler := collab.NewHandler(collabService)
 	licenseHandler := license.NewHandler(licenseService)
 	updateHandler := updates.NewHandler(updates.Config{ManifestURL: cfg.UpdateManifestURL, Channel: cfg.UpdateChannel})
-	davHandler := webdavx.New(authService, fileService)
+	davHandler := webdavx.New(authService, fileService, cfg.TrustedProxies)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "product": version.ProductName, "version": version.Version})
@@ -76,6 +76,9 @@ func NewRouter(
 	mux.Handle("/api/auth/logout", authHandler.RequireAuth(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("/api/auth/me", authHandler.RequireAuth(http.HandlerFunc(authHandler.Me)))
 	mux.Handle("/api/auth/security", authHandler.RequireSession(http.HandlerFunc(authHandler.Security)))
+	mux.Handle("/api/auth/security/totp/setup", authHandler.RequireSession(http.HandlerFunc(authHandler.TOTPSetup)))
+	mux.Handle("/api/auth/security/totp/enable", authHandler.RequireSession(http.HandlerFunc(authHandler.TOTPEnable)))
+	mux.Handle("/api/auth/security/totp/disable", authHandler.RequireSession(http.HandlerFunc(authHandler.TOTPDisable)))
 	mux.Handle("/api/auth/devices", authHandler.RequireSession(http.HandlerFunc(authHandler.Devices)))
 	mux.Handle("/api/auth/devices/", authHandler.RequireSession(http.HandlerFunc(authHandler.Device)))
 	mux.Handle("/api/plans", authHandler.RequireAuth(http.HandlerFunc(planHandler.List)))
@@ -180,7 +183,7 @@ func NewRouter(
 		})
 	}
 
-	return securityHeaders(csrfMiddleware(loggingMiddleware(mux), cfg.SessionSecret)), nil
+	return securityHeaders(csrfMiddleware(loggingMiddleware(mux), cfg.SessionSecret, cfg.TrustedProxies...)), nil
 }
 
 func securityHeaders(next http.Handler) http.Handler {

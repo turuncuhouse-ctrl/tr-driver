@@ -39,3 +39,17 @@ func TestHashTokenIsStableAndDoesNotExposeToken(t *testing.T) {
 		t.Fatalf("unexpected token hash %q", hash)
 	}
 }
+
+func TestLoginLimiterSweepsExpiredKeys(t *testing.T) {
+	l := &loginLimiter{attempt: map[string][]time.Time{}}
+	old := time.Now().Add(-20 * time.Minute)
+	l.attempt["stale"] = []time.Time{old}
+	l.attempt["fresh"] = []time.Time{time.Now()}
+	l.sweepLocked(time.Now())
+	if _, ok := l.attempt["stale"]; ok {
+		t.Fatal("expected stale key to be removed")
+	}
+	if _, ok := l.attempt["fresh"]; !ok {
+		t.Fatal("expected fresh key to remain")
+	}
+}

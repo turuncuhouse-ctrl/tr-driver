@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.8.23 — Kalıcı cihaz oturumu, kalan güvenlik düzeltmeleri ve Android güncellemesi
+
+### Added
+- Android/cihaz token’ları varsayılan olarak süresiz; yalnızca cihaz iptali, çıkış veya şifre sıfırlama ile sonlanır
+- WebDAV Basic auth ile cihaz token’ı desteği (2FA kullanıcıları için)
+- `/readyz` veritabanı hazır olma endpoint’i
+- Sync yüklemelerinde SHA-256 içerik doğrulaması
+- WebDAV spool dosyaları için başlangıç/periyodik temizlik ve boyut sınırı
+
+### Changed
+- `DEVICE_TOKEN_TTL=0` varsayılan; pozitif değer isteğe bağlı süre
+- Şifre sıfırlama tüm cihaz token’larını da iptal eder
+- Klasör purge/restore alt ağacı ve doğru kota sahibini işler
+- Paylaşım şifresi denemeleri ve güvenlik onayları hız sınırlandı
+
+### Fixed
+- View-only paylaşım bağlantılarında indirme yetkisi bypass’ı kapatıldı
+- Android 403 yanıtları oturumu kapatmaz; yalnızca gerçek 401 kimlik iptali sayılır
+- Shared drive değişimleri sync üyelerine drive_id ile iletilir
+
+## 0.8.22 — CI/sürüm birliği, depolama temizliği ve güvenlik sertleştirme
+
+### Added
+- Tek `VERSION` kaynağı; backend/Docker/Android/release workflow sürüm damgası
+- CI (backend/web/Android/Docker) ve tag release workflow
+- TOTP (authenticator) 2FA kurulum/etkinleştirme/kapatma; web ayarlar UI
+- `TRUSTED_PROXY_CIDRS`, `FILE_CHANGE_RETENTION` yapılandırması
+- Android EncryptedSharedPreferences migrasyonu
+
+### Changed
+- CSRF token’ları oturuma bağlı HMAC; paylaşım parolaları Argon2id + HMAC unlock cookie
+- WebDAV yazmaları RAM yerine disk spool ile stream
+- Sync değişim geçmişi budanır; eski cursor güvenli snapshot bootstrap ister
+
+### Fixed
+- Versiyon blob GC, çöp kutusu purge sonrası blob temizliği, login limiter sweep
+- Public share dosyalarında Range desteği
+- Android `allowBackup=false`
+
 ## 0.7.2 — Android yedek progress + widget
 
 ### Added

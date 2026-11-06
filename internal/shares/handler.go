@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"necipdrive/internal/auth"
@@ -21,10 +22,52 @@ type Handler struct {
 	fileService *files.Service
 	mail        *mailer.Service
 	cfg         config.Config
+	limiter     *shareLimiter
 }
 
 func NewHandler(service *Service, fileService *files.Service, mail *mailer.Service, cfg config.Config) *Handler {
-	return &Handler{service: service, fileService: fileService, mail: mail, cfg: cfg}
+	return &Handler{service: service, fileService: fileService, mail: mail, cfg: cfg, limiter: &shareLimiter{attempt: map[string][]time.Time{}}}
+}
+
+type shareLimiter struct {
+	mu        sync.Mutex
+	attempt   map[string][]time.Time
+	lastSweep time.Time
+}
+
+func (l *shareLimiter) allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if now.Sub(l.lastSweep) >= time.Minute {
+		l.lastSweep = now
+		for k, v := range l.attempt {
+			v = pruneShareAttempts(v, now.Add(-10*time.Minute))
+			if len(v) == 0 {
+				delete(l.attempt, k)
+			} else {
+				l.attempt[k] = v
+			}
+		}
+	}
+	window := now.Add(-10 * time.Minute)
+	entries := pruneShareAttempts(l.attempt[key], window)
+	if len(entries) >= 10 {
+		l.attempt[key] = entries
+		return false
+	}
+	l.attempt[key] = append(entries, now)
+	return true
+}
+
+func pruneShareAttempts(items []time.Time, after time.Time) []time.Time {
+	out := items[:0]
+	for _, t := range items {
+		if t.After(after) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func (h *Handler) API(w http.ResponseWriter, r *http.Request) {
@@ -177,15 +220,20 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 			password = r.FormValue("password")
 		}
 	}
+	unlockProof := ""
 	if cookie, err := r.Cookie(shareCookieName(token)); err == nil && password == "" {
-		password = cookie.Value
+		unlockProof = cookie.Value
+	}
+	if password != "" && !h.limiter.allow(httpx.ClientIP(r, h.cfg.TrustedProxies)+"|"+token) {
+		httpx.Error(w, http.StatusTooManyRequests, "çok fazla paylaşım şifresi denemesi")
+		return
 	}
 
 	setShareHeaders(w)
 
 	// Public meta: minimal fields until unlocked when password-protected.
 	if r.URL.Query().Get("meta") == "1" {
-		meta, err := h.service.Meta(r.Context(), token, password)
+		meta, err := h.service.Meta(r.Context(), token, password, unlockProof)
 		if err != nil {
 			httpx.Error(w, http.StatusBadRequest, err.Error())
 			return
@@ -195,7 +243,7 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Query().Get("list") == "1" {
-		link, err := h.service.Resolve(r.Context(), token, password, false)
+		link, err := h.service.Resolve(r.Context(), token, password, unlockProof, false)
 		if err != nil {
 			httpx.Error(w, http.StatusBadRequest, err.Error())
 			return
@@ -228,7 +276,18 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wantHTML := strings.Contains(r.Header.Get("Accept"), "text/html") && r.URL.Query().Get("download") != "1"
-	link, err := h.service.Resolve(r.Context(), token, password, !wantHTML || r.URL.Query().Get("download") == "1")
+	link, err := h.service.Resolve(r.Context(), token, password, unlockProof, !wantHTML || r.URL.Query().Get("download") == "1")
+	if err == nil && password != "" && link.PasswordHash != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     shareCookieName(token),
+			Value:    shareUnlockProof(h.cfg.SessionSecret, link.ID, link.PasswordHash),
+			Path:     "/s/" + token,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   httpx.IsHTTPS(r, h.cfg.TrustedProxies),
+			MaxAge:   86400,
+		})
+	}
 	if err != nil {
 		if wantHTML && (err.Error() == "invalid share password" || strings.Contains(err.Error(), "password")) {
 			writeSharePasswordPage(w, token, err.Error())
@@ -240,18 +299,6 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	if password != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     shareCookieName(token),
-			Value:    password,
-			Path:     "/s/" + token,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   isHTTPS(r),
-			MaxAge:   3600,
-		})
 	}
 
 	entryID := link.EntryID
@@ -277,9 +324,19 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 		writeShareViewPage(w, token, entry.Name)
 		return
 	}
-	if link.Permission == "view" && r.URL.Query().Get("download") != "1" && !wantHTML {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": entry.Name, "kind": entry.Kind, "permission": "view"})
-		return
+	if link.Permission == "view" {
+		if r.URL.Query().Get("download") == "1" {
+			httpx.Error(w, http.StatusForbidden, "view-only share cannot be downloaded")
+			return
+		}
+		if !wantHTML && r.URL.Query().Get("inline") != "1" {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": entry.Name, "kind": entry.Kind, "permission": "view"})
+			return
+		}
+		if entry.Kind == "file" && !files.CanInlinePreview(entry.Name, entry.MimeType) {
+			httpx.Error(w, http.StatusForbidden, "preview not allowed for this file type")
+			return
+		}
 	}
 
 	if entry.Kind != "file" {
@@ -294,7 +351,7 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	defer reader.Close()
 	contentType := files.ResolveContentType(entry.Name, entry.MimeType)
 	disposition := "attachment"
-	if r.URL.Query().Get("inline") == "1" && files.CanInlinePreview(entry.Name, entry.MimeType) {
+	if link.Permission == "view" || (r.URL.Query().Get("inline") == "1" && files.CanInlinePreview(entry.Name, entry.MimeType)) {
 		disposition = "inline"
 	}
 	w.Header().Set("Content-Type", contentType)
@@ -308,6 +365,10 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", cd)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if seeker, ok := reader.(io.ReadSeeker); ok {
+		http.ServeContent(w, r, entry.Name, entry.UpdatedAt, seeker)
+		return
+	}
 	_, _ = io.Copy(w, reader)
 }
 
@@ -329,13 +390,6 @@ func setShareHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; base-uri 'none'; form-action 'self'")
-}
-
-func isHTTPS(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 func writeSharePasswordPage(w http.ResponseWriter, token, msg string) {
@@ -469,6 +523,6 @@ func writeShareViewPage(w http.ResponseWriter, token, name string) {
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><title>` + html.EscapeString(name) + `</title>
 <style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0b1220;color:#e8eefc;margin:0;padding:24px}a{color:#93b0ff}</style>
 </head><body><h1>` + html.EscapeString(name) + `</h1>
-<p><a href="/s/` + html.EscapeString(token) + `?download=1">İndir</a></p>
+<p>Bu bağlantı yalnızca görüntüleme yetkisi veriyor.</p>
 </body></html>`))
 }

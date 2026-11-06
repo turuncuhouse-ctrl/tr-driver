@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"necipdrive/internal/domain"
+	"necipdrive/internal/totp"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -34,12 +35,14 @@ type MailSender interface {
 type LoginResult struct {
 	User           *domain.User `json:"user,omitempty"`
 	Requires2FA    bool         `json:"requires2FA,omitempty"`
+	TwoFAMethod    string       `json:"twoFAMethod,omitempty"`
 	ChallengeToken string       `json:"challengeToken,omitempty"`
 	SessionToken   string       `json:"-"`
 }
 
 type SecurityStatus struct {
 	Email2FAEnabled bool `json:"email2FAEnabled"`
+	TotpEnabled     bool `json:"totpEnabled"`
 	MailConfigured  bool `json:"mailConfigured"`
 }
 
@@ -49,7 +52,7 @@ func (s *Service) SetMailer(mail MailSender) {
 
 func (s *Service) SecurityStatus(ctx context.Context, userID string) (SecurityStatus, error) {
 	var st SecurityStatus
-	err := s.db.QueryRow(ctx, `select coalesce(email_2fa_enabled,false) from users where id = $1::uuid`, userID).Scan(&st.Email2FAEnabled)
+	err := s.db.QueryRow(ctx, `select coalesce(email_2fa_enabled,false), coalesce(totp_enabled,false) from users where id = $1::uuid`, userID).Scan(&st.Email2FAEnabled, &st.TotpEnabled)
 	if err != nil {
 		return st, err
 	}
@@ -156,8 +159,13 @@ func (s *Service) ResetPassword(ctx context.Context, remoteAddr, email, code, ne
 	if _, err := s.db.Exec(ctx, `update users set password_hash = $1 where id = $2::uuid`, passwordHash, userID); err != nil {
 		return err
 	}
-	// Invalidate all sessions after reset.
-	_, _ = s.db.Exec(ctx, `delete from sessions where user_id = $1::uuid`, userID)
+	// Invalidate all browser sessions and device tokens after reset.
+	if _, err := s.db.Exec(ctx, `delete from sessions where user_id = $1::uuid`, userID); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `update devices set revoked_at = now() where user_id = $1::uuid and revoked_at is null`, userID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -209,9 +217,9 @@ func (s *Service) RedeemQRLogin(ctx context.Context, challengeToken, deviceName 
 	var user domain.User
 	err = s.db.QueryRow(ctx, `
 		select id::text, email, display_name, role, plan_code, quota_bytes, coalesce(bonus_quota_bytes,0), used_bytes, reserved_bytes,
-		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false)
+		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false), coalesce(totp_enabled,false)
 		from users where id = $1::uuid`, userID,
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &user.TotpEnabled)
 	if err != nil {
 		return nil, "", err
 	}
@@ -317,17 +325,22 @@ func (s *Service) CompleteLogin2FA(ctx context.Context, remoteAddr, challengeTok
 	if challengeToken == "" || code == "" {
 		return nil, "", ErrChallengeInvalid
 	}
-	var userID string
+	var userID, purpose string
 	err := s.db.QueryRow(ctx, `
-		select user_id::text from auth_challenges
-		where token_hash = $1 and purpose = $2 and consumed_at is null and expires_at > now()`,
-		hashToken(challengeToken), purposeLogin2FA,
-	).Scan(&userID)
+		select user_id::text, purpose from auth_challenges
+		where token_hash = $1 and purpose in ($2, $3) and consumed_at is null and expires_at > now()`,
+		hashToken(challengeToken), purposeLogin2FA, purposeLoginTOTP,
+	).Scan(&userID, &purpose)
 	if err != nil {
 		s.limiter.add(remoteAddr + ":2fa")
 		return nil, "", ErrChallengeInvalid
 	}
-	if err := s.consumeChallenge(ctx, userID, purposeLogin2FA, challengeToken, code); err != nil {
+	if purpose == purposeLoginTOTP {
+		if err := s.consumeTOTPChallenge(ctx, userID, challengeToken, code); err != nil {
+			s.limiter.add(remoteAddr + ":2fa")
+			return nil, "", err
+		}
+	} else if err := s.consumeChallenge(ctx, userID, purposeLogin2FA, challengeToken, code); err != nil {
 		s.limiter.add(remoteAddr + ":2fa")
 		return nil, "", err
 	}
@@ -360,9 +373,9 @@ func (s *Service) userByID(ctx context.Context, userID string) (*domain.User, er
 	var user domain.User
 	err := s.db.QueryRow(ctx, `
 		select id::text, email, display_name, role, plan_code, quota_bytes, coalesce(bonus_quota_bytes,0), used_bytes, reserved_bytes,
-		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false)
+		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false), coalesce(totp_enabled,false)
 		from users where id = $1::uuid`, userID,
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &user.TotpEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -402,12 +415,149 @@ func (s *Service) BeginDeviceLogin(ctx context.Context, remoteAddr, email, passw
 	if err != nil {
 		return nil, err
 	}
+	if user.TotpEnabled {
+		challengeToken, err := s.startTOTPLogin(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{Requires2FA: true, TwoFAMethod: "totp", ChallengeToken: challengeToken}, nil
+	}
 	if user.Email2FAEnabled {
 		challengeToken, err := s.startLogin2FA(ctx, user)
 		if err != nil {
 			return nil, err
 		}
-		return &LoginResult{Requires2FA: true, ChallengeToken: challengeToken}, nil
+		return &LoginResult{Requires2FA: true, TwoFAMethod: "email", ChallengeToken: challengeToken}, nil
 	}
 	return &LoginResult{User: user}, nil
+}
+
+const purposeLoginTOTP = "login_totp"
+
+// BeginTOTPSetup stores a pending (not yet enabled) TOTP secret for the user.
+func (s *Service) BeginTOTPSetup(ctx context.Context, userID, password string) (secret string, provisioningURI string, err error) {
+	var hash, email string
+	if err := s.db.QueryRow(ctx, `select email, password_hash from users where id = $1::uuid`, userID).Scan(&email, &hash); err != nil {
+		return "", "", err
+	}
+	if !verifyPassword(password, hash) {
+		return "", "", ErrInvalidCredentials
+	}
+	var enabled bool
+	if err := s.db.QueryRow(ctx, `select totp_enabled from users where id = $1::uuid`, userID).Scan(&enabled); err != nil {
+		return "", "", err
+	}
+	if enabled {
+		return "", "", errors.New("TOTP zaten açık; önce mevcut authenticator kodu ile kapatın")
+	}
+	secret, err = totp.GenerateSecret()
+	if err != nil {
+		return "", "", err
+	}
+	sealed, err := totp.Seal(secret, s.cfg.SessionSecret)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := s.db.Exec(ctx, `update users set totp_secret_encrypted = $1, totp_enabled = false, totp_last_counter = -1 where id = $2::uuid`, sealed, userID); err != nil {
+		return "", "", err
+	}
+	return secret, totp.ProvisioningURI("TR Driver", email, secret), nil
+}
+
+func (s *Service) EnableTOTP(ctx context.Context, userID, password, code string) error {
+	var hash, sealed string
+	var enabled bool
+	if err := s.db.QueryRow(ctx, `select password_hash, totp_secret_encrypted, totp_enabled from users where id = $1::uuid`, userID).Scan(&hash, &sealed, &enabled); err != nil {
+		return err
+	}
+	if !verifyPassword(password, hash) {
+		return ErrInvalidCredentials
+	}
+	if enabled {
+		return nil
+	}
+	if sealed == "" {
+		return ErrChallengeInvalid
+	}
+	secret, err := totp.Open(sealed, s.cfg.SessionSecret)
+	if err != nil {
+		return ErrChallengeInvalid
+	}
+	counter, ok := totp.Match(secret, code, time.Now(), -1)
+	if !ok {
+		return ErrChallengeInvalid
+	}
+	_, err = s.db.Exec(ctx, `update users set totp_enabled = true, totp_last_counter = $1 where id = $2::uuid`, counter, userID)
+	return err
+}
+
+func (s *Service) DisableTOTP(ctx context.Context, userID, password, code string) error {
+	var hash, sealed string
+	var enabled bool
+	var lastCounter int64
+	if err := s.db.QueryRow(ctx, `select password_hash, totp_secret_encrypted, totp_enabled, totp_last_counter from users where id = $1::uuid`, userID).Scan(&hash, &sealed, &enabled, &lastCounter); err != nil {
+		return err
+	}
+	if !verifyPassword(password, hash) {
+		return ErrInvalidCredentials
+	}
+	if enabled {
+		secret, err := totp.Open(sealed, s.cfg.SessionSecret)
+		if err != nil {
+			return ErrChallengeInvalid
+		}
+		if _, ok := totp.Match(secret, code, time.Now(), lastCounter); !ok {
+			return ErrChallengeInvalid
+		}
+	}
+	_, err := s.db.Exec(ctx, `update users set totp_enabled = false, totp_secret_encrypted = '', totp_last_counter = -1 where id = $1::uuid`, userID)
+	return err
+}
+
+func (s *Service) startTOTPLogin(ctx context.Context, userID string) (string, error) {
+	challengeToken, tokenHash, err := generateChallengeToken()
+	if err != nil {
+		return "", err
+	}
+	_, _ = s.db.Exec(ctx, `update auth_challenges set consumed_at = now() where user_id = $1::uuid and purpose = $2 and consumed_at is null`, userID, purposeLoginTOTP)
+	if _, err := s.db.Exec(ctx, `insert into auth_challenges (user_id, purpose, code_hash, token_hash, expires_at) values ($1::uuid, $2, '', $3, $4)`, userID, purposeLoginTOTP, tokenHash, time.Now().Add(otpTTL)); err != nil {
+		return "", err
+	}
+	return challengeToken, nil
+}
+
+func (s *Service) consumeTOTPChallenge(ctx context.Context, userID, challengeToken, code string) error {
+	var id string
+	var attempts int
+	err := s.db.QueryRow(ctx, `select id::text, attempts from auth_challenges where token_hash = $1 and purpose = $2 and consumed_at is null and expires_at > now()`, hashToken(challengeToken), purposeLoginTOTP).Scan(&id, &attempts)
+	if err != nil {
+		return ErrChallengeInvalid
+	}
+	if attempts >= maxOTPAttempts {
+		_, _ = s.db.Exec(ctx, `update auth_challenges set consumed_at = now() where id = $1::uuid`, id)
+		return ErrChallengeInvalid
+	}
+	var sealed string
+	var lastCounter int64
+	if err := s.db.QueryRow(ctx, `select totp_secret_encrypted, totp_last_counter from users where id = $1::uuid`, userID).Scan(&sealed, &lastCounter); err != nil {
+		return ErrChallengeInvalid
+	}
+	secret, err := totp.Open(sealed, s.cfg.SessionSecret)
+	if err != nil {
+		return ErrChallengeInvalid
+	}
+	counter, ok := totp.Match(secret, code, time.Now(), lastCounter)
+	if !ok {
+		_, _ = s.db.Exec(ctx, `update auth_challenges set attempts = attempts + 1 where id = $1::uuid`, id)
+		return ErrChallengeInvalid
+	}
+	res, err := s.db.Exec(ctx, `update users set totp_last_counter = $1 where id = $2::uuid and totp_last_counter < $1`, counter, userID)
+	if err != nil || res.RowsAffected() == 0 {
+		return ErrChallengeInvalid
+	}
+	res, err = s.db.Exec(ctx, `update auth_challenges set consumed_at = now() where id = $1::uuid and consumed_at is null`, id)
+	if err != nil || res.RowsAffected() == 0 {
+		return ErrChallengeInvalid
+	}
+	return nil
 }

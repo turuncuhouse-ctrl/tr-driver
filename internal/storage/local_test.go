@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLocalSaveAndOpen(t *testing.T) {
@@ -114,5 +115,36 @@ func TestRejectPathEscape(t *testing.T) {
 	}
 	if _, err := store.Save(context.Background(), "../escape.txt", strings.NewReader("x")); err == nil {
 		t.Fatal("expected path escape to fail")
+	}
+}
+
+func TestCleanupTempRemovesOnlyOldSpoolFiles(t *testing.T) {
+	l, err := NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := l.TempFile("dav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := f.Name()
+	_ = f.Close()
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(name, old, old); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := l.TempFile("dav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = fresh.Close()
+	if err := l.CleanupTemp(24 * time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(name); !os.IsNotExist(err) {
+		t.Fatal("expected old spool removed")
+	}
+	if _, err := os.Stat(fresh.Name()); err != nil {
+		t.Fatal("expected fresh spool kept")
 	}
 }

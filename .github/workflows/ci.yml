@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Build embedded desktop UI
+        working-directory: internal/desktop/ui
+        run: npm ci && npm run build
+      - name: Verify version source
+        run: test -s VERSION && ! grep -q '[[:space:]]' VERSION
+      - run: go vet ./...
+      - name: Test backend
+        shell: bash
+        run: |
+          set +e
+          go test -race -count=1 ./... 2>&1 | tee /tmp/backend-test.log
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "$code" -ne 0 ]; then
+            grep -E -- '--- FAIL:|WARNING: DATA RACE|panic:|^FAIL|^#|\.go:[0-9]+:' /tmp/backend-test.log | head -40 | while IFS= read -r line; do
+              echo "::error title=Backend test failure::$line"
+            done
+            exit "$code"
+          fi
+      - run: go build ./cmd/server
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: TRDriver-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: trdriver:ci

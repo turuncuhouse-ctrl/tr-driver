@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -9,57 +10,65 @@ import (
 )
 
 type Config struct {
-	AppEnv              string
-	HTTPAddr            string
-	DatabaseURL         string
-	SessionSecret       string
-	DataDir             string
-	PublicBaseURL       string
-	FreeQuotaBytes      int64
-	MaxUploadBytes      int64
-	MaxUploadBatchBytes int64
-	UploadChunkBytes    int64
-	UploadSessionTTL    time.Duration
-	MaxBatchFiles       int
-	MaxConcurrentChunks int
+	AppEnv               string
+	HTTPAddr             string
+	DatabaseURL          string
+	SessionSecret        string
+	DataDir              string
+	PublicBaseURL        string
+	FreeQuotaBytes       int64
+	MaxUploadBytes       int64
+	MaxUploadBatchBytes  int64
+	UploadChunkBytes     int64
+	UploadSessionTTL     time.Duration
+	MaxBatchFiles        int
+	MaxConcurrentChunks  int
 	MaxConcurrentUploads int
-	SessionTTL          time.Duration
-	DeviceTokenTTL      time.Duration
-	TrashRetention      time.Duration
-	ShareTokenBytes     int
-	SharePasswordSalt   string
-	AllowRegistration   bool
-	UpdateManifestURL   string
-	UpdateChannel       string
-	LicenseVendorMode   bool
+	SessionTTL           time.Duration
+	DeviceTokenTTL       time.Duration
+	TrashRetention       time.Duration
+	FileChangeRetention  time.Duration
+	ShareTokenBytes      int
+	SharePasswordSalt    string
+	AllowRegistration    bool
+	UpdateManifestURL    string
+	UpdateChannel        string
+	LicenseVendorMode    bool
+	TrustedProxies       []netip.Prefix
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		AppEnv:              getEnv("APP_ENV", "development"),
-		HTTPAddr:            getEnv("HTTP_ADDR", ":8080"),
-		DatabaseURL:         getEnv("DATABASE_URL", ""),
-		SessionSecret:       getEnv("SESSION_SECRET", ""),
-		DataDir:             getEnv("DATA_DIR", "./data"),
-		PublicBaseURL:       strings.TrimRight(getEnv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
+		AppEnv:        getEnv("APP_ENV", "development"),
+		HTTPAddr:      getEnv("HTTP_ADDR", ":8080"),
+		DatabaseURL:   getEnv("DATABASE_URL", ""),
+		SessionSecret: getEnv("SESSION_SECRET", ""),
+		DataDir:       getEnv("DATA_DIR", "./data"),
+		PublicBaseURL: strings.TrimRight(getEnv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
 		// 0 / unset / "auto" → resolve from DATA_DIR disk capacity at startup
-		FreeQuotaBytes:      getEnvQuotaBytes("FREE_QUOTA_BYTES"),
-		MaxUploadBytes:      getEnvInt64("MAX_UPLOAD_BYTES", 10*1024*1024*1024),
-		MaxUploadBatchBytes: getEnvInt64("MAX_UPLOAD_BATCH_BYTES", 10*1024*1024*1024),
-		UploadChunkBytes:    getEnvInt64("UPLOAD_CHUNK_BYTES", 8*1024*1024),
-		UploadSessionTTL:    getEnvDuration("UPLOAD_SESSION_TTL", 48*time.Hour),
+		FreeQuotaBytes:       getEnvQuotaBytes("FREE_QUOTA_BYTES"),
+		MaxUploadBytes:       getEnvInt64("MAX_UPLOAD_BYTES", 10*1024*1024*1024),
+		MaxUploadBatchBytes:  getEnvInt64("MAX_UPLOAD_BATCH_BYTES", 10*1024*1024*1024),
+		UploadChunkBytes:     getEnvInt64("UPLOAD_CHUNK_BYTES", 8*1024*1024),
+		UploadSessionTTL:     getEnvDuration("UPLOAD_SESSION_TTL", 48*time.Hour),
 		MaxBatchFiles:        getEnvInt("MAX_BATCH_FILES", 2000),
 		MaxConcurrentChunks:  getEnvInt("MAX_CONCURRENT_CHUNKS", 2),
 		MaxConcurrentUploads: getEnvInt("MAX_CONCURRENT_UPLOADS", 3),
 		SessionTTL:           getEnvDuration("SESSION_TTL", 24*time.Hour),
-		DeviceTokenTTL:      getEnvDuration("DEVICE_TOKEN_TTL", 720*time.Hour),
-		TrashRetention:      getEnvDuration("TRASH_RETENTION", 720*time.Hour),
-		ShareTokenBytes:     getEnvInt("SHARE_TOKEN_BYTES", 24),
-		SharePasswordSalt:   getEnv("SHARE_PASSWORD_SALT", "change-me"),
-		AllowRegistration:   getEnvBool("ALLOW_REGISTRATION", true),
-		UpdateManifestURL:   getEnv("UPDATE_MANIFEST_URL", ""),
-		UpdateChannel:       getEnv("UPDATE_CHANNEL", "stable"),
-		LicenseVendorMode:   getEnvBool("LICENSE_VENDOR_MODE", false),
+		DeviceTokenTTL:       getEnvDuration("DEVICE_TOKEN_TTL", 0),
+		TrashRetention:       getEnvDuration("TRASH_RETENTION", 720*time.Hour),
+		FileChangeRetention:  getEnvDuration("FILE_CHANGE_RETENTION", 2160*time.Hour),
+		ShareTokenBytes:      getEnvInt("SHARE_TOKEN_BYTES", 24),
+		SharePasswordSalt:    getEnv("SHARE_PASSWORD_SALT", "change-me"),
+		AllowRegistration:    getEnvBool("ALLOW_REGISTRATION", true),
+		UpdateManifestURL:    getEnv("UPDATE_MANIFEST_URL", ""),
+		UpdateChannel:        getEnv("UPDATE_CHANNEL", "stable"),
+		LicenseVendorMode:    getEnvBool("LICENSE_VENDOR_MODE", false),
+	}
+	var err error
+	cfg.TrustedProxies, err = parseTrustedProxies(getEnv("TRUSTED_PROXY_CIDRS", ""))
+	if err != nil {
+		return Config{}, err
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -148,4 +157,20 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(part)
+		if err != nil {
+			return nil, fmt.Errorf("TRUSTED_PROXY_CIDRS: invalid CIDR %q", part)
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, nil
 }

@@ -196,14 +196,14 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 val code = (e as? net.neciparmagan.trdriver.data.HttpStatusIOException)?.code
                 // Only clear session on real auth rejection — never on network blips.
-                if (code == 401 || code == 403) {
+                if (code == 401) {
                     session.clearAuth()
                     _state.update {
                         it.copy(
                             bootstrapped = true,
                             loggedIn = false,
                             busy = false,
-                            message = "Oturum sona erdi. Tekrar giriş yapın.",
+                            message = "Oturum iptal edildi veya şifre değiştirildi. Tekrar giriş yapın.",
                         )
                     }
                 } else if (session.isLoggedIn) {

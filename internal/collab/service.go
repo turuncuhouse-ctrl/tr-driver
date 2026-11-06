@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"necipdrive/internal/access"
+	"necipdrive/internal/blobgc"
 	"necipdrive/internal/domain"
 	"necipdrive/internal/storage"
 
@@ -289,12 +290,8 @@ func (s *Service) SnapshotVersion(ctx context.Context, entry domain.FileEntry, a
 	if err != nil {
 		return err
 	}
-	// Keep last 20
-	_, _ = s.db.Exec(ctx, `
-		delete from file_versions where entry_id = $1::uuid and id in (
-			select id from file_versions where entry_id = $1::uuid order by version desc offset 20
-		)`, entry.ID)
-	return nil
+	// Keep last 20 and remove detached blobs.
+	return blobgc.PruneVersions(ctx, s.db, s.storage, entry.ID, 20)
 }
 
 func (s *Service) ListVersions(ctx context.Context, userID, userRole, entryID string) ([]domain.FileVersion, error) {

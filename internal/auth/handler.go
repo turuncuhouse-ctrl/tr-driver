@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -18,10 +19,11 @@ const deviceContextKey contextKey = "device"
 
 type Handler struct {
 	service *Service
+	trusted []netip.Prefix
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service *Service, trusted []netip.Prefix) *Handler {
+	return &Handler{service: service, trusted: trusted}
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +45,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	http.SetCookie(w, h.service.SessionCookie(token, isHTTPS(r)))
+	http.SetCookie(w, h.service.SessionCookie(token, httpx.IsHTTPS(r, h.trusted)))
 	httpx.WriteJSON(w, http.StatusCreated, user)
 }
 
@@ -60,7 +62,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	result, err := h.service.Login(r.Context(), r.RemoteAddr, req.Email, req.Password)
+	result, err := h.service.Login(r.Context(), httpx.ClientIP(r, h.trusted), req.Email, req.Password)
 	if err != nil {
 		status := http.StatusUnauthorized
 		if errors.Is(err, ErrRateLimited) {
@@ -72,14 +74,19 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Requires2FA {
+		method, message := result.TwoFAMethod, "Doğrulama kodu e-posta adresinize gönderildi."
+		if method == "totp" {
+			message = "Authenticator uygulamanızdaki doğrulama kodunu girin."
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"requires2FA":    true,
 			"challengeToken": result.ChallengeToken,
-			"message":        "Doğrulama kodu e-posta adresinize gönderildi.",
+			"twoFAMethod":    method,
+			"message":        message,
 		})
 		return
 	}
-	http.SetCookie(w, h.service.SessionCookie(result.SessionToken, isHTTPS(r)))
+	http.SetCookie(w, h.service.SessionCookie(result.SessionToken, httpx.IsHTTPS(r, h.trusted)))
 	httpx.WriteJSON(w, http.StatusOK, result.User)
 }
 
@@ -96,7 +103,7 @@ func (h *Handler) Login2FA(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	user, token, err := h.service.CompleteLogin2FA(r.Context(), r.RemoteAddr, req.ChallengeToken, req.Code)
+	user, token, err := h.service.CompleteLogin2FA(r.Context(), httpx.ClientIP(r, h.trusted), req.ChallengeToken, req.Code)
 	if err != nil {
 		status := http.StatusUnauthorized
 		if errors.Is(err, ErrRateLimited) {
@@ -105,7 +112,7 @@ func (h *Handler) Login2FA(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, status, err.Error())
 		return
 	}
-	http.SetCookie(w, h.service.SessionCookie(token, isHTTPS(r)))
+	http.SetCookie(w, h.service.SessionCookie(token, httpx.IsHTTPS(r, h.trusted)))
 	httpx.WriteJSON(w, http.StatusOK, user)
 }
 
@@ -121,7 +128,7 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	err := h.service.ForgotPassword(r.Context(), r.RemoteAddr, req.Email)
+	err := h.service.ForgotPassword(r.Context(), httpx.ClientIP(r, h.trusted), req.Email)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrRateLimited) {
@@ -150,7 +157,7 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	err := h.service.ResetPassword(r.Context(), r.RemoteAddr, req.Email, req.Code, req.NewPassword)
+	err := h.service.ResetPassword(r.Context(), httpx.ClientIP(r, h.trusted), req.Email, req.Code, req.NewPassword)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrRateLimited) {
@@ -180,6 +187,9 @@ func (h *Handler) Security(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, st)
 	case http.MethodPost:
+		if !h.securityAttempt(w, r, user.ID, "email2fa") {
+			return
+		}
 		var req struct {
 			Email2FAEnabled bool   `json:"email2FAEnabled"`
 			Password        string `json:"password"`
@@ -203,6 +213,122 @@ func (h *Handler) Security(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// TOTPSetup starts authenticator-app enrollment. The secret is shown once and
+// remains disabled until the user proves possession with TOTPEnable.
+func (h *Handler) TOTPSetup(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.securityAttempt(w, r, user.ID, "totpsetup") {
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	secret, uri, err := h.service.BeginTOTPSetup(r.Context(), user.ID, req.Password)
+	if err != nil {
+		totpError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"secret": secret, "provisioningUri": uri})
+}
+
+func (h *Handler) TOTPEnable(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.securityAttempt(w, r, user.ID, "totpenable") {
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+		Code     string `json:"code"`
+	}
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if err := h.service.EnableTOTP(r.Context(), user.ID, req.Password, req.Code); err != nil {
+		totpError(w, err)
+		return
+	}
+	st, err := h.service.SecurityStatus(r.Context(), user.ID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "failed to load security status")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, st)
+}
+
+func (h *Handler) TOTPDisable(w http.ResponseWriter, r *http.Request) {
+	user := UserFromContext(r.Context())
+	if user == nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.securityAttempt(w, r, user.ID, "totpdisable") {
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+		Code     string `json:"code"`
+	}
+	if err := httpx.ReadJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if err := h.service.DisableTOTP(r.Context(), user.ID, req.Password, req.Code); err != nil {
+		totpError(w, err)
+		return
+	}
+	st, err := h.service.SecurityStatus(r.Context(), user.ID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "failed to load security status")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, st)
+}
+
+func (h *Handler) securityAttempt(w http.ResponseWriter, r *http.Request, userID, purpose string) bool {
+	key := purpose + ":" + userID + ":" + httpx.ClientIP(r, h.trusted)
+	if h.service.limiter.blocked(key) {
+		httpx.Error(w, http.StatusTooManyRequests, ErrRateLimited.Error())
+		return false
+	}
+	h.service.limiter.add(key)
+	return true
+}
+
+func totpError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrChallengeInvalid) {
+		status = http.StatusUnauthorized
+	} else if errors.Is(err, ErrRateLimited) {
+		status = http.StatusTooManyRequests
+	}
+	httpx.Error(w, status, err.Error())
+}
+
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -211,7 +337,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("session_token"); err == nil {
 		_ = h.service.Logout(r.Context(), cookie.Value)
 	}
-	http.SetCookie(w, h.service.ClearCookie(isHTTPS(r)))
+	http.SetCookie(w, h.service.ClearCookie(httpx.IsHTTPS(r, h.trusted)))
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
 }
 
@@ -236,7 +362,7 @@ func (h *Handler) DeviceLogin(w http.ResponseWriter, r *http.Request) {
 	if req.ChallengeToken != "" && req.Code != "" {
 		var sessionToken string
 		var err error
-		user, sessionToken, err = h.service.CompleteLogin2FA(r.Context(), r.RemoteAddr, req.ChallengeToken, req.Code)
+		user, sessionToken, err = h.service.CompleteLogin2FA(r.Context(), httpx.ClientIP(r, h.trusted), req.ChallengeToken, req.Code)
 		if err != nil {
 			status := http.StatusUnauthorized
 			if errors.Is(err, ErrRateLimited) {
@@ -247,7 +373,7 @@ func (h *Handler) DeviceLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = h.service.Logout(r.Context(), sessionToken)
 	} else {
-		result, err := h.service.BeginDeviceLogin(r.Context(), r.RemoteAddr, req.Email, req.Password)
+		result, err := h.service.BeginDeviceLogin(r.Context(), httpx.ClientIP(r, h.trusted), req.Email, req.Password)
 		if err != nil {
 			status := http.StatusUnauthorized
 			if errors.Is(err, ErrRateLimited) {
@@ -259,10 +385,15 @@ func (h *Handler) DeviceLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if result.Requires2FA {
+			method, message := result.TwoFAMethod, "Doğrulama kodu e-posta adresinize gönderildi."
+			if method == "totp" {
+				message = "Authenticator uygulamanızdaki doğrulama kodunu girin."
+			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"requires2FA":    true,
 				"challengeToken": result.ChallengeToken,
-				"message":        "Doğrulama kodu e-posta adresinize gönderildi.",
+				"twoFAMethod":    method,
+				"message":        message,
 			})
 			return
 		}
@@ -455,11 +586,4 @@ func WithDevice(ctx context.Context, deviceID string) context.Context {
 func DeviceIDFromContext(ctx context.Context) string {
 	deviceID, _ := ctx.Value(deviceContextKey).(string)
 	return deviceID
-}
-
-func isHTTPS(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }

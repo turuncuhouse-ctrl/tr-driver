@@ -31,7 +31,7 @@ func Open(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error {
+func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, deviceTokenTTL time.Duration) error {
 	ddl := []string{
 		`create extension if not exists pgcrypto`,
 		`create table if not exists plans (
@@ -148,6 +148,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 			revoked_at timestamptz
 		)`,
 		`alter table devices add column if not exists expires_at timestamptz`,
+		`alter table devices alter column expires_at drop not null`,
 		`create index if not exists devices_user_id_idx on devices(user_id)`,
 		`create index if not exists devices_token_hash_idx on devices(token_hash)`,
 		`create table if not exists file_changes (
@@ -167,6 +168,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 			created_at timestamptz not null default now()
 		)`,
 		`create index if not exists file_changes_user_id_id_idx on file_changes(user_id, id)`,
+		`create index if not exists file_changes_created_at_idx on file_changes(created_at)`,
 
 		// Collaboration: drives, ACL, social features
 		`create table if not exists drives (
@@ -266,6 +268,9 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 		`alter table instance_license add column if not exists instance_id text not null default ''`,
 		`alter table users add column if not exists bonus_quota_bytes bigint not null default 0`,
 		`alter table users add column if not exists email_2fa_enabled boolean not null default false`,
+		`alter table users add column if not exists totp_secret_encrypted text not null default ''`,
+		`alter table users add column if not exists totp_enabled boolean not null default false`,
+		`alter table users add column if not exists totp_last_counter bigint not null default -1`,
 		`create table if not exists auth_challenges (
 			id uuid primary key default gen_random_uuid(),
 			user_id uuid not null references users(id) on delete cascade,
@@ -284,6 +289,11 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 	for _, stmt := range ddl {
 		if _, err := db.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate: %w", err)
+		}
+	}
+	if deviceTokenTTL <= 0 {
+		if _, err := db.Exec(ctx, `update devices set expires_at = null where revoked_at is null and expires_at is not null`); err != nil {
+			return fmt.Errorf("migrate persistent devices: %w", err)
 		}
 	}
 

@@ -2,9 +2,12 @@ package webdavx
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"path"
 	"strings"
@@ -14,16 +17,18 @@ import (
 	"necipdrive/internal/auth"
 	"necipdrive/internal/domain"
 	"necipdrive/internal/files"
+	"necipdrive/internal/httpx"
 
 	"golang.org/x/net/webdav"
 )
 
 // Handler serves WebDAV backed by TR Driver storage (same files as web UI).
 type Handler struct {
-	auth  *auth.Service
-	files *files.Service
-	locks webdav.LockSystem
-	authC sync.Map // basic auth cache: user -> *cachedAuth
+	auth    *auth.Service
+	files   *files.Service
+	locks   webdav.LockSystem
+	authC   sync.Map // basic auth cache: user -> *cachedAuth
+	trusted []netip.Prefix
 }
 
 type cachedAuth struct {
@@ -31,11 +36,12 @@ type cachedAuth struct {
 	expires time.Time
 }
 
-func New(authService *auth.Service, fileService *files.Service) *Handler {
+func New(authService *auth.Service, fileService *files.Service, trusted []netip.Prefix) *Handler {
 	return &Handler{
-		auth:  authService,
-		files: fileService,
-		locks: webdav.NewMemLS(),
+		auth:    authService,
+		files:   fileService,
+		locks:   webdav.NewMemLS(),
+		trusted: trusted,
 	}
 }
 
@@ -57,7 +63,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) user(r *http.Request) (*domain.User, error) {
 	if u, p, ok := r.BasicAuth(); ok {
-		key := u + "\x00" + p
+		sum := sha256.Sum256([]byte(u + "\x00" + p))
+		key := hex.EncodeToString(sum[:])
 		if v, ok := h.authC.Load(key); ok {
 			c := v.(*cachedAuth)
 			if time.Now().Before(c.expires) {
@@ -65,12 +72,16 @@ func (h *Handler) user(r *http.Request) (*domain.User, error) {
 			}
 			h.authC.Delete(key)
 		}
-		result, err := h.auth.BeginDeviceLogin(r.Context(), clientIP(r), u, p)
+		if du, _, err := h.auth.UserByDeviceToken(r.Context(), p); err == nil && strings.EqualFold(du.Email, u) {
+			h.authC.Store(key, &cachedAuth{user: du, expires: time.Now().Add(10 * time.Minute)})
+			return du, nil
+		}
+		result, err := h.auth.BeginDeviceLogin(r.Context(), httpx.ClientIP(r, h.trusted), u, p)
 		if err != nil {
 			return nil, err
 		}
 		if result.Requires2FA {
-			return nil, errors.New("email 2FA is enabled; sign in via the web app and use the session, or disable 2FA for WebDAV password login")
+			return nil, errors.New("2FA is enabled; sign in via the web app and use the session, or use a device token")
 		}
 		h.authC.Store(key, &cachedAuth{user: result.User, expires: time.Now().Add(10 * time.Minute)})
 		return result.User, nil
@@ -79,13 +90,6 @@ func (h *Handler) user(r *http.Request) (*domain.User, error) {
 		return h.auth.UserBySession(r.Context(), c.Value)
 	}
 	return nil, errors.New("unauthorized")
-}
-
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	return r.RemoteAddr
 }
 
 type driveFS struct {
@@ -114,25 +118,13 @@ func (d *driveFS) OpenFile(ctx context.Context, name string, flag int, _ os.File
 		if !creating {
 			return nil, os.ErrNotExist
 		}
-		parent, base, err2 := d.resolveParent(ctx, name)
-		if err2 != nil {
-			return nil, err2
-		}
-		return &davFile{d: d, parentID: parent, name: base, path: name, writing: true, create: true}, nil
+		return d.openWriteSpool(ctx, nil, name, true)
 	}
 	if entry.Kind == "folder" {
 		return &davDir{d: d, id: entry.ID, name: entry.Name, path: name}, nil
 	}
 	if flag&os.O_WRONLY != 0 || flag&os.O_RDWR != 0 || flag&os.O_TRUNC != 0 {
-		var buf []byte
-		dirty := flag&os.O_TRUNC != 0
-		if flag&os.O_TRUNC == 0 {
-			if rc, err := d.h.files.OpenStorage(entry.StorageKey); err == nil {
-				buf, _ = io.ReadAll(rc)
-				_ = rc.Close()
-			}
-		}
-		return &davFile{d: d, entry: entry, path: name, writing: true, create: false, buf: buf, dirty: dirty}, nil
+		return d.openWriteSpool(ctx, entry, name, flag&os.O_TRUNC != 0)
 	}
 	rc, err := d.h.files.OpenStorage(entry.StorageKey)
 	if err != nil {
@@ -266,8 +258,8 @@ type davInfo struct {
 	mod  time.Time
 }
 
-func (i *davInfo) Name() string       { return i.name }
-func (i *davInfo) Size() int64        { return i.size }
+func (i *davInfo) Name() string { return i.name }
+func (i *davInfo) Size() int64  { return i.size }
 func (i *davInfo) Mode() os.FileMode {
 	if i.dir {
 		return os.ModeDir | 0755
@@ -291,10 +283,10 @@ type davDir struct {
 	list []domain.FileEntry
 }
 
-func (f *davDir) Close() error                                 { return nil }
-func (f *davDir) Read([]byte) (int, error)                     { return 0, os.ErrInvalid }
-func (f *davDir) Write([]byte) (int, error)                    { return 0, os.ErrInvalid }
-func (f *davDir) Seek(int64, int) (int64, error)               { return 0, os.ErrInvalid }
+func (f *davDir) Close() error                   { return nil }
+func (f *davDir) Read([]byte) (int, error)       { return 0, os.ErrInvalid }
+func (f *davDir) Write([]byte) (int, error)      { return 0, os.ErrInvalid }
+func (f *davDir) Seek(int64, int) (int64, error) { return 0, os.ErrInvalid }
 func (f *davDir) Stat() (os.FileInfo, error) {
 	return &davInfo{name: f.name, dir: true, mod: time.Now()}, nil
 }
@@ -334,23 +326,80 @@ type davFile struct {
 	reader   io.ReadCloser
 	writing  bool
 	create   bool
-	buf      []byte
+	spool    *os.File
+	size     int64
 	offset   int64
 	dirty    bool
+}
+
+// openWriteSpool streams existing content (when not truncating) into a temp file
+// so large WebDAV PUTs do not buffer the whole file in RAM.
+func (d *driveFS) openWriteSpool(ctx context.Context, entry *domain.FileEntry, name string, trunc bool) (webdav.File, error) {
+	f := &davFile{d: d, entry: entry, path: name, writing: true, create: entry == nil, dirty: trunc}
+	if entry == nil {
+		parent, base, err := d.resolveParent(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		f.parentID, f.name = parent, base
+	} else {
+		f.name = entry.Name
+	}
+	spool, err := d.h.files.TempFile("dav")
+	if err != nil {
+		return nil, err
+	}
+	f.spool = spool
+	if entry != nil && !trunc {
+		rc, err := d.h.files.OpenStorage(entry.StorageKey)
+		if err != nil {
+			_ = spool.Close()
+			_ = os.Remove(spool.Name())
+			return nil, err
+		}
+		n, copyErr := io.Copy(spool, rc)
+		_ = rc.Close()
+		if copyErr != nil {
+			_ = spool.Close()
+			_ = os.Remove(spool.Name())
+			return nil, copyErr
+		}
+		f.size = n
+		if _, err := spool.Seek(0, io.SeekStart); err != nil {
+			_ = spool.Close()
+			_ = os.Remove(spool.Name())
+			return nil, err
+		}
+	}
+	return f, nil
 }
 
 func (f *davFile) Close() error {
 	if f.reader != nil {
 		_ = f.reader.Close()
 	}
-	if f.writing && f.dirty {
-		return f.d.h.files.UploadBytes(context.Background(), f.d.user.ID, f.d.user.Role, f.parentIDForWrite(), f.name, "application/octet-stream", f.buf, "")
+	if f.spool == nil {
+		return nil
 	}
-	// Empty create (0-byte file) still needs a DB row for Windows "New → Text Document".
-	if f.writing && f.create && len(f.buf) == 0 {
-		return f.d.h.files.UploadBytes(context.Background(), f.d.user.ID, f.d.user.Role, f.parentIDForWrite(), f.name, "application/octet-stream", []byte{}, "")
+	defer func() {
+		_ = f.spool.Close()
+		_ = os.Remove(f.spool.Name())
+	}()
+	if !f.dirty && !(f.create && f.size == 0) {
+		return nil
 	}
-	return nil
+	if _, err := f.spool.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	mimeType := "application/octet-stream"
+	if f.entry != nil && f.entry.MimeType != "" {
+		mimeType = f.entry.MimeType
+	} else {
+		mimeType = files.ResolveContentType(f.name, "")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	return f.d.h.files.UploadStream(ctx, f.d.user.ID, f.d.user.Role, f.parentIDForWrite(), f.name, mimeType, f.size, f.spool, "")
 }
 func (f *davFile) parentIDForWrite() string {
 	if f.entry != nil && f.entry.ParentID != nil {
@@ -359,27 +408,39 @@ func (f *davFile) parentIDForWrite() string {
 	return f.parentID
 }
 func (f *davFile) Read(p []byte) (int, error) {
+	if f.spool != nil {
+		n, err := f.spool.Read(p)
+		f.offset += int64(n)
+		return n, err
+	}
 	if f.reader == nil {
 		return 0, io.EOF
 	}
 	return f.reader.Read(p)
 }
 func (f *davFile) Write(p []byte) (int, error) {
-	if !f.writing {
+	if !f.writing || f.spool == nil {
 		return 0, os.ErrInvalid
 	}
-	end := int(f.offset) + len(p)
-	if end > len(f.buf) {
-		nb := make([]byte, end)
-		copy(nb, f.buf)
-		f.buf = nb
+	if f.offset+int64(len(p)) > f.d.h.files.MaxUploadBytes() {
+		return 0, os.ErrInvalid
 	}
-	copy(f.buf[int(f.offset):], p)
-	f.offset += int64(len(p))
+	n, err := f.spool.WriteAt(p, f.offset)
+	f.offset += int64(n)
+	if f.offset > f.size {
+		f.size = f.offset
+	}
 	f.dirty = true
-	return len(p), nil
+	return n, err
 }
 func (f *davFile) Seek(offset int64, whence int) (int64, error) {
+	if f.spool != nil {
+		next, err := f.spool.Seek(offset, whence)
+		if err == nil {
+			f.offset = next
+		}
+		return next, err
+	}
 	var next int64
 	switch whence {
 	case io.SeekStart:
@@ -387,7 +448,7 @@ func (f *davFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		next = f.offset + offset
 	case io.SeekEnd:
-		next = int64(len(f.buf)) + offset
+		next = f.size + offset
 	default:
 		return 0, os.ErrInvalid
 	}
@@ -401,6 +462,6 @@ func (f *davFile) Stat() (os.FileInfo, error) {
 	if f.entry != nil && !f.dirty {
 		return infoFromEntry(f.entry), nil
 	}
-	return &davInfo{name: f.name, size: int64(len(f.buf)), mod: time.Now()}, nil
+	return &davInfo{name: f.name, size: f.size, mod: time.Now()}, nil
 }
 func (f *davFile) Readdir(int) ([]os.FileInfo, error) { return nil, os.ErrInvalid }

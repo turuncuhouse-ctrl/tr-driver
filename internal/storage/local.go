@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Local struct {
@@ -88,6 +89,42 @@ func (l *Local) Size(key string) (int64, error) {
 		return 0, err
 	}
 	return info.Size(), nil
+}
+
+// TempFile creates a spool file under DATA_DIR/tmp for streaming writers such as WebDAV.
+func (l *Local) TempFile(prefix string) (*os.File, error) {
+	dir := filepath.Join(l.root, "tmp", "webdav")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return os.CreateTemp(dir, prefix+"-*")
+}
+
+// CleanupTemp removes abandoned spool files older than maxAge. It never touches
+// active upload keys outside tmp/webdav.
+func (l *Local) CleanupTemp(maxAge time.Duration) error {
+	dir := filepath.Join(l.root, "tmp", "webdav")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (l *Local) EnsureEmpty(key string) error {

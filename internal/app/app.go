@@ -34,7 +34,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := store.Migrate(ctx, db, cfg.FreeQuotaBytes); err != nil {
+	if err := store.Migrate(ctx, db, cfg.FreeQuotaBytes, cfg.DeviceTokenTTL); err != nil {
 		db.Close()
 		return nil, nil, err
 	}
@@ -62,6 +62,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 
 	_ = uploadService.CleanupExpired(ctx)
 	_ = fileService.CleanupTrash(ctx, cfg.TrashRetention)
+	_ = fileService.CleanupTemp(0)
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	go func() {
 		ticker := time.NewTicker(15 * time.Minute)
@@ -77,6 +78,14 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 				if err := fileService.CleanupTrash(cleanupCtx, cfg.TrashRetention); err != nil {
 					log.Printf("trash cleanup: %v", err)
 				}
+				if err := fileService.CleanupTemp(24 * time.Hour); err != nil {
+					log.Printf("temp cleanup: %v", err)
+				}
+				if cfg.FileChangeRetention > 0 {
+					if _, err := db.Exec(cleanupCtx, `delete from file_changes where created_at < now() - $1::interval`, cfg.FileChangeRetention.String()); err != nil {
+						log.Printf("file_changes cleanup: %v", err)
+					}
+				}
 			}
 		}
 	}()
@@ -88,9 +97,23 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		return nil, nil, err
 	}
 
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/readyz" {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			if err := db.Ping(ctx); err != nil {
+				http.Error(w, "database not ready", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ready"}`))
+			return
+		}
+		router.ServeHTTP(w, r)
+	})
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           router,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

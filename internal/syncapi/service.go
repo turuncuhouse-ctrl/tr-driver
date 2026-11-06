@@ -59,8 +59,16 @@ func (s *Service) Snapshot(ctx context.Context, userID string) (int64, []domain.
 	return cursor, entries, nil
 }
 
-func (s *Service) Changes(ctx context.Context, userID string, cursor int64, limit int) ([]domain.FileChange, int64, error) {
+func (s *Service) Changes(ctx context.Context, userID string, cursor int64, limit int) ([]domain.FileChange, int64, bool, error) {
 	limit = normalizeLimit(limit)
+	var minID, maxID int64
+	if err := s.db.QueryRow(ctx, `select coalesce(min(id),0), coalesce(max(id),0) from file_changes`).Scan(&minID, &maxID); err != nil {
+		return nil, cursor, false, err
+	}
+	//Retention pruning creates a gap. Clients older than the retained window must bootstrap from a snapshot instead of silently missing deletes.
+	if cursor > 0 && (minID == 0 || cursor < minID-1) {
+		return nil, maxID, true, nil
+	}
 	rows, err := s.db.Query(ctx, `
 		select id, entry_id::text, op, name, parent_id::text, kind, size_bytes, mime_type, content_version, content_hash, device_id::text, client_modified_at, created_at
 		from file_changes
@@ -70,7 +78,7 @@ func (s *Service) Changes(ctx context.Context, userID string, cursor int64, limi
 		)
 		order by id asc limit $3`, userID, cursor, limit)
 	if err != nil {
-		return nil, cursor, err
+		return nil, cursor, false, err
 	}
 	defer rows.Close()
 	changes := make([]domain.FileChange, 0)
@@ -78,12 +86,12 @@ func (s *Service) Changes(ctx context.Context, userID string, cursor int64, limi
 	for rows.Next() {
 		var change domain.FileChange
 		if err := rows.Scan(&change.ID, &change.EntryID, &change.Op, &change.Name, &change.ParentID, &change.Kind, &change.SizeBytes, &change.MimeType, &change.ContentVersion, &change.ContentHash, &change.DeviceID, &change.ClientModifiedAt, &change.CreatedAt); err != nil {
-			return nil, cursor, err
+			return nil, cursor, false, err
 		}
 		next = change.ID
 		changes = append(changes, change)
 	}
-	return changes, next, rows.Err()
+	return changes, next, false, rows.Err()
 }
 
 func normalizeLimit(limit int) int {

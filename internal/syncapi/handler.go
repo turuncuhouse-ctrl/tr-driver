@@ -34,12 +34,12 @@ func (h *Handler) Changes(w http.ResponseWriter, r *http.Request) {
 	cursor, _ := strconv.ParseInt(r.URL.Query().Get("cursor"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	user := auth.UserFromContext(r.Context())
-	changes, next, err := h.service.Changes(r.Context(), user.ID, cursor, limit)
+	changes, next, reset, err := h.service.Changes(r.Context(), user.ID, cursor, limit)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": changes, "nextCursor": next})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": changes, "nextCursor": next, "resetRequired": reset})
 }
 
 func (h *Handler) Folder(w http.ResponseWriter, r *http.Request) {

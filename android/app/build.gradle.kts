@@ -21,8 +21,8 @@ android {
         applicationId = "net.neciparmagan.trdriver"
         minSdk = 26
         targetSdk = 34
-        versionCode = 39
-        versionName = "0.8.21"
+        versionCode = 41
+        versionName = rootProject.file("../VERSION").readText().trim()
         buildConfigField("String", "DEFAULT_SERVER", "\"https://drive.neciparmagan.net.tr\"")
     }
 
@@ -81,6 +81,7 @@ dependencies {
     implementation("androidx.media:media:1.7.0")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.security:security-crypto:1.0.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")

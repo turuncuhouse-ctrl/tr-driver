@@ -14,7 +14,7 @@ COPY go.mod go.sum* ./
 COPY . .
 COPY --from=web /web/dist ./web/dist
 ENV GOTOOLCHAIN=local
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X necipdrive/internal/version.Version=0.5.0" -o /out/necipdrive ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X necipdrive/internal/version.Version=$(cat VERSION)" -o /out/necipdrive ./cmd/server
 
 # ---- Runtime ----
 FROM alpine:3.20

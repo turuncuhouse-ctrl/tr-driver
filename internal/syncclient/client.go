@@ -45,9 +45,10 @@ type SnapshotResponse struct {
 	Entries []Entry `json:"entries"`
 }
 type ChangesResponse struct {
-	Cursor     int64    `json:"cursor"`
-	NextCursor int64    `json:"nextCursor"`
-	Changes    []Change `json:"changes"`
+	Cursor        int64    `json:"cursor"`
+	NextCursor    int64    `json:"nextCursor"`
+	Changes       []Change `json:"changes"`
+	ResetRequired bool     `json:"resetRequired,omitempty"`
 }
 type Entry struct {
 	ID             string  `json:"id"`

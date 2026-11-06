@@ -15,8 +15,8 @@ services:
       test -f /app/web/dist/apps/TRDriver.apk || test -f /app/web/public/apps/TRDriver.apk || (echo 'ERROR: TRDriver.apk missing' && exit 1) &&
       ls -la /app/web/dist/apps/TRDriver.apk /app/web/public/apps/TRDriver.apk 2>/dev/null || true &&
       cd /app &&
-      go build -ldflags='-X necipdrive/internal/version.Version=0.5.0' -o /tmp/trdriver ./cmd/server &&
-      echo Built TR Driver 0.5.0 &&
+      go build -ldflags="-X necipdrive/internal/version.Version=$(cat VERSION)" -o /tmp/trdriver ./cmd/server &&
+      echo Built TR Driver $(cat VERSION) &&
       exec /tmp/trdriver"
     restart: unless-stopped
     ports:
@@ -28,6 +28,9 @@ services:
       DATABASE_URL: postgres://necipdrive:${POSTGRES_PASSWORD}@db:5432/necipdrive?sslmode=disable
       SESSION_SECRET: ${SESSION_SECRET}
       SHARE_PASSWORD_SALT: ${SHARE_PASSWORD_SALT}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      FILE_CHANGE_RETENTION: ${FILE_CHANGE_RETENTION:-2160h}
+      DEVICE_TOKEN_TTL: ${DEVICE_TOKEN_TTL:-0}
       DATA_DIR: /data/files
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://drive.neciparmagan.net.tr}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}

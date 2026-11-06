@@ -3,10 +3,7 @@ package shares
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
@@ -55,7 +52,10 @@ func (s *Service) Create(ctx context.Context, userID, userRole string, opts Crea
 	}
 	var passwordHash string
 	if opts.Password != "" {
-		passwordHash = hashSharePassword(opts.Password, s.cfg.SharePasswordSalt)
+		passwordHash, err = hashSharePassword(opts.Password)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var link domain.ShareLink
 	err = s.db.QueryRow(ctx, `
@@ -119,7 +119,11 @@ func (s *Service) Update(ctx context.Context, userID, linkID string, password *s
 	if password != nil {
 		hash := ""
 		if *password != "" {
-			hash = hashSharePassword(*password, s.cfg.SharePasswordSalt)
+			var err error
+			hash, err = hashSharePassword(*password)
+			if err != nil {
+				return err
+			}
 		}
 		sets = append(sets, "password_hash = $"+strconv.Itoa(idx))
 		args = append(args, hash)
@@ -158,7 +162,7 @@ func (s *Service) Revoke(ctx context.Context, userID, linkID string) error {
 	return nil
 }
 
-func (s *Service) Resolve(ctx context.Context, token, password string, countDownload bool) (*domain.ShareLink, error) {
+func (s *Service) Resolve(ctx context.Context, token, password, unlockProof string, countDownload bool) (*domain.ShareLink, error) {
 	var link domain.ShareLink
 	err := s.db.QueryRow(ctx, `
 		select id::text, coalesce(entry_id::text, file_id::text), coalesce(entry_id::text, file_id::text), token, password_hash,
@@ -177,10 +181,19 @@ func (s *Service) Resolve(ctx context.Context, token, password string, countDown
 	}
 	link.HasPassword = link.PasswordHash != ""
 	if link.PasswordHash != "" {
-		got := hashSharePassword(password, s.cfg.SharePasswordSalt)
-		if subtle.ConstantTimeCompare([]byte(got), []byte(link.PasswordHash)) != 1 {
+		ok, legacy := verifySharePassword(password, link.PasswordHash, s.cfg.SharePasswordSalt)
+		if !ok && !validShareUnlockProof(s.cfg.SessionSecret, link.ID, link.PasswordHash, unlockProof) {
 			return nil, errors.New("invalid share password")
 		}
+		if ok && legacy {
+			if upgraded, err := hashSharePassword(password); err == nil {
+				_, _ = s.db.Exec(ctx, `update share_links set password_hash = $1 where id = $2::uuid`, upgraded, link.ID)
+				link.PasswordHash = upgraded
+			}
+		}
+	}
+	if countDownload && link.Permission == "view" {
+		countDownload = false
 	}
 	if countDownload {
 		var newCount int64
@@ -213,7 +226,7 @@ type PublicMeta struct {
 	Unlocked    bool   `json:"unlocked"`
 }
 
-func (s *Service) Meta(ctx context.Context, token, password string) (*PublicMeta, error) {
+func (s *Service) Meta(ctx context.Context, token, password, unlockProof string) (*PublicMeta, error) {
 	var link domain.ShareLink
 	var name, kind string
 	err := s.db.QueryRow(ctx, `
@@ -231,9 +244,14 @@ func (s *Service) Meta(ctx context.Context, token, password string) (*PublicMeta
 		return meta, nil
 	}
 	if link.PasswordHash != "" {
-		got := hashSharePassword(password, s.cfg.SharePasswordSalt)
-		if subtle.ConstantTimeCompare([]byte(got), []byte(link.PasswordHash)) != 1 {
+		ok, legacy := verifySharePassword(password, link.PasswordHash, s.cfg.SharePasswordSalt)
+		if !ok && !validShareUnlockProof(s.cfg.SessionSecret, link.ID, link.PasswordHash, unlockProof) {
 			return meta, nil
+		}
+		if ok && legacy {
+			if upgraded, err := hashSharePassword(password); err == nil {
+				_, _ = s.db.Exec(ctx, `update share_links set password_hash = $1 where id = $2::uuid`, upgraded, link.ID)
+			}
 		}
 	}
 	meta.Unlocked = true
@@ -250,9 +268,4 @@ func randomToken(size int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-func hashSharePassword(password, salt string) string {
-	sum := sha256.Sum256([]byte(salt + ":" + password))
-	return hex.EncodeToString(sum[:])
 }
