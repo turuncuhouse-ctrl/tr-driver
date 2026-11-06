@@ -114,10 +114,6 @@ func (d *driveFS) OpenFile(ctx context.Context, name string, flag int, _ os.File
 		if !creating {
 			return nil, os.ErrNotExist
 		}
-		parent, base, err2 := d.resolveParent(ctx, name)
-		if err2 != nil {
-			return nil, err2
-		}
 		return d.openWriteSpool(ctx, nil, name, true)
 	}
 	if entry.Kind == "folder" {
