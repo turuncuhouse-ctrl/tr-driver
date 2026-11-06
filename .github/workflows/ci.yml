@@ -26,7 +26,18 @@ jobs:
       - name: Verify version source
         run: test -s VERSION && ! grep -q '[[:space:]]' VERSION
       - run: go vet ./...
-      - run: go test -race ./...
+      - name: Test backend
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -count=1 ./... 2>&1 | tee /tmp/backend-test.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            grep -E -- '--- FAIL:|FAIL[[:space:]]|WARNING: DATA RACE|panic:|Error Trace:|Error:|Test:' /tmp/backend-test.log | head -80 | while IFS= read -r line; do
+              echo "::error title=Backend test failure::$line"
+            done
+            exit "$code"
+          fi
       - run: go build ./cmd/server
 
   web:
