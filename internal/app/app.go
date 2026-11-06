@@ -77,6 +77,11 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 				if err := fileService.CleanupTrash(cleanupCtx, cfg.TrashRetention); err != nil {
 					log.Printf("trash cleanup: %v", err)
 				}
+				if cfg.FileChangeRetention > 0 {
+					if _, err := db.Exec(cleanupCtx, `delete from file_changes where created_at < now() - $1::interval`, cfg.FileChangeRetention.String()); err != nil {
+						log.Printf("file_changes cleanup: %v", err)
+					}
+				}
 			}
 		}
 	}()

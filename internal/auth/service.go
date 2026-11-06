@@ -45,8 +45,9 @@ type LicenseGate interface {
 }
 
 type loginLimiter struct {
-	mu      sync.Mutex
-	attempt map[string][]time.Time
+	mu        sync.Mutex
+	attempt   map[string][]time.Time
+	lastSweep time.Time
 }
 
 func NewService(db *pgxpool.Pool, cfg config.Config, license LicenseGate) *Service {
@@ -424,6 +425,7 @@ func (l *loginLimiter) blocked(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
+	l.sweepLocked(now)
 	window := now.Add(-10 * time.Minute)
 	entries := pruneAfter(l.attempt[key], window)
 	l.attempt[key] = entries
@@ -434,9 +436,26 @@ func (l *loginLimiter) add(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
+	l.sweepLocked(now)
 	window := now.Add(-10 * time.Minute)
 	entries := append(pruneAfter(l.attempt[key], window), now)
 	l.attempt[key] = entries
+}
+
+func (l *loginLimiter) sweepLocked(now time.Time) {
+	if now.Sub(l.lastSweep) < time.Minute {
+		return
+	}
+	l.lastSweep = now
+	window := now.Add(-10 * time.Minute)
+	for key, entries := range l.attempt {
+		entries = pruneAfter(entries, window)
+		if len(entries) == 0 {
+			delete(l.attempt, key)
+		} else {
+			l.attempt[key] = entries
+		}
+	}
 }
 
 func pruneAfter(items []time.Time, after time.Time) []time.Time {

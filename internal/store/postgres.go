@@ -167,6 +167,7 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 			created_at timestamptz not null default now()
 		)`,
 		`create index if not exists file_changes_user_id_id_idx on file_changes(user_id, id)`,
+		`create index if not exists file_changes_created_at_idx on file_changes(created_at)`,
 
 		// Collaboration: drives, ACL, social features
 		`create table if not exists drives (

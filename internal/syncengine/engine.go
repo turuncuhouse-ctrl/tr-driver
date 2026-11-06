@@ -20,6 +20,7 @@ import (
 )
 
 type API interface {
+	Snapshot(context.Context) (syncclient.SnapshotResponse, error)
 	Changes(context.Context, int64, int) (syncclient.ChangesResponse, error)
 	UploadFile(context.Context, string, string, syncclient.Manifest) (syncclient.Entry, error)
 	Trash(context.Context, string) error
@@ -65,7 +66,7 @@ func New(store *syncstore.Store, api API, cfg Config) *Engine {
 	}
 	return &Engine{store: store, api: api, cfg: cfg, watchers: map[string]*watcher.Watcher{}}
 }
-func (e *Engine) Status() Status             { e.mu.RLock(); defer e.mu.RUnlock(); return e.status }
+func (e *Engine) Status() Status { e.mu.RLock(); defer e.mu.RUnlock(); return e.status }
 func (e *Engine) setStatus(fn func(*Status)) {
 	e.mu.Lock()
 	fn(&e.status)
@@ -341,7 +342,13 @@ func (e *Engine) process(ctx context.Context) {
 				err = statErr
 				break
 			}
-			e.setProgress(func(s *Status) { s.State = "syncing"; s.CurrentFile = p.Path; s.BytesTotal = info.Size(); s.BytesDone = 0; s.Percent = 0 })
+			e.setProgress(func(s *Status) {
+				s.State = "syncing"
+				s.CurrentFile = p.Path
+				s.BytesTotal = info.Size()
+				s.BytesDone = 0
+				s.Percent = 0
+			})
 			entry, upErr := e.api.UploadFile(ctx, root.RemoteParentID, p.Path, syncclient.Manifest{RelativePath: p.Rel, FileName: filepath.Base(p.Path), ExpectedSize: info.Size(), LastModifiedMs: info.ModTime().UnixMilli(), ContentHash: p.Hash})
 			err = upErr
 			if err == nil {
@@ -385,9 +392,21 @@ func (e *Engine) pull(ctx context.Context) {
 		if r.Paused {
 			continue
 		}
+		if r.Cursor == 0 {
+			if err := e.bootstrap(ctx, r); err != nil {
+				e.setStatus(func(s *Status) { s.State, s.LastError = "offline", err.Error() })
+			}
+			continue
+		}
 		changes, err := e.api.Changes(ctx, r.Cursor, 200)
 		if err != nil {
 			e.setStatus(func(s *Status) { s.State, s.LastError = "offline", err.Error() })
+			continue
+		}
+		if changes.ResetRequired {
+			if err := e.bootstrap(ctx, r); err != nil {
+				e.setStatus(func(s *Status) { s.State, s.LastError = "offline", err.Error() })
+			}
 			continue
 		}
 		e.setStatus(func(s *Status) { s.State, s.LastError = "syncing", "" })
@@ -399,6 +418,18 @@ func (e *Engine) pull(ctx context.Context) {
 		}
 	}
 }
+func (e *Engine) bootstrap(ctx context.Context, r syncstore.Root) error {
+	snap, err := e.api.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	for _, entry := range snap.Entries {
+		c := syncclient.Change{Cursor: snap.Cursor, EntryID: entry.ID, Op: "upsert", Name: entry.Name, ParentID: entry.ParentID, Kind: entry.Kind, SizeBytes: entry.SizeBytes, ContentVersion: entry.ContentVersion, ContentHash: entry.ContentHash, Entry: entry}
+		e.apply(ctx, r, c)
+	}
+	return e.store.SetCursor(r.ID, snap.Cursor)
+}
+
 func (e *Engine) apply(ctx context.Context, r syncstore.Root, c syncclient.Change) {
 	n, _ := e.store.GetNodeByRemote(r.ID, c.Entry.ID)
 	rel := e.resolveLocalRel(r, c, n)
@@ -417,7 +448,11 @@ func (e *Engine) apply(ctx context.Context, r syncstore.Root, c syncclient.Chang
 		_ = os.Rename(path, conflict)
 		e.queueUpload(r, filepath.ToSlash(strings.TrimPrefix(conflict, r.LocalPath+string(os.PathSeparator))))
 	}
-	e.setProgress(func(s *Status) { s.State = "syncing"; s.CurrentFile = path; s.BytesTotal, s.BytesDone, s.Percent = 0, 0, 0 })
+	e.setProgress(func(s *Status) {
+		s.State = "syncing"
+		s.CurrentFile = path
+		s.BytesTotal, s.BytesDone, s.Percent = 0, 0, 0
+	})
 
 	if c.Entry.Kind == "folder" {
 		if err := os.MkdirAll(path, 0o755); err != nil {

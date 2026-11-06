@@ -90,6 +90,15 @@ func (l *Local) Size(key string) (int64, error) {
 	return info.Size(), nil
 }
 
+// TempFile creates a spool file under DATA_DIR/tmp for streaming writers such as WebDAV.
+func (l *Local) TempFile(prefix string) (*os.File, error) {
+	dir := filepath.Join(l.root, "tmp", "webdav")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return os.CreateTemp(dir, prefix+"-*")
+}
+
 func (l *Local) EnsureEmpty(key string) error {
 	path, err := l.resolve(key)
 	if err != nil {

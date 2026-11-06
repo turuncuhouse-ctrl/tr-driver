@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"necipdrive/internal/access"
+	"necipdrive/internal/blobgc"
 	"necipdrive/internal/changelog"
 	"necipdrive/internal/config"
 	"necipdrive/internal/domain"
@@ -269,10 +270,18 @@ func (s *Service) UploadBytes(ctx context.Context, userID, userRole, parentID, f
 }
 
 func (s *Service) uploadBytesInner(ctx context.Context, userID, billUser, driveID, parentID, fileName, mimeType string, data []byte, deviceID string) error {
+	return s.uploadStreamInner(ctx, userID, billUser, driveID, parentID, fileName, mimeType, int64(len(data)), bytes.NewReader(data), deviceID)
+}
+
+func (s *Service) uploadStreamInner(ctx context.Context, userID, billUser, driveID, parentID, fileName, mimeType string, size int64, src io.Reader, deviceID string) error {
 	storageKey := filepath.Join("user", billUser, time.Now().UTC().Format("2006/01/02"), uuid.NewString())
-	written, err := s.storage.Save(ctx, storageKey, bytes.NewReader(data))
+	written, err := s.storage.Save(ctx, storageKey, io.LimitReader(src, size+1))
 	if err != nil {
 		return err
+	}
+	if written != size {
+		_ = s.storage.Delete(storageKey)
+		return fmt.Errorf("stream size mismatch")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -332,6 +341,35 @@ func (s *Service) uploadBytesInner(ctx context.Context, userID, billUser, driveI
 	}
 	_ = changelog.Append(ctx, tx, billUser, entryID, "upsert", fileName, &parentID, "file", written, mimeType, 1, "", stringPtr(deviceID), nil)
 	return tx.Commit(ctx)
+}
+
+// UploadStream stores a known-size stream without buffering the whole file in memory.
+func (s *Service) UploadStream(ctx context.Context, userID, userRole, parentID, fileName, mimeType string, size int64, src io.Reader, deviceID string) error {
+	if err := s.access.Require(ctx, userID, userRole, parentID, access.ActionEdit); err != nil {
+		return err
+	}
+	driveID, billUser, err := s.parentContext(ctx, parentID)
+	if err != nil {
+		return err
+	}
+	if size < 0 || size > s.cfg.MaxUploadBytes {
+		return fmt.Errorf("file exceeds max upload limit")
+	}
+	fileName = sanitizeName(fileName)
+	if fileName == "" {
+		return errors.New("file name is required")
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	var billQuota, billUsed int64
+	if err := s.db.QueryRow(ctx, `select quota_bytes + coalesce(bonus_quota_bytes,0), used_bytes from users where id = $1::uuid`, billUser).Scan(&billQuota, &billUsed); err != nil {
+		return err
+	}
+	if billUsed+size > billQuota {
+		return fmt.Errorf("quota exceeded")
+	}
+	return s.uploadStreamInner(ctx, userID, billUser, driveID, parentID, fileName, mimeType, size, src, deviceID)
 }
 
 // FindChildFile returns an active file with the same name under parent (case-insensitive).
@@ -493,9 +531,9 @@ func (s *Service) Delete(ctx context.Context, userID, userRole, fileID, deviceID
 	}
 	type deletion struct {
 		id, name, kind, key, mime, hash, owner string
-		parentID                             *string
-		clientModifiedAt                     *time.Time
-		size, version                        int64
+		parentID                               *string
+		clientModifiedAt                       *time.Time
+		size, version                          int64
 	}
 	var targets []deletion
 	for rows.Next() {
@@ -537,6 +575,11 @@ func (s *Service) EntryForShare(ctx context.Context, fileID string) (*domain.Fil
 
 func (s *Service) OpenStorage(key string) (io.ReadCloser, error) {
 	return s.storage.Open(key)
+}
+
+// TempFile exposes a DATA_DIR-backed spool file for streaming protocol writers.
+func (s *Service) TempFile(prefix string) (*os.File, error) {
+	return s.storage.TempFile(prefix)
 }
 
 func (s *Service) ListTrash(ctx context.Context, userID string) ([]domain.FileEntry, error) {
@@ -602,6 +645,23 @@ func (s *Service) Purge(ctx context.Context, userID, fileID, deviceID string) er
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var versionKeys []string
+	vrows, err := tx.Query(ctx, `select storage_key from file_versions where entry_id = $1::uuid`, fileID)
+	if err != nil {
+		return err
+	}
+	for vrows.Next() {
+		var key string
+		if scanErr := vrows.Scan(&key); scanErr != nil {
+			vrows.Close()
+			return scanErr
+		}
+		versionKeys = append(versionKeys, key)
+	}
+	vrows.Close()
+	if err := vrows.Err(); err != nil {
+		return err
+	}
 	var entry domain.FileEntry
 	err = tx.QueryRow(ctx, `
 		delete from file_entries where id = $1::uuid and user_id = $2::uuid and deleted_at is not null
@@ -626,7 +686,7 @@ func (s *Service) Purge(ctx context.Context, userID, fileID, deviceID string) er
 		return err
 	}
 	if entry.Kind == "file" {
-		_ = s.storage.Delete(entry.StorageKey)
+		blobgc.DeleteUnreferenced(ctx, s.db, s.storage, append([]string{entry.StorageKey}, versionKeys...))
 	}
 	return nil
 }

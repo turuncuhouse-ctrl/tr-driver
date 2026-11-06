@@ -13,6 +13,9 @@ import (
 
 type fakeAPI struct{ uploaded string }
 
+func (f *fakeAPI) Snapshot(context.Context) (syncclient.SnapshotResponse, error) {
+	return syncclient.SnapshotResponse{}, nil
+}
 func (f *fakeAPI) Changes(context.Context, int64, int) (syncclient.ChangesResponse, error) {
 	return syncclient.ChangesResponse{}, nil
 }

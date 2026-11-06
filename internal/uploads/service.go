@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"necipdrive/internal/blobgc"
 	"necipdrive/internal/changelog"
 	"necipdrive/internal/config"
 	"necipdrive/internal/domain"
@@ -471,13 +472,10 @@ func (s *Service) CompleteFile(ctx context.Context, userID, sessionID string) (*
 		return nil, err
 	}
 	if replacing {
-		// keep previous blob for version history; trim after commit
-		_, _ = s.db.Exec(ctx, `
-			delete from file_versions where entry_id = $1::uuid and id in (
-				select id from file_versions where entry_id = $1::uuid order by version desc offset 20
-			)`, entry.ID)
+		// Keep previous blobs for version history; prune detached blobs after commit.
+		_ = blobgc.PruneVersions(ctx, s.db, s.storage, entry.ID, 20)
 	} else if oldKey != "" {
-		_ = s.storage.Delete(oldKey)
+		blobgc.DeleteUnreferenced(ctx, s.db, s.storage, []string{oldKey})
 	}
 	return &entry, nil
 }
@@ -686,16 +684,16 @@ func normalizeManifest(file ManifestFile) (ManifestFile, error) {
 		mimeType = "application/octet-stream"
 	}
 	return ManifestFile{
-		RelativePath:   rel,
-		FileName:       name,
-		MimeType:       mimeType,
-		ExpectedSize:   file.ExpectedSize,
-		LastModifiedMs: file.LastModifiedMs,
-		TargetEntryID: file.TargetEntryID,
-		ExpectedVersion: file.ExpectedVersion,
-		ContentHash: file.ContentHash,
+		RelativePath:     rel,
+		FileName:         name,
+		MimeType:         mimeType,
+		ExpectedSize:     file.ExpectedSize,
+		LastModifiedMs:   file.LastModifiedMs,
+		TargetEntryID:    file.TargetEntryID,
+		ExpectedVersion:  file.ExpectedVersion,
+		ContentHash:      file.ContentHash,
 		ClientModifiedAt: file.ClientModifiedAt,
-		DeviceID: file.DeviceID,
+		DeviceID:         file.DeviceID,
 	}, nil
 }
 
