@@ -33,8 +33,8 @@ jobs:
           go test -race -count=1 ./... 2>&1 | tee /tmp/backend-test.log
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            grep -E -- '--- FAIL:|FAIL[[:space:]]|WARNING: DATA RACE|panic:|Error Trace:|Error:|Test:' /tmp/backend-test.log | head -80 | while IFS= read -r line; do
-              echo "::error title=Backend test failure::$line"
+            tail -n 120 /tmp/backend-test.log | while IFS= read -r line; do
+              echo "::error title=Backend test log::$line"
             done
             exit "$code"
           fi
