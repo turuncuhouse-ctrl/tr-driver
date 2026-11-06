@@ -8,12 +8,15 @@
 - `/readyz` veritabanı hazır olma endpoint’i
 - Sync yüklemelerinde SHA-256 içerik doğrulaması
 - WebDAV spool dosyaları için başlangıç/periyodik temizlik ve boyut sınırı
+- PostgreSQL entegrasyon testleri (CI): kalıcı cihaz oturumu, recursive trash/purge/kota, changelog drive_id, legacy OTP migrasyonu
+- İmzalı Android APK workflow’u: mevcut yayın sertifikasıyla uyum doğrulaması ve `web/public/apps` yayınlama
 
 ### Changed
 - `DEVICE_TOKEN_TTL=0` varsayılan; pozitif değer isteğe bağlı süre
 - Şifre sıfırlama tüm cihaz token’larını da iptal eder
 - Klasör purge/restore alt ağacı ve doğru kota sahibini işler
 - Paylaşım şifresi denemeleri ve güvenlik onayları hız sınırlandı
+- E-posta OTP kodları sunucu secret’ına bağlı HMAC-SHA256 ile saklanır; legacy unsalted challenge’lar migrasyonda kapatılır
 
 ### Fixed
 - View-only paylaşım bağlantılarında indirme yetkisi bypass’ı kapatıldı

@@ -32,3 +32,5 @@ Lütfen şunları ekleyin: etki, repro, etkilenen endpointler, önerilen düzelt
 - Cihaz token’ları varsayılan olarak süresizdir (`DEVICE_TOKEN_TTL=0`); cihaz iptali, çıkış veya şifre sıfırlama ile anında geçersiz olur
 - WebDAV için parola yerine cihaz token’ı kullanılabilir; 2FA açıksa önerilen yöntem budur
 - View-only paylaşım bağlantıları dosya indirmeye izin vermez
+- E-posta OTP kodları düz SHA-256 değil, `SESSION_SECRET` ile HMAC-SHA256 olarak saklanır; secret rotasyonu açık challenge’ları geçersiz kılar
+- İmzalı Android güncelleme APK’sı yalnızca mevcut `web/public/apps/TRDriver.apk` sertifikasıyla eşleşirse yayımlanır

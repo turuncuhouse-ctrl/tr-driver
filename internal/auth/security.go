@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"errors"
 	"fmt"
 	"strings"
@@ -250,7 +251,7 @@ func (s *Service) createChallenge(ctx context.Context, userID, purpose string) (
 	_, err = s.db.Exec(ctx, `
 		insert into auth_challenges (user_id, purpose, code_hash, token_hash, expires_at)
 		values ($1::uuid, $2, $3, $4, $5)`,
-		userID, purpose, hashOTP(code), tokenHash, time.Now().Add(otpTTL),
+		userID, purpose, s.hashOTP(code), tokenHash, time.Now().Add(otpTTL),
 	)
 	if err != nil {
 		return "", "", err
@@ -293,7 +294,7 @@ func (s *Service) consumeChallenge(ctx context.Context, userID, purpose, challen
 		_, _ = s.db.Exec(ctx, `update auth_challenges set consumed_at = now() where id = $1::uuid`, id)
 		return ErrChallengeInvalid
 	}
-	if hashOTP(code) != codeHash {
+	if !hmac.Equal([]byte(s.hashOTP(code)), []byte(codeHash)) {
 		_, _ = s.db.Exec(ctx, `update auth_challenges set attempts = attempts + 1 where id = $1::uuid`, id)
 		return ErrChallengeInvalid
 	}
