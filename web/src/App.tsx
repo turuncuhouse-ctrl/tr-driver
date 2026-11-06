@@ -470,7 +470,7 @@ export function App() {
         setChallengeToken(res.challengeToken);
         setOtpCode("");
         setMode("login2fa");
-        setMessage(res.message || "E-postanıza gelen doğrulama kodunu girin.");
+        setMessage(res.message || "Doğrulama kodunu girin.");
         return;
       }
       setForm({ email: "", password: "", displayName: "" });
@@ -889,7 +889,7 @@ export function App() {
       mode === "register" ? "Ücretsiz depolama alanınla hemen başla."
         : mode === "forgot" ? "E-posta adresine 6 haneli bir sıfırlama kodu göndereceğiz."
           : mode === "reset" ? "E-postadaki kodu ve yeni şifreni gir."
-            : mode === "login2fa" ? "E-postana gelen 6 haneli kodu gir."
+            : mode === "login2fa" ? "E-posta veya authenticator uygulamanızdaki 6 haneli kodu gir."
               : "Dosyalarına erişmek için giriş yap.";
     return (
       <main className="auth-page">

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"path"
 	"strings"
@@ -14,16 +15,18 @@ import (
 	"necipdrive/internal/auth"
 	"necipdrive/internal/domain"
 	"necipdrive/internal/files"
+	"necipdrive/internal/httpx"
 
 	"golang.org/x/net/webdav"
 )
 
 // Handler serves WebDAV backed by TR Driver storage (same files as web UI).
 type Handler struct {
-	auth  *auth.Service
-	files *files.Service
-	locks webdav.LockSystem
-	authC sync.Map // basic auth cache: user -> *cachedAuth
+	auth    *auth.Service
+	files   *files.Service
+	locks   webdav.LockSystem
+	authC   sync.Map // basic auth cache: user -> *cachedAuth
+	trusted []netip.Prefix
 }
 
 type cachedAuth struct {
@@ -31,11 +34,12 @@ type cachedAuth struct {
 	expires time.Time
 }
 
-func New(authService *auth.Service, fileService *files.Service) *Handler {
+func New(authService *auth.Service, fileService *files.Service, trusted []netip.Prefix) *Handler {
 	return &Handler{
-		auth:  authService,
-		files: fileService,
-		locks: webdav.NewMemLS(),
+		auth:    authService,
+		files:   fileService,
+		locks:   webdav.NewMemLS(),
+		trusted: trusted,
 	}
 }
 
@@ -65,7 +69,7 @@ func (h *Handler) user(r *http.Request) (*domain.User, error) {
 			}
 			h.authC.Delete(key)
 		}
-		result, err := h.auth.BeginDeviceLogin(r.Context(), clientIP(r), u, p)
+		result, err := h.auth.BeginDeviceLogin(r.Context(), httpx.ClientIP(r, h.trusted), u, p)
 		if err != nil {
 			return nil, err
 		}
@@ -79,13 +83,6 @@ func (h *Handler) user(r *http.Request) (*domain.User, error) {
 		return h.auth.UserBySession(r.Context(), c.Value)
 	}
 	return nil, errors.New("unauthorized")
-}
-
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	return r.RemoteAddr
 }
 
 type driveFS struct {

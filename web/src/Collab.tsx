@@ -349,7 +349,10 @@ export function TrashPanel({ request }: Props) {
 
 export function SettingsPanel({ request }: Props) {
   const [devices, setDevices] = useState<Device[]>([]);
-  const [security, setSecurity] = useState<{ email2FAEnabled: boolean; mailConfigured: boolean } | null>(null);
+  const [security, setSecurity] = useState<{ email2FAEnabled: boolean; totpEnabled: boolean; mailConfigured: boolean } | null>(null);
+  const [totpSecret, setTotpSecret] = useState("");
+  const [totpUri, setTotpUri] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [password, setPassword] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -368,7 +371,7 @@ export function SettingsPanel({ request }: Props) {
     setSaving(true);
     setNote("");
     try {
-      const next = await request<{ email2FAEnabled: boolean; mailConfigured: boolean }>("/api/auth/security", {
+      const next = await request<{ email2FAEnabled: boolean; totpEnabled: boolean; mailConfigured: boolean }>("/api/auth/security", {
         method: "POST",
         body: JSON.stringify({ email2FAEnabled: enabled, password })
       });
@@ -380,6 +383,45 @@ export function SettingsPanel({ request }: Props) {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function setupTotp() {
+    if (!password.trim()) { setNote("Kurulum için şifrenizi girin."); return; }
+    setSaving(true); setNote("");
+    try {
+      const res = await request<{ secret: string; provisioningUri: string }>("/api/auth/security/totp/setup", {
+        method: "POST", body: JSON.stringify({ password })
+      });
+      setTotpSecret(res.secret); setTotpUri(res.provisioningUri);
+      setNote("Authenticator uygulamanıza ekleyip kodu girerek etkinleştirin.");
+    } catch (error) { setNote(error instanceof Error ? error.message : "Kurulum başarısız"); }
+    finally { setSaving(false); }
+  }
+
+  async function enableTotp() {
+    if (!password.trim() || !totpCode.trim()) { setNote("Şifre ve authenticator kodu gerekli."); return; }
+    setSaving(true); setNote("");
+    try {
+      const next = await request<{ email2FAEnabled: boolean; totpEnabled: boolean; mailConfigured: boolean }>("/api/auth/security/totp/enable", {
+        method: "POST", body: JSON.stringify({ password, code: totpCode })
+      });
+      setSecurity(next); setTotpSecret(""); setTotpUri(""); setTotpCode(""); setPassword("");
+      setNote("Authenticator (TOTP) iki adımlı doğrulama açıldı.");
+    } catch (error) { setNote(error instanceof Error ? error.message : "Etkinleştirme başarısız"); }
+    finally { setSaving(false); }
+  }
+
+  async function disableTotp() {
+    if (!password.trim() || !totpCode.trim()) { setNote("Kapatmak için şifre ve güncel authenticator kodu gerekli."); return; }
+    setSaving(true); setNote("");
+    try {
+      const next = await request<{ email2FAEnabled: boolean; totpEnabled: boolean; mailConfigured: boolean }>("/api/auth/security/totp/disable", {
+        method: "POST", body: JSON.stringify({ password, code: totpCode })
+      });
+      setSecurity(next); setTotpCode(""); setPassword("");
+      setNote("Authenticator (TOTP) kapatıldı.");
+    } catch (error) { setNote(error instanceof Error ? error.message : "Kapatma başarısız"); }
+    finally { setSaving(false); }
   }
 
   return (
@@ -410,6 +452,33 @@ export function SettingsPanel({ request }: Props) {
           {security && (
             <small>Durum: {security.email2FAEnabled ? "Açık" : "Kapalı"}</small>
           )}
+        </div>
+      </section>
+
+      <section className="admin-settings" style={{ marginBottom: 24 }}>
+        <div>
+          <h3>Authenticator uygulaması (TOTP)</h3>
+          <p>Google Authenticator, Authy, 1Password gibi bir uygulamayla 6 haneli kod üretin. E-posta 2FA’dan bağımsızdır; ikisi de açıksa girişte TOTP istenir.</p>
+        </div>
+        <div className="admin-settings-form">
+          {!security?.totpEnabled && !totpSecret && (
+            <button type="button" className="primary" disabled={saving} onClick={() => void setupTotp()}>Kurulum başlat</button>
+          )}
+          {totpSecret && (
+            <>
+              <label>Gizli anahtar<input readOnly value={totpSecret} onFocus={(e) => e.target.select()} /></label>
+              <small><a href={totpUri}>otpauth bağlantısı</a> (QR kodu destekleyen uygulamalar için)</small>
+              <label>Authenticator kodu<input inputMode="numeric" maxLength={6} value={totpCode} onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))} /></label>
+              <button type="button" className="primary" disabled={saving} onClick={() => void enableTotp()}>Etkinleştir</button>
+            </>
+          )}
+          {security?.totpEnabled && (
+            <>
+              <label>Güncel authenticator kodu<input inputMode="numeric" maxLength={6} value={totpCode} onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))} /></label>
+              <button type="button" disabled={saving} onClick={() => void disableTotp()}>TOTP kapat</button>
+            </>
+          )}
+          {security && <small>Durum: {security.totpEnabled ? "Açık" : "Kapalı"}</small>}
         </div>
       </section>
 

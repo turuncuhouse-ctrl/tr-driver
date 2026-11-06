@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ type Config struct {
 	UpdateManifestURL    string
 	UpdateChannel        string
 	LicenseVendorMode    bool
+	TrustedProxies       []netip.Prefix
 }
 
 func Load() (Config, error) {
@@ -62,6 +64,11 @@ func Load() (Config, error) {
 		UpdateManifestURL:    getEnv("UPDATE_MANIFEST_URL", ""),
 		UpdateChannel:        getEnv("UPDATE_CHANNEL", "stable"),
 		LicenseVendorMode:    getEnvBool("LICENSE_VENDOR_MODE", false),
+	}
+	var err error
+	cfg.TrustedProxies, err = parseTrustedProxies(getEnv("TRUSTED_PROXY_CIDRS", ""))
+	if err != nil {
+		return Config{}, err
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -150,4 +157,20 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(part)
+		if err != nil {
+			return nil, fmt.Errorf("TRUSTED_PROXY_CIDRS: invalid CIDR %q", part)
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, nil
 }

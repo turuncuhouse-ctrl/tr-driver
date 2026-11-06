@@ -21,6 +21,7 @@ type User struct {
 	MaxBatchBytes    int64     `json:"maxBatchBytes,omitempty"`
 	UploadChunkBytes int64     `json:"uploadChunkBytes,omitempty"`
 	Email2FAEnabled  bool      `json:"email2FAEnabled"`
+	TotpEnabled      bool      `json:"totpEnabled"`
 	DeviceID         *string   `json:"-"`
 }
 
@@ -152,34 +153,34 @@ type DriveMember struct {
 }
 
 type FilePermission struct {
-	ID           string    `json:"id"`
-	EntryID      string    `json:"entryId"`
-	GranteeUserID string   `json:"granteeUserId"`
-	Email        string    `json:"email,omitempty"`
-	DisplayName  string    `json:"displayName,omitempty"`
-	Role         string    `json:"role"` // viewer | commenter | editor
-	CreatedAt    time.Time `json:"createdAt"`
+	ID            string    `json:"id"`
+	EntryID       string    `json:"entryId"`
+	GranteeUserID string    `json:"granteeUserId"`
+	Email         string    `json:"email,omitempty"`
+	DisplayName   string    `json:"displayName,omitempty"`
+	Role          string    `json:"role"` // viewer | commenter | editor
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 type FileVersion struct {
-	ID             string    `json:"id"`
-	EntryID        string    `json:"entryId"`
-	Version        int64     `json:"version"`
-	SizeBytes      int64     `json:"sizeBytes"`
-	MimeType       string    `json:"mimeType"`
-	ContentHash    string    `json:"contentHash"`
-	CreatedByUserID string   `json:"createdByUserId"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID              string    `json:"id"`
+	EntryID         string    `json:"entryId"`
+	Version         int64     `json:"version"`
+	SizeBytes       int64     `json:"sizeBytes"`
+	MimeType        string    `json:"mimeType"`
+	ContentHash     string    `json:"contentHash"`
+	CreatedByUserID string    `json:"createdByUserId"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type FileComment struct {
-	ID         string    `json:"id"`
-	EntryID    string    `json:"entryId"`
-	UserID     string    `json:"userId"`
-	Email      string    `json:"email,omitempty"`
-	DisplayName string   `json:"displayName,omitempty"`
-	Body       string    `json:"body"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID          string    `json:"id"`
+	EntryID     string    `json:"entryId"`
+	UserID      string    `json:"userId"`
+	Email       string    `json:"email,omitempty"`
+	DisplayName string    `json:"displayName,omitempty"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 type Activity struct {

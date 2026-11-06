@@ -1,10 +1,12 @@
 package app
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"log"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"necipdrive/internal/httpx"
@@ -17,58 +19,96 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func csrfMiddleware(next http.Handler, secret string) http.Handler {
-	sum := sha256.Sum256([]byte(secret))
-	token := hex.EncodeToString(sum[:])
-
+func csrfMiddleware(next http.Handler, secret string, trusted ...netip.Prefix) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "csrf_token",
-			Value:    token,
-			Path:     "/",
-			HttpOnly: false,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   isHTTPS(r),
-		})
+		cw := &csrfResponseWriter{ResponseWriter: w, r: r, secret: secret, trusted: trusted}
 		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
-			w.Header().Set("X-CSRF-Token", token)
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(cw, r)
 			return
 		}
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))), "bearer ") {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(cw, r)
 			return
 		}
-		// Public auth endpoints bootstrap the session/device token before CSRF is available.
 		switch r.URL.Path {
 		case "/api/auth/login", "/api/auth/register", "/api/auth/device-login",
 			"/api/auth/login/2fa", "/api/auth/forgot-password", "/api/auth/reset-password",
 			"/api/auth/qr/redeem":
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(cw, r)
 			return
 		}
-		// Public share unlock (password form) is cookie-less.
-		if strings.HasPrefix(r.URL.Path, "/s/") {
-			next.ServeHTTP(w, r)
+		if strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/dav") {
+			next.ServeHTTP(cw, r)
 			return
 		}
-		// WebDAV (Windows net use) uses Basic auth, not browser CSRF cookies.
-		if strings.HasPrefix(r.URL.Path, "/dav") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if r.Header.Get("X-CSRF-Token") != token {
+		session := sessionCookieValue(r)
+		expected := csrfTokenFor(secret, session)
+		if session == "" || !hmac.Equal([]byte(r.Header.Get("X-CSRF-Token")), []byte(expected)) {
 			httpx.Error(w, http.StatusForbidden, "invalid csrf token")
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(cw, r)
 	})
 }
 
-func isHTTPS(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
+func csrfTokenFor(secret, session string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte("trdriver-csrf:" + session))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func sessionCookieValue(r *http.Request) string {
+	if c, err := r.Cookie("session_token"); err == nil {
+		return c.Value
 	}
-	proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
-	return proto == "https"
+	return ""
+}
+
+type csrfResponseWriter struct {
+	http.ResponseWriter
+	r        *http.Request
+	secret   string
+	trusted  []netip.Prefix
+	injected bool
+}
+
+func (w *csrfResponseWriter) inject() {
+	if w.injected {
+		return
+	}
+	w.injected = true
+	session := sessionCookieValue(w.r)
+	// If login/logout changed the session cookie in this response, bind CSRF to the new value.
+	for _, raw := range w.Header().Values("Set-Cookie") {
+		if strings.HasPrefix(raw, "session_token=") {
+			parts := strings.SplitN(strings.TrimPrefix(raw, "session_token="), ";", 2)
+			session = parts[0]
+		}
+	}
+	token := csrfTokenFor(w.secret, session)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "csrf_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isHTTPS(w.r, w.trusted),
+	})
+	if w.r.Method == http.MethodGet || w.r.Method == http.MethodHead {
+		w.Header().Set("X-CSRF-Token", token)
+	}
+}
+
+func (w *csrfResponseWriter) WriteHeader(code int) {
+	w.inject()
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *csrfResponseWriter) Write(b []byte) (int, error) {
+	w.inject()
+	return w.ResponseWriter.Write(b)
+}
+
+func isHTTPS(r *http.Request, trusted []netip.Prefix) bool {
+	return httpx.IsHTTPS(r, trusted)
 }

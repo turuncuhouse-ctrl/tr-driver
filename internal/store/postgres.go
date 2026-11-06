@@ -267,6 +267,9 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64) error 
 		`alter table instance_license add column if not exists instance_id text not null default ''`,
 		`alter table users add column if not exists bonus_quota_bytes bigint not null default 0`,
 		`alter table users add column if not exists email_2fa_enabled boolean not null default false`,
+		`alter table users add column if not exists totp_secret_encrypted text not null default ''`,
+		`alter table users add column if not exists totp_enabled boolean not null default false`,
+		`alter table users add column if not exists totp_last_counter bigint not null default -1`,
 		`create table if not exists auth_challenges (
 			id uuid primary key default gen_random_uuid(),
 			user_id uuid not null references users(id) on delete cascade,

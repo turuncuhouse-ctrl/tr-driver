@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.22 — CI/sürüm birliği, depolama temizliği ve güvenlik sertleştirme
+
+### Added
+- Tek `VERSION` kaynağı; backend/Docker/Android/release workflow sürüm damgası
+- CI (backend/web/Android/Docker) ve tag release workflow
+- TOTP (authenticator) 2FA kurulum/etkinleştirme/kapatma; web ayarlar UI
+- `TRUSTED_PROXY_CIDRS`, `FILE_CHANGE_RETENTION` yapılandırması
+- Android EncryptedSharedPreferences migrasyonu
+
+### Changed
+- CSRF token’ları oturuma bağlı HMAC; paylaşım parolaları Argon2id + HMAC unlock cookie
+- WebDAV yazmaları RAM yerine disk spool ile stream
+- Sync değişim geçmişi budanır; eski cursor güvenli snapshot bootstrap ister
+
+### Fixed
+- Versiyon blob GC, çöp kutusu purge sonrası blob temizliği, login limiter sweep
+- Public share dosyalarında Range desteği
+- Android `allowBackup=false`
+
 ## 0.7.2 — Android yedek progress + widget
 
 ### Added

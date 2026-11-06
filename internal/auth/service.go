@@ -183,12 +183,19 @@ func (s *Service) Login(ctx context.Context, remoteAddr, email, password string)
 		return nil, err
 	}
 
+	if user.TotpEnabled {
+		challengeToken, err := s.startTOTPLogin(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{Requires2FA: true, TwoFAMethod: "totp", ChallengeToken: challengeToken}, nil
+	}
 	if user.Email2FAEnabled {
 		challengeToken, err := s.startLogin2FA(ctx, user)
 		if err != nil {
 			return nil, err
 		}
-		return &LoginResult{Requires2FA: true, ChallengeToken: challengeToken}, nil
+		return &LoginResult{Requires2FA: true, TwoFAMethod: "email", ChallengeToken: challengeToken}, nil
 	}
 
 	sessionToken, err := s.issueSession(ctx, user.ID)
@@ -209,9 +216,9 @@ func (s *Service) authenticatePassword(ctx context.Context, remoteAddr, email, p
 	var user domain.User
 	err := s.db.QueryRow(ctx, `
 		select id::text, email, password_hash, display_name, role, plan_code, quota_bytes, coalesce(bonus_quota_bytes,0), used_bytes, reserved_bytes,
-		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false)
+		       storage_root_id::text, created_at, last_login_at, coalesce(email_2fa_enabled,false), coalesce(totp_enabled,false)
 		from users where email = $1`, strings.ToLower(strings.TrimSpace(email)),
-	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled)
+	).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &user.TotpEnabled)
 	if err != nil {
 		s.limiter.add(remoteAddr)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -238,12 +245,12 @@ func (s *Service) UserBySession(ctx context.Context, token string) (*domain.User
 	var user domain.User
 	err := s.db.QueryRow(ctx, `
 		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, coalesce(u.bonus_quota_bytes,0), u.used_bytes, u.reserved_bytes,
-		       u.storage_root_id::text, u.created_at, u.last_login_at, coalesce(u.email_2fa_enabled,false)
+		       u.storage_root_id::text, u.created_at, u.last_login_at, coalesce(u.email_2fa_enabled,false), coalesce(u.totp_enabled,false)
 		from sessions s
 		join users u on u.id = s.user_id
 		where s.token_hash = $1 and s.expires_at > now()`,
 		hashToken(token),
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &user.TotpEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -318,11 +325,11 @@ func (s *Service) UserByDeviceToken(ctx context.Context, token string) (*domain.
 	var deviceID string
 	err = tx.QueryRow(ctx, `
 		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, coalesce(u.bonus_quota_bytes,0), u.used_bytes, u.reserved_bytes,
-		       u.storage_root_id::text, u.created_at, u.last_login_at, coalesce(u.email_2fa_enabled,false), d.id::text
+		       u.storage_root_id::text, u.created_at, u.last_login_at, coalesce(u.email_2fa_enabled,false), coalesce(u.totp_enabled,false), d.id::text
 		from devices d join users u on u.id = d.user_id
 		where d.token_hash = $1 and d.revoked_at is null and d.expires_at > now()
 		for update of d`, hashToken(token),
-	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &deviceID)
+	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &user.TotpEnabled, &deviceID)
 	if err != nil {
 		return nil, "", err
 	}

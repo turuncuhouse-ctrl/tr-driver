@@ -177,15 +177,16 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 			password = r.FormValue("password")
 		}
 	}
+	unlockProof := ""
 	if cookie, err := r.Cookie(shareCookieName(token)); err == nil && password == "" {
-		password = cookie.Value
+		unlockProof = cookie.Value
 	}
 
 	setShareHeaders(w)
 
 	// Public meta: minimal fields until unlocked when password-protected.
 	if r.URL.Query().Get("meta") == "1" {
-		meta, err := h.service.Meta(r.Context(), token, password)
+		meta, err := h.service.Meta(r.Context(), token, password, unlockProof)
 		if err != nil {
 			httpx.Error(w, http.StatusBadRequest, err.Error())
 			return
@@ -195,7 +196,7 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Query().Get("list") == "1" {
-		link, err := h.service.Resolve(r.Context(), token, password, false)
+		link, err := h.service.Resolve(r.Context(), token, password, unlockProof, false)
 		if err != nil {
 			httpx.Error(w, http.StatusBadRequest, err.Error())
 			return
@@ -228,7 +229,18 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wantHTML := strings.Contains(r.Header.Get("Accept"), "text/html") && r.URL.Query().Get("download") != "1"
-	link, err := h.service.Resolve(r.Context(), token, password, !wantHTML || r.URL.Query().Get("download") == "1")
+	link, err := h.service.Resolve(r.Context(), token, password, unlockProof, !wantHTML || r.URL.Query().Get("download") == "1")
+	if err == nil && password != "" && link.PasswordHash != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     shareCookieName(token),
+			Value:    shareUnlockProof(h.cfg.SessionSecret, link.ID, link.PasswordHash),
+			Path:     "/s/" + token,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   httpx.IsHTTPS(r, h.cfg.TrustedProxies),
+			MaxAge:   86400,
+		})
+	}
 	if err != nil {
 		if wantHTML && (err.Error() == "invalid share password" || strings.Contains(err.Error(), "password")) {
 			writeSharePasswordPage(w, token, err.Error())
@@ -240,18 +252,6 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	if password != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     shareCookieName(token),
-			Value:    password,
-			Path:     "/s/" + token,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   isHTTPS(r),
-			MaxAge:   3600,
-		})
 	}
 
 	entryID := link.EntryID
@@ -329,13 +329,6 @@ func setShareHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; base-uri 'none'; form-action 'self'")
-}
-
-func isHTTPS(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 func writeSharePasswordPage(w http.ResponseWriter, token, msg string) {

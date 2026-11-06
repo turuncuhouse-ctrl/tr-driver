@@ -67,7 +67,7 @@
                 android:id="@+id/otpLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="E-posta doğrulama kodu"
+                android:text="Doğrulama kodu (e-posta / authenticator)"
                 android:visibility="gone" />
 
             <EditText

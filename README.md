@@ -51,6 +51,8 @@ Compose dosyaları **secret hardcode etmez**. Şunları ortam değişkeni olarak
 - `ALLOW_REGISTRATION=true|false`
 - `UPDATE_MANIFEST_URL=https://.../trdriver-updates.json`
 - `FREE_QUOTA_BYTES=0` (`0` / `auto` / boş = DATA_DIR disk kapasitesi; sabit bayt da verilebilir)
+- `FILE_CHANGE_RETENTION=2160h` (sync değişim geçmişi, varsayılan 90 gün)
+- `TRUSTED_PROXY_CIDRS=172.18.0.0/16` (yalnızca güvendiğiniz ters vekil ağları; boşsa forwarded header’lar yok sayılır)
 
 Örnek merkezi güncelleme manifest’i: [`docs/update-manifest.example.json`](docs/update-manifest.example.json)
 

@@ -7,7 +7,7 @@ import org.json.JSONArray
 
 class SessionStore(context: Context) {
     private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs = SecurePrefs.open(appContext, SECURE_PREFS_NAME, PREFS_NAME)
 
     var serverUrl: String
         get() = prefs.getString(KEY_SERVER, BuildConfig.DEFAULT_SERVER)?.trimEnd('/')
@@ -378,6 +378,7 @@ class SessionStore(context: Context) {
 
     companion object {
         const val PREFS_NAME = "trdriver_prefs"
+        private const val SECURE_PREFS_NAME = "trdriver_prefs_secure"
         const val KEY_BACKUP_ACTIVE = "backup_active"
         const val KEY_BACKUP_CURRENT = "backup_current"
         const val KEY_BACKUP_DONE = "backup_done"
