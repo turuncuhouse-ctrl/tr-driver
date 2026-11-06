@@ -34,8 +34,8 @@ jobs:
           code=${PIPESTATUS[0]}
           set -e
           if [ "$code" -ne 0 ]; then
-            tail -n 120 /tmp/backend-test.log | while IFS= read -r line; do
-              echo "::error title=Backend test log::$line"
+            grep -E -- '--- FAIL:|WARNING: DATA RACE|panic:|^FAIL|^#|\.go:[0-9]+:' /tmp/backend-test.log | head -40 | while IFS= read -r line; do
+              echo "::error title=Backend test failure::$line"
             done
             exit "$code"
           fi
