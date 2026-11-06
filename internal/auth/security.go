@@ -505,7 +505,7 @@ func (s *Service) DisableTOTP(ctx context.Context, userID, password, code string
 			return ErrChallengeInvalid
 		}
 	}
-	_, err := s.db.Exec(ctx, `update users set totp_enabled = false, totp_secret_encrypted = '', totp_last_counter = -1 where id = $2::uuid`, userID)
+	_, err := s.db.Exec(ctx, `update users set totp_enabled = false, totp_secret_encrypted = '', totp_last_counter = -1 where id = $1::uuid`, userID)
 	return err
 }
 

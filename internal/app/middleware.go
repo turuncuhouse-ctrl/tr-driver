@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bufio"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -107,6 +110,23 @@ func (w *csrfResponseWriter) WriteHeader(code int) {
 func (w *csrfResponseWriter) Write(b []byte) (int, error) {
 	w.inject()
 	return w.ResponseWriter.Write(b)
+}
+
+func (w *csrfResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *csrfResponseWriter) Flush() {
+	w.inject()
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *csrfResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.inject()
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("response writer does not support hijacking")
 }
 
 func isHTTPS(r *http.Request, trusted []netip.Prefix) bool {

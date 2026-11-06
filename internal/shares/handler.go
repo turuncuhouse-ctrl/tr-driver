@@ -308,6 +308,10 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", cd)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if seeker, ok := reader.(io.ReadSeeker); ok {
+		http.ServeContent(w, r, entry.Name, entry.UpdatedAt, seeker)
+		return
+	}
 	_, _ = io.Copy(w, reader)
 }
 

@@ -33,8 +33,9 @@ object SecurePrefs {
                     is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
                 }
             }
-            editor.commit()
-            legacy.edit().clear().commit()
+            if (editor.commit()) {
+                legacy.edit().clear().commit()
+            }
         }
         return prefs
     }
