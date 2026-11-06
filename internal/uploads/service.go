@@ -2,6 +2,8 @@ package uploads
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -381,6 +383,14 @@ func (s *Service) CompleteFile(ctx context.Context, userID, sessionID string) (*
 	if diskSize != session.ExpectedSize {
 		return nil, errors.New("temporary file size mismatch")
 	}
+	computedHash, err := s.hashStorageKey(tempKey)
+	if err != nil {
+		return nil, err
+	}
+	if session.ContentHash != "" && !strings.EqualFold(computedHash, session.ContentHash) {
+		return nil, errors.New("content hash mismatch")
+	}
+	session.ContentHash = computedHash
 
 	parentID := ""
 	if session.ParentID != nil {
@@ -544,6 +554,19 @@ func (s *Service) AbortBatch(ctx context.Context, userID, batchID string) error 
 		_ = s.storage.Delete(key)
 	}
 	return nil
+}
+
+func (s *Service) hashStorageKey(key string) (string, error) {
+	f, err := s.storage.Open(key)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (s *Service) CleanupExpired(ctx context.Context) error {

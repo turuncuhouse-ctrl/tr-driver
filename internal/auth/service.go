@@ -269,12 +269,16 @@ func (s *Service) CreateDevice(ctx context.Context, userID, name string) (*domai
 	if err != nil {
 		return nil, "", err
 	}
+	var expiresAt any
+	if s.cfg.DeviceTokenTTL > 0 {
+		expiresAt = time.Now().Add(s.cfg.DeviceTokenTTL)
+	}
 	var device domain.Device
 	err = s.db.QueryRow(ctx, `
 		insert into devices (user_id, name, token_hash, expires_at)
 		values ($1::uuid, $2, $3, $4)
 		returning id::text, name, created_at, last_seen_at`,
-		userID, name, tokenHash, time.Now().Add(s.cfg.DeviceTokenTTL),
+		userID, name, tokenHash, expiresAt,
 	).Scan(&device.ID, &device.Name, &device.CreatedAt, &device.LastSeenAt)
 	if err != nil {
 		return nil, "", err
@@ -327,7 +331,7 @@ func (s *Service) UserByDeviceToken(ctx context.Context, token string) (*domain.
 		select u.id::text, u.email, u.display_name, u.role, u.plan_code, u.quota_bytes, coalesce(u.bonus_quota_bytes,0), u.used_bytes, u.reserved_bytes,
 		       u.storage_root_id::text, u.created_at, u.last_login_at, coalesce(u.email_2fa_enabled,false), coalesce(u.totp_enabled,false), d.id::text
 		from devices d join users u on u.id = d.user_id
-		where d.token_hash = $1 and d.revoked_at is null and d.expires_at > now()
+		where d.token_hash = $1 and d.revoked_at is null and (d.expires_at is null or d.expires_at > now())
 		for update of d`, hashToken(token),
 	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.BaseQuotaBytes, &user.BonusQuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.StorageRootID, &user.CreatedAt, &user.LastLoginAt, &user.Email2FAEnabled, &user.TotpEnabled, &deviceID)
 	if err != nil {

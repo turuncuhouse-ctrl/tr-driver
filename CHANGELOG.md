@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.23 — Kalıcı cihaz oturumu, kalan güvenlik düzeltmeleri ve Android güncellemesi
+
+### Added
+- Android/cihaz token’ları varsayılan olarak süresiz; yalnızca cihaz iptali, çıkış veya şifre sıfırlama ile sonlanır
+- WebDAV Basic auth ile cihaz token’ı desteği (2FA kullanıcıları için)
+- `/readyz` veritabanı hazır olma endpoint’i
+- Sync yüklemelerinde SHA-256 içerik doğrulaması
+- WebDAV spool dosyaları için başlangıç/periyodik temizlik ve boyut sınırı
+
+### Changed
+- `DEVICE_TOKEN_TTL=0` varsayılan; pozitif değer isteğe bağlı süre
+- Şifre sıfırlama tüm cihaz token’larını da iptal eder
+- Klasör purge/restore alt ağacı ve doğru kota sahibini işler
+- Paylaşım şifresi denemeleri ve güvenlik onayları hız sınırlandı
+
+### Fixed
+- View-only paylaşım bağlantılarında indirme yetkisi bypass’ı kapatıldı
+- Android 403 yanıtları oturumu kapatmaz; yalnızca gerçek 401 kimlik iptali sayılır
+- Shared drive değişimleri sync üyelerine drive_id ile iletilir
+
 ## 0.8.22 — CI/sürüm birliği, depolama temizliği ve güvenlik sertleştirme
 
 ### Added

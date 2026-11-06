@@ -2,6 +2,8 @@ package webdavx
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -61,7 +63,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) user(r *http.Request) (*domain.User, error) {
 	if u, p, ok := r.BasicAuth(); ok {
-		key := u + "\x00" + p
+		sum := sha256.Sum256([]byte(u + "\x00" + p))
+		key := hex.EncodeToString(sum[:])
 		if v, ok := h.authC.Load(key); ok {
 			c := v.(*cachedAuth)
 			if time.Now().Before(c.expires) {
@@ -69,12 +72,16 @@ func (h *Handler) user(r *http.Request) (*domain.User, error) {
 			}
 			h.authC.Delete(key)
 		}
+		if du, _, err := h.auth.UserByDeviceToken(r.Context(), p); err == nil && strings.EqualFold(du.Email, u) {
+			h.authC.Store(key, &cachedAuth{user: du, expires: time.Now().Add(10 * time.Minute)})
+			return du, nil
+		}
 		result, err := h.auth.BeginDeviceLogin(r.Context(), httpx.ClientIP(r, h.trusted), u, p)
 		if err != nil {
 			return nil, err
 		}
 		if result.Requires2FA {
-			return nil, errors.New("email 2FA is enabled; sign in via the web app and use the session, or disable 2FA for WebDAV password login")
+			return nil, errors.New("2FA is enabled; sign in via the web app and use the session, or use a device token")
 		}
 		h.authC.Store(key, &cachedAuth{user: result.User, expires: time.Now().Add(10 * time.Minute)})
 		return result.User, nil
@@ -345,20 +352,23 @@ func (d *driveFS) openWriteSpool(ctx context.Context, entry *domain.FileEntry, n
 	f.spool = spool
 	if entry != nil && !trunc {
 		rc, err := d.h.files.OpenStorage(entry.StorageKey)
-		if err == nil {
-			n, copyErr := io.Copy(spool, rc)
-			_ = rc.Close()
-			if copyErr != nil {
-				_ = spool.Close()
-				_ = os.Remove(spool.Name())
-				return nil, copyErr
-			}
-			f.size = n
-			if _, err := spool.Seek(0, io.SeekStart); err != nil {
-				_ = spool.Close()
-				_ = os.Remove(spool.Name())
-				return nil, err
-			}
+		if err != nil {
+			_ = spool.Close()
+			_ = os.Remove(spool.Name())
+			return nil, err
+		}
+		n, copyErr := io.Copy(spool, rc)
+		_ = rc.Close()
+		if copyErr != nil {
+			_ = spool.Close()
+			_ = os.Remove(spool.Name())
+			return nil, copyErr
+		}
+		f.size = n
+		if _, err := spool.Seek(0, io.SeekStart); err != nil {
+			_ = spool.Close()
+			_ = os.Remove(spool.Name())
+			return nil, err
 		}
 	}
 	return f, nil
@@ -387,7 +397,9 @@ func (f *davFile) Close() error {
 	} else {
 		mimeType = files.ResolveContentType(f.name, "")
 	}
-	return f.d.h.files.UploadStream(context.Background(), f.d.user.ID, f.d.user.Role, f.parentIDForWrite(), f.name, mimeType, f.size, f.spool, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	return f.d.h.files.UploadStream(ctx, f.d.user.ID, f.d.user.Role, f.parentIDForWrite(), f.name, mimeType, f.size, f.spool, "")
 }
 func (f *davFile) parentIDForWrite() string {
 	if f.entry != nil && f.entry.ParentID != nil {
@@ -408,6 +420,9 @@ func (f *davFile) Read(p []byte) (int, error) {
 }
 func (f *davFile) Write(p []byte) (int, error) {
 	if !f.writing || f.spool == nil {
+		return 0, os.ErrInvalid
+	}
+	if f.offset+int64(len(p)) > f.d.h.files.MaxUploadBytes() {
 		return 0, os.ErrInvalid
 	}
 	n, err := f.spool.WriteAt(p, f.offset)

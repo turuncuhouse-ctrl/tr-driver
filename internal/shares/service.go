@@ -192,6 +192,9 @@ func (s *Service) Resolve(ctx context.Context, token, password, unlockProof stri
 			}
 		}
 	}
+	if countDownload && link.Permission == "view" {
+		countDownload = false
+	}
 	if countDownload {
 		var newCount int64
 		err := s.db.QueryRow(ctx, `

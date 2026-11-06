@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"necipdrive/internal/auth"
@@ -21,10 +22,52 @@ type Handler struct {
 	fileService *files.Service
 	mail        *mailer.Service
 	cfg         config.Config
+	limiter     *shareLimiter
 }
 
 func NewHandler(service *Service, fileService *files.Service, mail *mailer.Service, cfg config.Config) *Handler {
-	return &Handler{service: service, fileService: fileService, mail: mail, cfg: cfg}
+	return &Handler{service: service, fileService: fileService, mail: mail, cfg: cfg, limiter: &shareLimiter{attempt: map[string][]time.Time{}}}
+}
+
+type shareLimiter struct {
+	mu        sync.Mutex
+	attempt   map[string][]time.Time
+	lastSweep time.Time
+}
+
+func (l *shareLimiter) allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if now.Sub(l.lastSweep) >= time.Minute {
+		l.lastSweep = now
+		for k, v := range l.attempt {
+			v = pruneShareAttempts(v, now.Add(-10*time.Minute))
+			if len(v) == 0 {
+				delete(l.attempt, k)
+			} else {
+				l.attempt[k] = v
+			}
+		}
+	}
+	window := now.Add(-10 * time.Minute)
+	entries := pruneShareAttempts(l.attempt[key], window)
+	if len(entries) >= 10 {
+		l.attempt[key] = entries
+		return false
+	}
+	l.attempt[key] = append(entries, now)
+	return true
+}
+
+func pruneShareAttempts(items []time.Time, after time.Time) []time.Time {
+	out := items[:0]
+	for _, t := range items {
+		if t.After(after) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func (h *Handler) API(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +224,10 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(shareCookieName(token)); err == nil && password == "" {
 		unlockProof = cookie.Value
 	}
+	if password != "" && !h.limiter.allow(httpx.ClientIP(r, h.cfg.TrustedProxies)+"|"+token) {
+		httpx.Error(w, http.StatusTooManyRequests, "çok fazla paylaşım şifresi denemesi")
+		return
+	}
 
 	setShareHeaders(w)
 
@@ -277,9 +324,19 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 		writeShareViewPage(w, token, entry.Name)
 		return
 	}
-	if link.Permission == "view" && r.URL.Query().Get("download") != "1" && !wantHTML {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": entry.Name, "kind": entry.Kind, "permission": "view"})
-		return
+	if link.Permission == "view" {
+		if r.URL.Query().Get("download") == "1" {
+			httpx.Error(w, http.StatusForbidden, "view-only share cannot be downloaded")
+			return
+		}
+		if !wantHTML && r.URL.Query().Get("inline") != "1" {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": entry.Name, "kind": entry.Kind, "permission": "view"})
+			return
+		}
+		if entry.Kind == "file" && !files.CanInlinePreview(entry.Name, entry.MimeType) {
+			httpx.Error(w, http.StatusForbidden, "preview not allowed for this file type")
+			return
+		}
 	}
 
 	if entry.Kind != "file" {
@@ -294,7 +351,7 @@ func (h *Handler) DownloadPublic(w http.ResponseWriter, r *http.Request) {
 	defer reader.Close()
 	contentType := files.ResolveContentType(entry.Name, entry.MimeType)
 	disposition := "attachment"
-	if r.URL.Query().Get("inline") == "1" && files.CanInlinePreview(entry.Name, entry.MimeType) {
+	if link.Permission == "view" || (r.URL.Query().Get("inline") == "1" && files.CanInlinePreview(entry.Name, entry.MimeType)) {
 		disposition = "inline"
 	}
 	w.Header().Set("Content-Type", contentType)
@@ -466,6 +523,6 @@ func writeShareViewPage(w http.ResponseWriter, token, name string) {
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><title>` + html.EscapeString(name) + `</title>
 <style>body{font-family:Segoe UI,system-ui,sans-serif;background:#0b1220;color:#e8eefc;margin:0;padding:24px}a{color:#93b0ff}</style>
 </head><body><h1>` + html.EscapeString(name) + `</h1>
-<p><a href="/s/` + html.EscapeString(token) + `?download=1">İndir</a></p>
+<p>Bu bağlantı yalnızca görüntüleme yetkisi veriyor.</p>
 </body></html>`))
 }

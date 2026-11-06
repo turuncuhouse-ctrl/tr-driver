@@ -187,6 +187,9 @@ func (h *Handler) Security(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, st)
 	case http.MethodPost:
+		if !h.securityAttempt(w, r, user.ID, "email2fa") {
+			return
+		}
 		var req struct {
 			Email2FAEnabled bool   `json:"email2FAEnabled"`
 			Password        string `json:"password"`
@@ -222,6 +225,9 @@ func (h *Handler) TOTPSetup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !h.securityAttempt(w, r, user.ID, "totpsetup") {
+		return
+	}
 	var req struct {
 		Password string `json:"password"`
 	}
@@ -245,6 +251,9 @@ func (h *Handler) TOTPEnable(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.securityAttempt(w, r, user.ID, "totpenable") {
 		return
 	}
 	var req struct {
@@ -277,6 +286,9 @@ func (h *Handler) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !h.securityAttempt(w, r, user.ID, "totpdisable") {
+		return
+	}
 	var req struct {
 		Password string `json:"password"`
 		Code     string `json:"code"`
@@ -295,6 +307,16 @@ func (h *Handler) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, st)
+}
+
+func (h *Handler) securityAttempt(w http.ResponseWriter, r *http.Request, userID, purpose string) bool {
+	key := purpose + ":" + userID + ":" + httpx.ClientIP(r, h.trusted)
+	if h.service.limiter.blocked(key) {
+		httpx.Error(w, http.StatusTooManyRequests, ErrRateLimited.Error())
+		return false
+	}
+	h.service.limiter.add(key)
+	return true
 }
 
 func totpError(w http.ResponseWriter, err error) {

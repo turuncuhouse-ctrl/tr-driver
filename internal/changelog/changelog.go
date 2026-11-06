@@ -11,10 +11,11 @@ func Append(ctx context.Context, tx pgx.Tx, userID, entryID, op, name string, pa
 	_, err := tx.Exec(ctx, `
 		insert into file_changes (
 			user_id, entry_id, op, name, parent_id, kind, size_bytes, mime_type,
-			content_version, content_hash, device_id, client_modified_at
+			content_version, content_hash, device_id, client_modified_at, drive_id
 		) values (
 			$1::uuid, $2::uuid, $3, $4, nullif($5, '')::uuid, $6, $7, $8,
-			$9, $10, nullif($11, '')::uuid, $12
+			$9, $10, nullif($11, '')::uuid, $12,
+			(select drive_id from file_entries where id = $2::uuid)
 		)`,
 		userID, entryID, op, name, parentID, kind, size, mime, version, hash, deviceID, clientMod,
 	)

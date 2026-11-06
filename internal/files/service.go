@@ -583,6 +583,12 @@ func (s *Service) TempFile(prefix string) (*os.File, error) {
 	return s.storage.TempFile(prefix)
 }
 
+func (s *Service) MaxUploadBytes() int64 { return s.cfg.MaxUploadBytes }
+
+func (s *Service) CleanupTemp(maxAge time.Duration) error {
+	return s.storage.CleanupTemp(maxAge)
+}
+
 func (s *Service) ListTrash(ctx context.Context, userID string) ([]domain.FileEntry, error) {
 	rows, err := s.db.Query(ctx, `
 		select id::text, user_id::text, coalesce(drive_id::text,''), parent_id::text, name, kind, storage_key, size_bytes, mime_type, content_version, content_hash, client_modified_at, last_opened_at, deleted_at, created_at, updated_at
@@ -604,110 +610,195 @@ func (s *Service) ListTrash(ctx context.Context, userID string) ([]domain.FileEn
 }
 
 func (s *Service) Restore(ctx context.Context, userID, userRole, fileID, deviceID string) error {
+	var role string
+	_ = s.db.QueryRow(ctx, `select role from users where id = $1::uuid`, userID).Scan(&role)
+	if userRole == "" {
+		userRole = role
+	}
 	if err := s.access.Require(ctx, userID, userRole, fileID, access.ActionManage); err != nil {
-		// trashed entries still need ownership check fallback
-		var owner string
-		_ = s.db.QueryRow(ctx, `select user_id::text from file_entries where id = $1::uuid`, fileID).Scan(&owner)
-		if owner != userID && userRole != "admin" {
-			return err
-		}
+		return err
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var entry domain.FileEntry
-	err = tx.QueryRow(ctx, `
-		update file_entries set deleted_at = null, content_version = content_version + 1, updated_at = now()
-		where id = $1::uuid and deleted_at is not null
-		  and (parent_id is null or exists (select 1 from file_entries p where p.id = file_entries.parent_id and p.deleted_at is null))
-		returning id::text, user_id::text, coalesce(drive_id::text,''), parent_id::text, name, kind, storage_key, size_bytes, mime_type, content_version, content_hash, client_modified_at, last_opened_at, deleted_at, created_at, updated_at`,
-		fileID,
-	).Scan(&entry.ID, &entry.UserID, &entry.DriveID, &entry.ParentID, &entry.Name, &entry.Kind, &entry.StorageKey, &entry.SizeBytes, &entry.MimeType, &entry.ContentVersion, &entry.ContentHash, &entry.ClientModifiedAt, &entry.LastOpenedAt, &entry.DeletedAt, &entry.CreatedAt, &entry.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errors.New("file not found or parent is still trashed")
-	}
+	rows, err := tx.Query(ctx, `
+		with recursive targets as (
+			select id, parent_id, name, kind, size_bytes, mime_type, content_version, content_hash, user_id
+			from file_entries
+			where id = $1::uuid and deleted_at is not null
+			  and (parent_id is null or exists (select 1 from file_entries p where p.id = file_entries.parent_id and p.deleted_at is null))
+			union all
+			select f.id, f.parent_id, f.name, f.kind, f.size_bytes, f.mime_type, f.content_version, f.content_hash, f.user_id
+			from file_entries f join targets t on f.parent_id = t.id
+			where f.deleted_at is not null
+		)
+		select id::text, parent_id::text, name, kind, size_bytes, mime_type, content_version, content_hash, user_id::text from targets`, fileID)
 	if err != nil {
 		return err
 	}
-	if entry.UserID != userID && userRole != "admin" {
-		return errors.New("forbidden")
+	type target struct {
+		id, name, kind, hash, mime, owner string
+		parentID                          *string
+		size, version                     int64
 	}
-	if err := changelog.Append(ctx, tx, entry.UserID, entry.ID, "restore", entry.Name, entry.ParentID, entry.Kind, entry.SizeBytes, entry.MimeType, entry.ContentVersion, entry.ContentHash, stringPtr(deviceID), entry.ClientModifiedAt); err != nil {
+	var targets []target
+	for rows.Next() {
+		var t target
+		if err := rows.Scan(&t.id, &t.parentID, &t.name, &t.kind, &t.size, &t.mime, &t.version, &t.hash, &t.owner); err != nil {
+			rows.Close()
+			return err
+		}
+		targets = append(targets, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return err
+	}
+	if len(targets) == 0 {
+		return errors.New("file not found or parent is still trashed")
+	}
+	if _, err := tx.Exec(ctx, `
+		with recursive targets as (
+			select id from file_entries where id = $1::uuid and deleted_at is not null
+			union all
+			select f.id from file_entries f join targets t on f.parent_id = t.id
+			where f.deleted_at is not null
+		)
+		update file_entries set deleted_at = null, content_version = content_version + 1, updated_at = now()
+		where id in (select id from targets)`, fileID); err != nil {
+		return err
+	}
+	for _, t := range targets {
+		if err := changelog.Append(ctx, tx, t.owner, t.id, "restore", t.name, t.parentID, t.kind, t.size, t.mime, t.version+1, t.hash, stringPtr(deviceID), nil); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
 
 func (s *Service) Purge(ctx context.Context, userID, fileID, deviceID string) error {
+	var role string
+	_ = s.db.QueryRow(ctx, `select role from users where id = $1::uuid`, userID).Scan(&role)
+	if err := s.access.Require(ctx, userID, role, fileID, access.ActionManage); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var versionKeys []string
-	vrows, err := tx.Query(ctx, `select storage_key from file_versions where entry_id = $1::uuid`, fileID)
+	rows, err := tx.Query(ctx, `
+		with recursive targets as (
+			select id, parent_id, name, kind, storage_key, size_bytes, mime_type, content_version, content_hash, user_id, drive_id
+			from file_entries
+			where id = $1::uuid and deleted_at is not null
+			union all
+			select f.id, f.parent_id, f.name, f.kind, f.storage_key, f.size_bytes, f.mime_type, f.content_version, f.content_hash, f.user_id, f.drive_id
+			from file_entries f join targets t on f.parent_id = t.id
+		)
+		select t.id::text, t.parent_id::text, t.name, t.kind, t.storage_key, t.size_bytes, t.mime_type, t.content_version, t.content_hash,
+		       t.user_id::text, coalesce(d.owner_user_id::text, t.user_id::text) as bill_user
+		from targets t left join drives d on d.id = t.drive_id`, fileID)
+	if err != nil {
+		return err
+	}
+	type target struct {
+		id, name, kind, key, mime, hash, owner, billUser string
+		parentID                                         *string
+		size, version                                    int64
+	}
+	var targets []target
+	ids := make([]string, 0)
+	keys := make([]string, 0)
+	quota := map[string]int64{}
+	for rows.Next() {
+		var t target
+		if err := rows.Scan(&t.id, &t.parentID, &t.name, &t.kind, &t.key, &t.size, &t.mime, &t.version, &t.hash, &t.owner, &t.billUser); err != nil {
+			rows.Close()
+			return err
+		}
+		targets = append(targets, t)
+		ids = append(ids, t.id)
+		if t.kind == "file" {
+			keys = append(keys, t.key)
+			quota[t.billUser] += t.size
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(targets) == 0 {
+		return errors.New("trashed file not found")
+	}
+	vrows, err := tx.Query(ctx, `select storage_key from file_versions where entry_id = any($1::uuid[])`, ids)
 	if err != nil {
 		return err
 	}
 	for vrows.Next() {
 		var key string
-		if scanErr := vrows.Scan(&key); scanErr != nil {
+		if err := vrows.Scan(&key); err != nil {
 			vrows.Close()
-			return scanErr
+			return err
 		}
-		versionKeys = append(versionKeys, key)
+		keys = append(keys, key)
 	}
 	vrows.Close()
 	if err := vrows.Err(); err != nil {
 		return err
 	}
-	var entry domain.FileEntry
-	err = tx.QueryRow(ctx, `
-		delete from file_entries where id = $1::uuid and user_id = $2::uuid and deleted_at is not null
-		returning id::text, user_id::text, coalesce(drive_id::text,''), parent_id::text, name, kind, storage_key, size_bytes, mime_type, content_version, content_hash, client_modified_at, last_opened_at, deleted_at, created_at, updated_at`,
-		fileID, userID,
-	).Scan(&entry.ID, &entry.UserID, &entry.DriveID, &entry.ParentID, &entry.Name, &entry.Kind, &entry.StorageKey, &entry.SizeBytes, &entry.MimeType, &entry.ContentVersion, &entry.ContentHash, &entry.ClientModifiedAt, &entry.LastOpenedAt, &entry.DeletedAt, &entry.CreatedAt, &entry.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errors.New("trashed file not found")
-	}
-	if err != nil {
-		return err
-	}
-	if entry.Kind == "file" {
-		if _, err := tx.Exec(ctx, `update users set used_bytes = greatest(0, used_bytes - $1) where id = $2::uuid`, entry.SizeBytes, userID); err != nil {
+	for _, t := range targets {
+		if err := changelog.Append(ctx, tx, t.owner, t.id, "purge", t.name, t.parentID, t.kind, t.size, t.mime, t.version, t.hash, stringPtr(deviceID), nil); err != nil {
 			return err
 		}
 	}
-	if err := changelog.Append(ctx, tx, userID, entry.ID, "purge", entry.Name, entry.ParentID, entry.Kind, entry.SizeBytes, entry.MimeType, entry.ContentVersion, entry.ContentHash, stringPtr(deviceID), entry.ClientModifiedAt); err != nil {
+	if _, err := tx.Exec(ctx, `delete from file_entries where id = any($1::uuid[])`, ids); err != nil {
 		return err
+	}
+	for owner, size := range quota {
+		if _, err := tx.Exec(ctx, `update users set used_bytes = greatest(0, used_bytes - $1) where id = $2::uuid`, size, owner); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	if entry.Kind == "file" {
-		blobgc.DeleteUnreferenced(ctx, s.db, s.storage, append([]string{entry.StorageKey}, versionKeys...))
-	}
+	blobgc.DeleteUnreferenced(ctx, s.db, s.storage, keys)
 	return nil
 }
 
 func (s *Service) CleanupTrash(ctx context.Context, retention time.Duration) error {
-	rows, err := s.db.Query(ctx, `select id::text, user_id::text from file_entries where deleted_at <= now() - $1::interval`, retention.String())
+	rows, err := s.db.Query(ctx, `
+		select f.id::text, f.user_id::text
+		from file_entries f
+		where f.deleted_at <= now() - $1::interval
+		  and (f.parent_id is null or exists (select 1 from file_entries p where p.id = f.parent_id and p.deleted_at is null))
+		order by f.deleted_at asc`, retention.String())
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	type item struct{ id, userID string }
+	var items []item
 	for rows.Next() {
-		var id, userID string
-		if err := rows.Scan(&id, &userID); err != nil {
+		var it item
+		if err := rows.Scan(&it.id, &it.userID); err != nil {
+			rows.Close()
 			return err
 		}
-		if err := s.Purge(ctx, userID, id, ""); err != nil {
+		items = append(items, it)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, it := range items {
+		if err := s.Purge(ctx, it.userID, it.id, ""); err != nil {
 			return err
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 func (s *Service) entryByID(ctx context.Context, fileID string) (*domain.FileEntry, error) {

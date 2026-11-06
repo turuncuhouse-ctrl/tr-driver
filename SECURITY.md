@@ -29,3 +29,6 @@ Lütfen şunları ekleyin: etki, repro, etkilenen endpointler, önerilen düzelt
 - Paylaşım parolaları Argon2id ile saklanır; eski SHA-256 hash’leri başarılı ilk açılışta yükseltilir
 - Paylaşım açma cookie’si düz metin parola değil, link+hash’e bağlı HMAC kanıtı taşır
 - Android oturum/yapılandırma tercihleri Keystore destekli EncryptedSharedPreferences’ta tutulur; `allowBackup=false`
+- Cihaz token’ları varsayılan olarak süresizdir (`DEVICE_TOKEN_TTL=0`); cihaz iptali, çıkış veya şifre sıfırlama ile anında geçersiz olur
+- WebDAV için parola yerine cihaz token’ı kullanılabilir; 2FA açıksa önerilen yöntem budur
+- View-only paylaşım bağlantıları dosya indirmeye izin vermez

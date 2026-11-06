@@ -159,8 +159,13 @@ func (s *Service) ResetPassword(ctx context.Context, remoteAddr, email, code, ne
 	if _, err := s.db.Exec(ctx, `update users set password_hash = $1 where id = $2::uuid`, passwordHash, userID); err != nil {
 		return err
 	}
-	// Invalidate all sessions after reset.
-	_, _ = s.db.Exec(ctx, `delete from sessions where user_id = $1::uuid`, userID)
+	// Invalidate all browser sessions and device tokens after reset.
+	if _, err := s.db.Exec(ctx, `delete from sessions where user_id = $1::uuid`, userID); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `update devices set revoked_at = now() where user_id = $1::uuid and revoked_at is null`, userID); err != nil {
+		return err
+	}
 	return nil
 }
 

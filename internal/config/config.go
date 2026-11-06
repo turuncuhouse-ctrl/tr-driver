@@ -55,7 +55,7 @@ func Load() (Config, error) {
 		MaxConcurrentChunks:  getEnvInt("MAX_CONCURRENT_CHUNKS", 2),
 		MaxConcurrentUploads: getEnvInt("MAX_CONCURRENT_UPLOADS", 3),
 		SessionTTL:           getEnvDuration("SESSION_TTL", 24*time.Hour),
-		DeviceTokenTTL:       getEnvDuration("DEVICE_TOKEN_TTL", 720*time.Hour),
+		DeviceTokenTTL:       getEnvDuration("DEVICE_TOKEN_TTL", 0),
 		TrashRetention:       getEnvDuration("TRASH_RETENTION", 720*time.Hour),
 		FileChangeRetention:  getEnvDuration("FILE_CHANGE_RETENTION", 2160*time.Hour),
 		ShareTokenBytes:      getEnvInt("SHARE_TOKEN_BYTES", 24),
