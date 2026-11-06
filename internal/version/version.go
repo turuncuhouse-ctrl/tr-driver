@@ -1,6 +1,7 @@
 package version
 
-// Version is overridden via -ldflags "-X necipdrive/internal/version.Version=x.y.z"
-var Version = "0.5.0"
+// Version is the fallback for unstampeded go run builds. Release builds inject
+// the repository-root VERSION via -ldflags; CI verifies that tag == VERSION.
+var Version = "dev"
 
 const ProductName = "TR Driver"
