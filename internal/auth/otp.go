@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,9 +20,12 @@ func generateOTPCode() (string, error) {
 	return fmt.Sprintf("%06d", n.Int64()), nil
 }
 
-func hashOTP(code string) string {
-	sum := sha256.Sum256([]byte("trdriver-otp:" + code))
-	return hex.EncodeToString(sum[:])
+// hashOTP binds the short-lived email code to the server session secret.
+// The prefix lets migrations distinguish keyed hashes from legacy unsalted ones.
+func (s *Service) hashOTP(code string) string {
+	mac := hmac.New(sha256.New, []byte(s.cfg.SessionSecret))
+	mac.Write([]byte("trdriver-otp:" + code))
+	return "hmac-sha256:" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func generateChallengeToken() (string, string, error) {

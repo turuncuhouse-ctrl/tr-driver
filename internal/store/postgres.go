@@ -296,6 +296,14 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 			return fmt.Errorf("migrate persistent devices: %w", err)
 		}
 	}
+	// Retire legacy unsalted OTP hashes; users can request a fresh code.
+	if _, err := db.Exec(ctx, `
+		update auth_challenges set consumed_at = now()
+		where consumed_at is null
+		  and purpose in ('login_2fa', 'password_reset')
+		  and code_hash not like 'hmac-sha256:%'`); err != nil {
+		return fmt.Errorf("migrate otp challenges: %w", err)
+	}
 
 	if err := backfillPersonalDrives(ctx, db); err != nil {
 		return err
