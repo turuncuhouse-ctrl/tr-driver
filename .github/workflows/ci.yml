@@ -88,6 +88,9 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+      - name: Run Android unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest --no-daemon
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v7
         with:

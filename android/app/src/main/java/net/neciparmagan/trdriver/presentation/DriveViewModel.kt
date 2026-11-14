@@ -36,6 +36,8 @@ data class UiState(
     val downloaded: File? = null,
     val searchQuery: String = "",
     val searching: Boolean = false,
+    val trashMode: Boolean = false,
+    val pdfPreview: File? = null,
     val offline: Boolean = false,
     val selectionMode: Boolean = false,
     val selectedIds: Set<String> = emptySet(),
@@ -75,6 +77,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
     fun clearMessage() = _state.update { it.copy(message = null) }
     fun consumeDownload() = _state.update { it.copy(downloaded = null) }
     fun consumeShareUrl() = _state.update { it.copy(shareUrl = null) }
+    fun consumePdfPreview() = _state.update { it.copy(pdfPreview = null) }
 
     fun register() {
         val s = _state.value
@@ -235,7 +238,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
     fun loadFiles() {
         val parent = _state.value.crumbs.lastOrNull()?.id
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, message = null, searching = false, searchQuery = "") }
+            _state.update { it.copy(busy = true, message = null, searching = false, searchQuery = "", trashMode = false) }
             try {
                 val files = api.listFiles(parent)
                 offline.saveListing(parent, files)
@@ -273,7 +276,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, searchQuery = q, searching = true, message = null) }
+            _state.update { it.copy(busy = true, searchQuery = q, searching = true, trashMode = false, message = null) }
             try {
                 var files = api.search(q)
                 if (files.isEmpty()) {
@@ -305,7 +308,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
 
     fun showStarred() {
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, message = null, searching = true) }
+            _state.update { it.copy(busy = true, message = null, searching = true, trashMode = false) }
             try {
                 val files = api.listStarred()
                 _state.update {
@@ -324,7 +327,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
 
     fun showRecent() {
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, message = null, searching = true) }
+            _state.update { it.copy(busy = true, message = null, searching = true, trashMode = false) }
             try {
                 val files = api.listRecent()
                 _state.update {
@@ -341,11 +344,86 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun showTrash() {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, message = null, searching = true, trashMode = true) }
+            try {
+                val files = api.listTrash()
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        files = files,
+                        crumbs = listOf(Crumb(null, "Çöp kutusu")),
+                        offline = false,
+                        selectionMode = false,
+                        selectedIds = emptySet(),
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = e.message) }
+            }
+        }
+    }
+
+    fun restoreEntry(entry: FileEntry) {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true) }
+            try {
+                api.restoreTrash(entry.id)
+                _state.update { it.copy(busy = false, message = "\"${entry.name}\" geri yüklendi") }
+                showTrash()
+            } catch (e: Exception) {
+                val msg = e.message.orEmpty()
+                val friendly = if (msg.contains("parent is still trashed")) {
+                    "Önce üst klasörü geri yükleyin"
+                } else {
+                    msg.ifBlank { "Geri yükleme başarısız" }
+                }
+                _state.update { it.copy(busy = false, message = friendly) }
+            }
+        }
+    }
+
+    fun purgeEntry(entry: FileEntry) {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true) }
+            try {
+                api.purgeTrash(entry.id)
+                _state.update { it.copy(busy = false, message = "\"${entry.name}\" kalıcı olarak silindi") }
+                showTrash()
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = e.message ?: "Kalıcı silme başarısız") }
+            }
+        }
+    }
+
+    fun purgeSelected() {
+        val ids = _state.value.selectedIds.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true) }
+            var ok = 0
+            for (id in ids) {
+                runCatching { api.purgeTrash(id); ok++ }
+            }
+            _state.update {
+                it.copy(
+                    busy = false,
+                    selectionMode = false,
+                    selectedIds = emptySet(),
+                    message = "$ok öğe kalıcı olarak silindi",
+                )
+            }
+            showTrash()
+        }
+    }
+
     fun openFolder(entry: FileEntry) {
         if (entry.kind != "folder") return
         val special = _state.value.searching ||
             _state.value.crumbs.any {
-                it.name.startsWith("Arama") || it.name == "Yıldızlı" || it.name == "Son görüntülenen"
+                it.name.startsWith("Arama") || it.name == "Yıldızlı" ||
+                    it.name == "Son görüntülenen" || it.name == "Çöp kutusu"
             }
         _state.update {
             if (special) {
@@ -376,6 +454,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 crumbs = listOf(Crumb(null, "Dosyalarım")),
                 searching = false,
+                trashMode = false,
                 selectionMode = false,
                 selectedIds = emptySet(),
             )
@@ -430,7 +509,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(busy = true) }
             try {
                 api.delete(entry.id)
-                _state.update { it.copy(busy = false, message = "\"${entry.name}\" silindi") }
+                _state.update { it.copy(busy = false, message = "\"${entry.name}\" çöp kutusuna taşındı") }
                 loadFiles()
             } catch (e: Exception) {
                 _state.update { it.copy(busy = false, message = e.message) }
@@ -489,6 +568,18 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun previewPdf(entry: FileEntry) {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, message = "PDF hazırlanıyor…") }
+            try {
+                val file = api.downloadToCache(entry)
+                _state.update { it.copy(busy = false, message = null, pdfPreview = file) }
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, message = e.message ?: "PDF açılamadı") }
+            }
+        }
+    }
+
     fun enterSelection(entryId: String) {
         _state.update {
             it.copy(selectionMode = true, selectedIds = setOf(entryId))
@@ -520,7 +611,7 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
                     busy = false,
                     selectionMode = false,
                     selectedIds = emptySet(),
-                    message = "$ok öğe silindi",
+                    message = "$ok öğe çöp kutusuna taşındı",
                 )
             }
             loadFiles()

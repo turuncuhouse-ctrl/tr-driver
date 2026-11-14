@@ -102,6 +102,11 @@ class SessionStore(context: Context) {
         get() = prefs.getLong(KEY_BACKUP_HEARTBEAT, 0L)
         set(value) = prefs.edit().putLong(KEY_BACKUP_HEARTBEAT, value).apply()
 
+    /** Last time a backup pass finished with nothing left pending (fully backed up). */
+    var lastBackupSuccessAt: Long
+        get() = prefs.getLong(KEY_BACKUP_SUCCESS, 0L)
+        set(value) = prefs.edit().putLong(KEY_BACKUP_SUCCESS, value).apply()
+
     var lastBackupMessage: String
         get() = prefs.getString(KEY_LAST_MSG, "") ?: ""
         set(value) = prefs.edit().putString(KEY_LAST_MSG, value).apply()
@@ -392,6 +397,7 @@ class SessionStore(context: Context) {
         const val KEY_BACKUP_BYTES_SENT = "backup_bytes_sent"
         const val KEY_BACKUP_BYTES_TOTAL = "backup_bytes_total"
         const val KEY_LAST_MSG = "last_backup_msg"
+        const val KEY_BACKUP_SUCCESS = "backup_success_at"
         const val KEY_GALLERY_ON = "gallery_on"
         private const val KEY_SMS_BACKUP = "sms_backup_on"
         private const val KEY_CALL_BACKUP = "call_backup_on"
