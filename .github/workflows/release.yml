@@ -17,10 +17,29 @@ jobs:
         run: test "${GITHUB_REF_NAME}" = "v$(cat VERSION)"
 
   server-image:
-    needs: verify
+    needs: [verify, android-apk]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-release
+          path: web/public/apps
+      - name: Confirm signed APK is ready for the image
+        run: |
+          test -s web/public/apps/TRDriver.apk
+          test -s web/public/apps/android-version.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          info = json.loads(Path("web/public/apps/android-version.json").read_text(encoding="utf-8"))
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          if info.get("versionName") != version:
+              raise SystemExit(f"android-version.json versionName={info.get('versionName')!r} != VERSION {version!r}")
+          if info.get("apkPath") != "/download/TRDriver.apk":
+              raise SystemExit(f"unexpected apkPath: {info.get('apkPath')!r}")
+          print(f"image will serve /download/TRDriver.apk and /api/android/version ({info.get('versionName')}/{info.get('versionCode')})")
+          PY
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
