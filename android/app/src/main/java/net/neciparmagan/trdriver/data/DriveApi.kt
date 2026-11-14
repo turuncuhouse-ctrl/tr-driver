@@ -255,7 +255,10 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
             when (resp.code) {
                 200, 206 -> true
                 404, 410 -> false
+                401, 403 -> throw HttpStatusIOException(resp.code, "Oturum doğrulanamadı (HTTP ${resp.code})")
                 else -> {
+                    // Never treat an auth/server error as "file is gone": that used to
+                    // make verification delete local records and free-up lose data.
                     if (resp.code in 400..499) false
                     else throw IOException(parseError(resp.body?.string()).ifBlank { "HTTP ${resp.code}" })
                 }

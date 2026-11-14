@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.24 — Android: daima çalışan yedek, tam kütüphane taraması, arka plan güncellemesi
+
+### Added
+- Kalıcı yedek servisi: ağ değişimi + yeni medya tetikleyicileri, 15 dakikalık watchdog, tek-uçuş kilidi
+- Açılış/güncelleme sonrası otomatik yeniden başlatma (boot + quick-boot + paket değişimi)
+- Uzun süre duran yedek için günlük uyarı bildirimi; ayar ekranında arka plan sağlığı satırı
+- Sunucu tarafı bütünlük doğrulaması: kaybolan uzak dosyalar yeniden yedek kuyruğuna alınır
+- Uygulama kapalıyken bile periyodik güncelleme kontrolü; `minSupportedCode` zorlaması
+- İndirilen APK’nın yayın sertifikasıyla eşleşme doğrulaması (imza pinning)
+
+### Changed
+- Galeri taraması limitsiz (eski 4000 öğe sınırı eski fotoğrafları atlıyordu); SAF klasörleri derin + tam tarama
+- WorkManager artık yalnızca sınırlı yedek görevi; periyodik iş 15 dakikada bir denetçi olarak çalışır
+- 401/403 yanıtları “dosya silinmiş” sayılmaz; doğrulama belirsiz cevapta kayıt silmez
+
+### Fixed
+- Process ölünce kaybolan Wi‑Fi tetikleyicisi; Android 12+ arka plan servis başlatma hatası
+- 24 batch sonrası kapanan yedek döngüsü; periyodik işin sürekli sıfırlanması
+
 ## 0.8.23 — Kalıcı cihaz oturumu, kalan güvenlik düzeltmeleri ve Android güncellemesi
 
 ### Added

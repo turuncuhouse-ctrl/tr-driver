@@ -23,17 +23,56 @@ data class GalleryBackupBatchResult(
     val scheduleContinue: Boolean,
     val continueDelaySec: Long = 2L,
     val message: String = "",
+    val uploadedCount: Int = 0,
 )
 
-/** Core gallery backup logic — safe to run from WorkManager or foreground service. */
+/** Core gallery backup logic — safe to run from WorkManager or the persistent foreground service. */
 object GalleryBackupEngine {
     private const val TAG = "GalleryBackupEngine"
     private const val FILES_PER_RUN = 8
+    private const val SCAN_CACHE_MS = 60_000L
 
+    // A full SAF tree walk is slow (one ContentProvider round-trip per entry),
+    // and a cycle runs many batches. Cache the eligible list briefly; the
+    // uploaded-keys filter below is always read fresh, so this can never
+    // re-upload an item or skip a newly taken photo for more than a minute.
+    private var cachedEligible: List<LocalMedia>? = null
+    private var cachedEligibleAt = 0L
+
+    fun invalidateScanCache() {
+        cachedEligible = null
+        cachedEligibleAt = 0L
+    }
+
+    /**
+     * Serialise every caller. Without this, the keep-alive service, the
+     * WorkManager fallback and a manual "Yedekle" tap can upload the same file
+     * at the same time when boot + Wi-Fi + periodic triggers overlap.
+     */
     suspend fun runBatch(
         context: Context,
         isStopped: () -> Boolean = { false },
         onNotification: ((String) -> Unit)? = null,
+    ): GalleryBackupBatchResult {
+        if (!BackupRunLock.tryAcquire()) {
+            return GalleryBackupBatchResult(
+                morePending = true,
+                scheduleContinue = true,
+                continueDelaySec = 10L,
+                message = "Başka bir yedek oturumu çalışıyor",
+            )
+        }
+        return try {
+            runBatchInner(context, isStopped, onNotification)
+        } finally {
+            BackupRunLock.release()
+        }
+    }
+
+    private suspend fun runBatchInner(
+        context: Context,
+        isStopped: () -> Boolean,
+        onNotification: ((String) -> Unit)?,
     ): GalleryBackupBatchResult {
         val app = context.applicationContext
         val session = SessionStore(app)
@@ -76,10 +115,14 @@ object GalleryBackupEngine {
 
         val db = UploadedMediaDb(app)
         val api = DriveApi(session, app)
-        val gallery = if (hasMedia) MediaCatalog.scan(app, limit = 4000) else emptyList()
-        val folders = MediaCatalog.scanDocumentTrees(app, session.backupFolderUris, limitPerTree = 800)
-        val eligible = (gallery + folders).filter { it.sizeBytes !in 1 until 1024 }
-        val pendingList = eligible.filter { !db.isUploaded(it.mediaKey) }
+
+        // Full library scan. The old 4000-item / 800-per-tree caps meant older
+        // photos were NEVER backed up on large libraries.
+        val eligible = scanEligible(app, session, hasMedia)
+
+        // One read instead of one SQLite query per media item (was O(n) queries).
+        val uploadedKeys = db.allUploadedKeys()
+        val pendingList = eligible.filter { it.mediaKey !in uploadedKeys }
         var alreadyDone = (eligible.size - pendingList.size).coerceAtLeast(0)
 
         if (pendingList.isEmpty()) {
@@ -100,6 +143,7 @@ object GalleryBackupEngine {
         val filesPerRun = ((pace?.recommendedBatch ?: FILES_PER_RUN) * 1.25).toInt().coerceIn(1, 25)
         val batch = pendingList.take(filesPerRun)
         var pendingLeft = pendingList.size
+        var uploadedCount = 0
         var lastWidgetRefresh = 0L
         val parentCache = mutableMapOf<String, String>()
 
@@ -118,6 +162,7 @@ object GalleryBackupEngine {
                     morePending = pendingLeft > 0,
                     scheduleContinue = true,
                     continueDelaySec = 2L,
+                    uploadedCount = uploadedCount,
                 )
             }
 
@@ -175,6 +220,7 @@ object GalleryBackupEngine {
                     val size = item.sizeBytes.coerceAtLeast(1L)
                     db.markUploaded(item.mediaKey, entry.id, size, item.uri)
                 }
+                uploadedCount++
                 alreadyDone += 1
                 pendingLeft -= 1
                 session.updateBackupProgress(
@@ -217,6 +263,7 @@ object GalleryBackupEngine {
                     scheduleContinue = true,
                     continueDelaySec = 30L,
                     message = e.reason,
+                    uploadedCount = uploadedCount,
                 )
             } catch (e: Exception) {
                 Log.w(TAG, "upload failed ${item.displayName}: ${e.message}")
@@ -238,6 +285,7 @@ object GalleryBackupEngine {
                         morePending = pendingLeft > 0,
                         scheduleContinue = true,
                         continueDelaySec = 15L,
+                        uploadedCount = uploadedCount,
                     )
                 }
                 pendingLeft -= 1
@@ -249,7 +297,20 @@ object GalleryBackupEngine {
             morePending = pendingLeft > 0,
             scheduleContinue = pendingLeft > 0,
             continueDelaySec = 2L,
+            uploadedCount = uploadedCount,
         )
+    }
+
+    private fun scanEligible(app: Context, session: SessionStore, hasMedia: Boolean): List<LocalMedia> {
+        val now = System.currentTimeMillis()
+        cachedEligible?.let { if (now - cachedEligibleAt < SCAN_CACHE_MS) return it }
+        val gallery = if (hasMedia) MediaCatalog.scanAll(app) else emptyList()
+        val folders = MediaCatalog.scanAllDocumentTrees(app, session.backupFolderUris)
+        // Only skip genuinely empty/placeholder items; small text/config files matter too.
+        val eligible = (gallery + folders).filter { it.sizeBytes > 0L }
+        cachedEligible = eligible
+        cachedEligibleAt = now
+        return eligible
     }
 
     private fun parentCacheKey(item: LocalMedia): String {

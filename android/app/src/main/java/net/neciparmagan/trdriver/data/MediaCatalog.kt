@@ -44,6 +44,10 @@ data class MediaAlbum(
 )
 
 object MediaCatalog {
+    /** Safety guard against pathological trees, not a backup policy cap. */
+    private const val SAF_HARD_LIMIT = 100_000
+    private const val SAF_MAX_DEPTH = 20
+
     fun scan(context: Context, limit: Int = 2000): List<LocalMedia> {
         val perCollection = limit.coerceAtLeast(200)
         val out = ArrayList<LocalMedia>()
@@ -60,6 +64,17 @@ object MediaCatalog {
             .sortedByDescending { it.dateTakenMs }
             .take(limit.coerceAtLeast(perCollection))
     }
+
+    /**
+     * Full MediaStore scan for backup — deliberately unbounded.
+     * The UI helpers above keep their limits; backup must never silently skip
+     * older media on a large library (the old 4000 cap did exactly that).
+     */
+    fun scanAll(context: Context): List<LocalMedia> = scan(context, Int.MAX_VALUE)
+
+    /** Full recursive SAF folder scan for backup (see scanAll). */
+    fun scanAllDocumentTrees(context: Context, treeUris: List<String>): List<LocalMedia> =
+        scanDocumentTrees(context, treeUris, limitPerTree = SAF_HARD_LIMIT)
 
     fun scanAlbum(context: Context, albumId: String, limit: Int = 2000): List<LocalMedia> {
         if (albumId.startsWith("saf:")) {
@@ -124,7 +139,7 @@ object MediaCatalog {
         limit: Int,
         depth: Int,
     ) {
-        if (out.size >= limit || depth > 8) return
+        if (out.size >= limit || depth > SAF_MAX_DEPTH) return
         val children = runCatching { dir.listFiles() }.getOrNull() ?: return
         for (f in children) {
             if (out.size >= limit) return
@@ -132,7 +147,8 @@ object MediaCatalog {
                 f.isDirectory -> walkTree(f, label, out, limit, depth + 1)
                 f.isFile -> {
                     val size = f.length()
-                    if (size in 1 until 1024) continue
+                    // Back up small files too (notes, exports, configs); only skip empties.
+                    if (size <= 0L) continue
                     val name = f.name ?: continue
                     val mime = f.type ?: "application/octet-stream"
                     out += LocalMedia(

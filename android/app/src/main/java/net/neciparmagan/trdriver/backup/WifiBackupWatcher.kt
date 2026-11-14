@@ -8,15 +8,20 @@ import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import net.neciparmagan.trdriver.data.SessionStore
-import net.neciparmagan.trdriver.data.UploadNetworkGate
 
 /**
- * When Wi‑Fi becomes available, resume gallery backup in the background
- * (throttled so other apps keep working).
+ * In-process Wi-Fi trigger.
+ *
+ * A dynamic NetworkCallback only lives as long as the process. The durable
+ * network callback lives in TrKeepAliveService; this one is the extra trigger
+ * while the app process happens to be alive. It must NOT start a foreground
+ * service (Android 12+ background FGS restriction) — it only re-arms
+ * WorkManager and nudges the service loop.
  */
 object WifiBackupWatcher {
     private const val TAG = "WifiBackupWatcher"
+
+    @Volatile
     private var registered = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingStart: Runnable? = null
@@ -28,28 +33,29 @@ object WifiBackupWatcher {
             ?: return
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
             .build()
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 scheduleBackupSoon(app)
             }
 
+            override fun onLost(network: Network) {
+                scheduleBackupSoon(app)
+            }
+
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
                 ) {
                     scheduleBackupSoon(app)
                 }
             }
         }
         try {
-            cm.registerNetworkCallback(request, callback)
+            cm.registerNetworkCallback(request, callback, mainHandler)
             registered = true
-            if (UploadNetworkGate.isWifi(app)) {
-                scheduleBackupSoon(app)
-            }
+            scheduleBackupSoon(app)
         } catch (e: Exception) {
             Log.w(TAG, "registerNetworkCallback failed", e)
         }
@@ -59,20 +65,14 @@ object WifiBackupWatcher {
         pendingStart?.let { mainHandler.removeCallbacks(it) }
         val task = Runnable {
             try {
-                val session = SessionStore(context)
-                if (!session.isLoggedIn || !session.anyBackupEnabled()) return@Runnable
-                if (!UploadNetworkGate.isWifi(context)) return@Runnable
-                if (GalleryBackupForegroundService.running) return@Runnable
-                Log.i(TAG, "Wi‑Fi up — scheduling gallery backup")
-                // schedule() already enqueues a one-shot; continue with delay (no expedited).
-                GalleryBackupWorker.schedule(context)
-                GalleryBackupWorker.scheduleContinue(context, delaySeconds = 3L)
+                // Debounce: let Wi-Fi stabilise and let other apps get airtime.
+                BackupController.ensure(context)
+                BackupController.requestKick()
             } catch (e: Exception) {
                 Log.e(TAG, "scheduleBackupSoon failed", e)
             }
         }
         pendingStart = task
-        // Debounce: wait a few seconds for Wi‑Fi to stabilize.
         mainHandler.postDelayed(task, 4_000L)
     }
 }

@@ -193,10 +193,6 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
         <service
-            android:name=".backup.GalleryBackupForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-        <service
             android:name=".backup.TrKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
@@ -218,7 +214,12 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <!-- OEM quick-boot / reboot broadcasts (Xiaomi, HTC, Samsung) -->
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.REBOOT" />
             </intent-filter>
         </receiver>
         <receiver
