@@ -27,7 +27,7 @@ alınan, şifreli, artımlı (incremental) yedekler + her çalışta geri-yükle
 - **Veritabanı:** her çalışta `pg_dump --format=custom` alınır, snapshot'a `db.dump`
   olarak girer. Custom format sıkıştırmalıdır ve `pg_restore --list` ile çevrimdışı
   doğrulanabilir.
-- **Dosyalar:** `DATA_DIR` tamamı (`tmp/` ve `lost+found` hariç). İlk yedek tam,
+- **Dosyalar:** `DATA_DIR` tamamı (yalnızca üst-düzey `tmp/` ve `lost+found/` hariç; kullanıcı dosyaları isimleri ne olursa olsun alınır). İlk yedek tam,
   sonrakiler **yalnızca değişen blokları** gönderir — 500 GB veride bile gece
   çalışması dakikalar sürer (değişim kadar).
 - **Saklama:** varsayılan `keep-daily 7 / keep-weekly 4 / keep-monthly 6`, iki repoda

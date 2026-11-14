@@ -3,11 +3,20 @@ package backup
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// snapshotHost is stamped on every snapshot via `backup --host`. It must stay
+// stable: restic groups snapshots by host+paths for `forget`, and a container
+// hostname would change on every recreate, fragmenting groups so old
+// snapshots are never pruned.
+const snapshotHost = "trdriver"
 
 // Client is a thin wrapper around the restic CLI.
 type Client struct {
@@ -53,7 +62,9 @@ func (c *Client) baseEnv(repo Repo) []string {
 }
 
 func (c *Client) baseArgs(repo Repo) []string {
-	args := []string{"-r", repo.Location, "--no-color"}
+	// NOTE: restic has no --no-color flag; it disables color automatically
+	// when stdout is not a TTY.
+	args := []string{"-r", repo.Location}
 	args = append(args, repo.Options...)
 	return args
 }
@@ -79,6 +90,10 @@ func (c *Client) EnsureInit(ctx context.Context, repo Repo) error {
 		if _, _, probeErr := runCmd(ctx, c.Bin, c.baseEnv(repo), probe...); probeErr == nil {
 			return nil
 		}
+		if strings.Contains(strings.ToLower(stderr), "already exists") {
+			return fmt.Errorf("restic repo at %s exists but the password is wrong or the repo is damaged: %s",
+				repo.Location, truncate(stderr))
+		}
 		return cmdError("restic init "+repo.Location, err, stderr)
 	}
 	return nil
@@ -90,7 +105,7 @@ func (c *Client) EnsureInit(ctx context.Context, repo Repo) error {
 // that changed mid-backup on a live DATA_DIR).
 func (c *Client) Backup(ctx context.Context, repo Repo, tags, excludes, sources []string) (BackupSummary, error) {
 	args := c.baseArgs(repo)
-	args = append(args, "backup", "--json", "--one-file-system")
+	args = append(args, "backup", "--json", "--one-file-system", "--host", snapshotHost)
 	for _, tag := range tags {
 		if tag != "" {
 			args = append(args, "--tag", tag)
@@ -142,13 +157,6 @@ func (c *Client) Check(ctx context.Context, repo Repo) error {
 func (c *Client) Snapshots(ctx context.Context, repo Repo) ([]Snapshot, error) {
 	args := append(c.baseArgs(repo), "snapshots", "--json")
 	stdout, stderr, err := runCmd(ctx, c.Bin, c.baseEnv(repo), args...)
-	if err != nil {
-		// An initialised-but-empty repo exits non-zero with "no snapshots".
-		if strings.Contains(stderr, "no snapshots") {
-			return nil, nil
-		}
-		return nil, cmdError("restic snapshots", err, stderr)
-	}
 	var raw []struct {
 		ID       string    `json:"id"`
 		ShortID  string    `json:"short_id"`
@@ -157,17 +165,28 @@ func (c *Client) Snapshots(ctx context.Context, repo Repo) ([]Snapshot, error) {
 		Paths    []string  `json:"paths"`
 		Tags     []string  `json:"tags"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
-		return nil, fmt.Errorf("restic snapshots: parse: %w", err)
+	// Parse first: some versions print usable JSON alongside a warning exit.
+	if uerr := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &raw); uerr == nil {
+		out := make([]Snapshot, 0, len(raw))
+		for _, s := range raw {
+			out = append(out, Snapshot{
+				ID: s.ID, ShortID: s.ShortID, Time: s.Time,
+				Hostname: s.Hostname, Paths: s.Paths, Tags: s.Tags,
+			})
+		}
+		// Do not trust daemon-side ordering: newest first, deterministically.
+		sort.Slice(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+		return out, nil
 	}
-	out := make([]Snapshot, 0, len(raw))
-	for _, s := range raw {
-		out = append(out, Snapshot{
-			ID: s.ID, ShortID: s.ShortID, Time: s.Time,
-			Hostname: s.Hostname, Paths: s.Paths, Tags: s.Tags,
-		})
+	if err != nil {
+		// An initialised-but-empty repo reports "no snapshots".
+		if strings.Contains(strings.ToLower(stderr), "no snapshots") ||
+			strings.Contains(strings.ToLower(stdout), "no snapshots") {
+			return nil, nil
+		}
+		return nil, cmdError("restic snapshots", err, stderr)
 	}
-	return out, nil
+	return nil, fmt.Errorf("restic snapshots: parse: %s", truncate(stdout))
 }
 
 // FindPaths returns every stored path matching basename inside a snapshot.
@@ -176,9 +195,6 @@ func (c *Client) Snapshots(ctx context.Context, repo Repo) ([]Snapshot, error) {
 func (c *Client) FindPaths(ctx context.Context, repo Repo, snapshotID, basename string) ([]string, error) {
 	args := append(c.baseArgs(repo), "find", "--json", "--snapshot", snapshotID, basename)
 	stdout, stderr, err := runCmd(ctx, c.Bin, c.baseEnv(repo), args...)
-	if err != nil {
-		return nil, cmdError("restic find "+basename, err, stderr)
-	}
 	var out []string
 	for _, path := range parseFindPaths(stdout) {
 		if path == "" {
@@ -188,7 +204,20 @@ func (c *Client) FindPaths(ctx context.Context, repo Repo, snapshotID, basename 
 			out = append(out, path)
 		}
 	}
-	return out, nil
+	if len(out) > 0 || err == nil {
+		return out, nil
+	}
+	// No matches: some restic versions exit 1 with an empty result. Only
+	// swallow that case — anything alarming (Fatal, wrong password…) is an
+	// error. Note stderr is never matched for secrets: it holds no password.
+	if strings.Contains(strings.ToLower(stderr), "fatal") {
+		return nil, cmdError("restic find "+basename, err, stderr)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil, nil
+	}
+	return nil, cmdError("restic find "+basename, err, stderr)
 }
 
 // FindPath locates the stored path of a file inside a snapshot by basename.
@@ -206,13 +235,32 @@ func (c *Client) FindPath(ctx context.Context, repo Repo, snapshotID, basename s
 // RestorePath restores a single stored path from a snapshot into target dir.
 func (c *Client) RestorePath(ctx context.Context, repo Repo, snapshotID, includePath, target string) error {
 	args := append(c.baseArgs(repo),
-		"restore", snapshotID, "--target", target, "--include", includePath,
+		"restore", snapshotID, "--target", target, "--include", escapePattern(includePath),
 	)
 	_, stderr, err := runCmd(ctx, c.Bin, c.baseEnv(repo), args...)
 	if err != nil {
 		return cmdError("restic restore", err, stderr)
 	}
 	return nil
+}
+
+// escapePattern quotes glob metacharacters so a literal stored path (which may
+// contain user-chosen names like "[final].jpg") matches exactly one file in
+// --include/--exclude patterns.
+func escapePattern(path string) string {
+	var b strings.Builder
+	b.Grow(len(path) + 8)
+	for _, r := range path {
+		switch r {
+		case '*', '?', '[':
+			b.WriteByte('[')
+			b.WriteRune(r)
+			b.WriteByte(']')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // RestoreLatest restores a whole snapshot (used by disaster-recovery CLI).
@@ -228,8 +276,13 @@ func (c *Client) RestoreLatest(ctx context.Context, repo Repo, snapshotID, targe
 func parseBackupSummary(stdout string) (BackupSummary, error) {
 	var summary BackupSummary
 	found := false
-	decoder := json.NewDecoder(strings.NewReader(stdout))
-	for decoder.More() {
+	// Line-by-line: a stray warning line must not hide the summary, and old
+	// restic printed the summary without a message_type field.
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
 		var msg struct {
 			MessageType     string `json:"message_type"`
 			SnapshotID      string `json:"snapshot_id"`
@@ -240,14 +293,13 @@ func parseBackupSummary(stdout string) (BackupSummary, error) {
 			TotalBytes      int64  `json:"total_bytes_processed"`
 			TotalFiles      int64  `json:"total_files_processed"`
 		}
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			break
-		}
-		if err := json.Unmarshal(raw, &msg); err != nil {
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			continue
 		}
-		if msg.MessageType != "summary" {
+		if msg.MessageType != "" && msg.MessageType != "summary" {
+			continue
+		}
+		if msg.SnapshotID == "" {
 			continue
 		}
 		summary = BackupSummary{
@@ -263,47 +315,80 @@ func parseBackupSummary(stdout string) (BackupSummary, error) {
 	return summary, nil
 }
 
-// parseFindPaths extracts "path" values from `restic find --json` output,
-// accepting both a top-level array and JSON-lines shapes.
+// parseFindPaths extracts "path" values from `restic find --json` output.
+// The documented shape is an array of per-snapshot objects holding a
+// "matches" array; older versions printed bare {"path":...} objects, either
+// as an array or JSON-lines. All shapes are accepted.
 func parseFindPaths(stdout string) []string {
 	var paths []string
 	trimmed := strings.TrimSpace(stdout)
 	if trimmed == "" {
 		return nil
 	}
-	if strings.HasPrefix(trimmed, "[") {
-		var arr []struct {
-			Path string `json:"path"`
-		}
-		if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
-			for _, item := range arr {
+	collect := func(items []findMatch) {
+		for _, item := range items {
+			if item.Path != "" {
 				paths = append(paths, item.Path)
 			}
+		}
+	}
+	// Shape 1 (documented): [{"snapshot":..,"hits":..,"matches":[{...,"path":..}]}]
+	var grouped []struct {
+		Matches []findMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &grouped); err == nil && len(grouped) > 0 {
+		for _, g := range grouped {
+			collect(g.Matches)
+		}
+		if len(paths) > 0 {
 			return paths
 		}
 	}
-	// Maybe {"files":[...]} envelope (newer restic).
-	var envelope struct {
-		Files []struct {
-			Path string `json:"path"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal([]byte(trimmed), &envelope); err == nil && len(envelope.Files) > 0 {
-		for _, f := range envelope.Files {
-			paths = append(paths, f.Path)
+	// Shape 2: [{"path":..}, ...]
+	var flat []findMatch
+	if err := json.Unmarshal([]byte(trimmed), &flat); err == nil && len(flat) > 0 {
+		collect(flat)
+		if len(paths) > 0 {
+			return paths
 		}
-		return paths
 	}
-	// Fall back to JSON-lines: one match object per line.
-	decoder := json.NewDecoder(strings.NewReader(stdout))
-	for {
+	// Shape 3: single object, possibly {"matches":[...]} / {"files":[...]}.
+	var single struct {
+		findMatch
+		Matches []findMatch `json:"matches"`
+		Files   []findMatch `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &single); err == nil {
+		if single.Path != "" {
+			paths = append(paths, single.Path)
+		}
+		collect(single.Matches)
+		collect(single.Files)
+		if len(paths) > 0 {
+			return paths
+		}
+	}
+	// Shape 4: JSON-lines, one match or one grouped object per line.
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
 		var item struct {
-			Path string `json:"path"`
+			findMatch
+			Matches []findMatch `json:"matches"`
 		}
-		if err := decoder.Decode(&item); err != nil {
-			break
+		if err := json.Unmarshal([]byte(line), &item); err != nil {
+			continue
 		}
-		paths = append(paths, item.Path)
+		if item.Path != "" {
+			paths = append(paths, item.Path)
+		}
+		collect(item.Matches)
 	}
 	return paths
+}
+
+type findMatch struct {
+	Path string `json:"path"`
 }

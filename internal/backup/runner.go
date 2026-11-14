@@ -334,12 +334,19 @@ func (s *Service) executeBackup(ctx context.Context) FinishUpdate {
 		update.ProbeSHA256 = probeSHA
 	}
 
-	excludes := []string{"tmp", "lost+found"}
+	// Anchored excludes: only the top-level transient dirs are skipped. A bare
+	// "tmp" pattern would also skip a user file literally named tmp at any
+	// depth. dataDir is absolute (see NewService) so anchoring matches what
+	// restic scans.
+	excludes := []string{
+		filepath.ToSlash(filepath.Join(s.dataDir, "tmp")),
+		filepath.ToSlash(filepath.Join(s.dataDir, "lost+found")),
+	}
 	if rel, ok := relWithin(s.dataDir, staging); ok {
-		excludes = append(excludes, filepath.ToSlash(rel))
+		excludes = append(excludes, filepath.ToSlash(filepath.Join(s.dataDir, rel)))
 	}
 	if rel, ok := relWithin(s.dataDir, s.cfg.Dir); ok {
-		excludes = append(excludes, filepath.ToSlash(rel))
+		excludes = append(excludes, filepath.ToSlash(filepath.Join(s.dataDir, rel)))
 	}
 	kind := s.currentKind()
 	summary, err := s.restic.Backup(ctx, local,
