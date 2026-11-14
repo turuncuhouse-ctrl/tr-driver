@@ -60,6 +60,42 @@ type AdminDevice = {
   createdAt: string;
 };
 
+type BackupRun = {
+  id: string;
+  kind: string;
+  status: string;
+  startedAt: string;
+  finishedAt?: string;
+  dbBytes: number;
+  filesNew: number;
+  filesChanged: number;
+  dataAddedBytes: number;
+  localSnapshotId: string;
+  offsiteSnapshotId: string;
+  offsiteOk: boolean;
+  verifyOk: boolean;
+  probeRelPath?: string;
+  error?: string;
+};
+
+type BackupStatus = {
+  enabled: boolean;
+  configured: boolean;
+  configError?: string;
+  schedule: string;
+  nextRun?: string;
+  maxAgeHours: number;
+  stale: boolean;
+  running: boolean;
+  runningKind?: string;
+  runningSince?: string;
+  localRepo: string;
+  offsiteEnabled: boolean;
+  binaries: Record<string, boolean>;
+  lastRun?: BackupRun | null;
+  lastSuccessAt?: string | null;
+};
+
 type MailSettings = {
   enabled: boolean;
   host: string;
@@ -120,6 +156,10 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   } | null>(null);
   const [uploadPace, setUploadPace] = useState<UploadPace | null>(null);
   const [devices, setDevices] = useState<AdminDevice[]>([]);
+  const [backup, setBackup] = useState<BackupStatus | null>(null);
+  const [backupRuns, setBackupRuns] = useState<BackupRun[]>([]);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupNote, setBackupNote] = useState("");
 
   const visibleUsers = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("tr-TR");
@@ -134,7 +174,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   async function load() {
     setLoading(true);
     try {
-      const [nextSummary, nextUsers, nextSettings, nextLicense, nextMail, nextPace, nextDevices] = await Promise.all([
+      const [nextSummary, nextUsers, nextSettings, nextLicense, nextMail, nextPace, nextDevices, nextBackup, nextBackupRuns] = await Promise.all([
         request<Summary>("/api/admin/summary"),
         request<AdminUser[]>("/api/admin/users"),
         request<Settings>("/api/admin/settings"),
@@ -142,6 +182,8 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
         request<MailSettings>("/api/admin/mail").catch(() => null),
         request<UploadPace>("/api/admin/upload-pace").catch(() => null),
         request<AdminDevice[]>("/api/admin/devices").catch(() => []),
+        request<BackupStatus>("/api/admin/backup/status").catch(() => null),
+        request<BackupRun[]>("/api/admin/backup/runs?limit=10").catch(() => []),
       ]);
       setSummary(nextSummary);
       setUsers(nextUsers);
@@ -149,6 +191,8 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
       setLicense(nextLicense);
       setUploadPace(nextPace);
       setDevices(nextDevices);
+      setBackup(nextBackup);
+      setBackupRuns(nextBackupRuns);
       if (nextMail) setMail({ ...nextMail, password: nextMail.password || "" });
       setBatchLimitGB((nextSettings.maxUploadBatchBytes / 1024 ** 3).toFixed(1));
       setDefaultQuotaGB(((nextSettings.defaultQuotaBytes || 0) / 1024 ** 3).toFixed(1));
@@ -284,6 +328,40 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
     }
   }
 
+  async function runBackupNow() {
+    setBackupBusy(true);
+    setBackupNote("");
+    try {
+      const res = await request<{ runId: string }>("/api/admin/backup/run", { method: "POST", body: "{}" });
+      setBackupNote(`Yedekleme başlatıldı (${res.runId.slice(0, 8)}…). Birkaç dakika sonra Yenile'ye basın.`);
+      await load();
+    } catch (error) {
+      setBackupNote(error instanceof Error ? error.message : "Yedek başlatılamadı");
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function verifyBackupNow() {
+    setBackupBusy(true);
+    setBackupNote("");
+    try {
+      await request("/api/admin/backup/verify", { method: "POST", body: "{}" });
+      setBackupNote("Doğrulama başlatıldı. Birkaç dakika sonra Yenile'ye basın.");
+      await load();
+    } catch (error) {
+      setBackupNote(error instanceof Error ? error.message : "Doğrulama başlatılamadı");
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  const backupKindLabel = (kind: string) =>
+    kind === "scheduled" ? "Zamanlanmış" : kind === "manual" ? "Manuel" : kind === "verify" ? "Doğrulama" : kind === "cli" ? "CLI" : kind;
+
+  const backupStatusLabel = (status: string) =>
+    status === "success" ? "✓ Başarılı" : status === "partial" ? "⚠ Kısmi" : status === "failed" ? "✗ Başarısız" : status === "running" ? "… Çalışıyor" : status;
+
   async function matchDefaultQuotaToDisk() {
     setSavingSettings(true);
     try {
@@ -353,6 +431,70 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
           </div>
         ) : (
           <p className="notice">Yükleme durumu alınamadı (sunucu güncellemesi gerekebilir).</p>
+        )}
+      </section>
+
+      <section className="admin-settings">
+        <div>
+          <h2>Sunucu yedekleri (3-2-1)</h2>
+          <p>Her gece veritabanı + dosyalar şifreli olarak yerel diske ve (ayarlıysa) S3 offsite'a yedeklenir. Her yedek geri-yükleme provasından geçer. Detay: <code>docs/BACKUP.md</code></p>
+        </div>
+        {backup ? (
+          <>
+            <div className="stats-grid">
+              <article>
+                <span>Durum</span>
+                <strong>{backup.configured ? (backup.stale ? "⚠ Bayat" : "✓ Aktif") : "Kapalı"}</strong>
+                <small>{backup.configured ? `her gün ${backup.schedule}` : (backup.configError || "yapılandırılmadı")}</small>
+              </article>
+              <article>
+                <span>Son başarılı</span>
+                <strong>{backup.lastSuccessAt ? new Date(backup.lastSuccessAt).toLocaleString("tr-TR") : "hiç"}</strong>
+                <small>{backup.nextRun ? `sonraki: ${new Date(backup.nextRun).toLocaleString("tr-TR")}` : "zamanlayıcı kapalı"}</small>
+              </article>
+              <article>
+                <span>Offsite (S3)</span>
+                <strong>{backup.offsiteEnabled ? "Açık" : "Kapalı"}</strong>
+                <small>{backup.running ? `çalışıyor (${backupKindLabel(backup.runningKind || "")})` : "boşta"}</small>
+              </article>
+              <article>
+                <span>Araçlar</span>
+                <strong>{backup.binaries?.restic && backup.binaries?.pg_dump ? "Hazır" : "Eksik"}</strong>
+                <small>
+                  restic {backup.binaries?.restic ? "✓" : "✗"} · pg_dump {backup.binaries?.pg_dump ? "✓" : "✗"} · pg_restore {backup.binaries?.pg_restore ? "✓" : "✗"}
+                </small>
+              </article>
+            </div>
+            {backup.stale && backup.configured && (
+              <p className="notice error">Son {backup.maxAgeHours} saatte başarılı yedek yok. Hemen manuel yedek alın ve zamanlayıcıyı kontrol edin.</p>
+            )}
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button disabled={backupBusy || !backup.configured || backup.running} onClick={() => void runBackupNow()}>
+                {backupBusy ? "Başlatılıyor…" : "Şimdi yedekle"}
+              </button>
+              <button disabled={backupBusy || !backup.configured || backup.running} onClick={() => void verifyBackupNow()}>
+                {backupBusy ? "Başlatılıyor…" : "Doğrula (geri-yükleme provası)"}
+              </button>
+            </div>
+            {backupNote && <div className="notice">{backupNote}</div>}
+            <div className="admin-table">
+              <div className="admin-table-head">
+                <span>Başlangıç</span><span>Tür</span><span>Sonuç</span><span>Eklenen</span><span>Doğrulama</span>
+              </div>
+              {backupRuns.map((run) => (
+                <article className="admin-user-row" key={run.id}>
+                  <div><small>{new Date(run.startedAt).toLocaleString("tr-TR")}</small></div>
+                  <div><small>{backupKindLabel(run.kind)}</small></div>
+                  <div><small>{backupStatusLabel(run.status)}</small>{run.error && <><br /><small>{run.error.slice(0, 160)}</small></>}</div>
+                  <div><small>{formatBytes(run.dataAddedBytes)} · DB {formatBytes(run.dbBytes)}</small></div>
+                  <div><small>geri-yükleme {run.verifyOk ? "✓" : "✗"} · offsite {run.offsiteOk ? "✓" : "–"}</small></div>
+                </article>
+              ))}
+              {!backupRuns.length && <div className="admin-empty">Henüz yedek çalışması yok.</div>}
+            </div>
+          </>
+        ) : (
+          <p className="notice">Yedek durumu alınamadı (sunucu güncellemesi gerekebilir).</p>
         )}
       </section>
 

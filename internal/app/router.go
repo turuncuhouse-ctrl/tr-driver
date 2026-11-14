@@ -8,6 +8,7 @@ import (
 
 	"necipdrive/internal/admin"
 	"necipdrive/internal/auth"
+	"necipdrive/internal/backup"
 	"necipdrive/internal/collab"
 	"necipdrive/internal/config"
 	"necipdrive/internal/drives"
@@ -39,6 +40,7 @@ func NewRouter(
 	licenseService *license.Service,
 	mailService *mailer.Service,
 	pace *loadpace.Controller,
+	backupService *backup.Service,
 ) (http.Handler, error) {
 	mux := http.NewServeMux()
 
@@ -54,6 +56,7 @@ func NewRouter(
 	collabHandler := collab.NewHandler(collabService)
 	licenseHandler := license.NewHandler(licenseService)
 	updateHandler := updates.NewHandler(updates.Config{ManifestURL: cfg.UpdateManifestURL, Channel: cfg.UpdateChannel})
+	backupHandler := backup.NewHandler(backupService)
 	davHandler := webdavx.New(authService, fileService, cfg.TrustedProxies)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +97,11 @@ func NewRouter(
 	mux.Handle("/api/admin/mail/test", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(mailHandler.Test))))
 	mux.Handle("/api/admin/upload-pace", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.UploadPace))))
 	mux.Handle("/api/admin/devices", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(adminHandler.Devices))))
+	mux.Handle("/api/admin/backup/status", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(backupHandler.Status))))
+	mux.Handle("/api/admin/backup/runs", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(backupHandler.Runs))))
+	mux.Handle("/api/admin/backup/run", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(backupHandler.Run))))
+	mux.Handle("/api/admin/backup/verify", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(backupHandler.Verify))))
+	mux.Handle("/api/admin/backup/snapshots", authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(backupHandler.Snapshots))))
 	mux.Handle("/api/mail/status", authHandler.RequireAuth(http.HandlerFunc(mailHandler.Status)))
 	mux.Handle("/api/files", authHandler.RequireAuth(http.HandlerFunc(fileHandler.ListOrCreateFolder)))
 	mux.Handle("/api/files/upload", authHandler.RequireAuth(http.HandlerFunc(fileHandler.Upload)))

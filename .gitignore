@@ -1,4 +1,5 @@
 /data/
+/backups/
 web/node_modules/
 web/dist/
 internal/desktop/ui/node_modules/

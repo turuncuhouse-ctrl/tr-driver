@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — Sunucu yedekleme ve felaket kurtarma (3-2-1)
+
+### Added
+- Her gece otomatik şifreli yedek: `pg_dump -Fc` + `DATA_DIR`, artımlı `restic` snapshot'ları
+- S3 offsite replikasyonu (Wasabi/B2/Hetzner/MinIO/AWS uyumlu) + kısmi-başarı takibi
+- Saklama politikası (keep-daily/weekly/monthly + prune) ve tekrar-çalışma koruması
+- Her çalışta geri-yükleme provası: `restic check`, `pg_restore --list`, sonda dosya SHA-256, opsiyonel tam restore
+- Admin paneli "Sunucu yedekleri" bölümü: durum, zamanlayıcı, son 10 çalışma, manuel yedek/doğrulama
+- Admin API: `status/runs/run/verify/snapshots` + CLI: `necipdrive backup run|verify|status|snapshots|restore`
+- Webhook bildirimleri (başarı/başarısız/bayat) + kapsamlı runbook: `docs/BACKUP.md`
+
 ## 0.8.24 — Android: daima çalışan yedek, tam kütüphane taraması, arka plan güncellemesi
 
 ### Added

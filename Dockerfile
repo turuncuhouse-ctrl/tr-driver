@@ -18,9 +18,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X necipdrive/internal/ver
 
 # ---- Runtime ----
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata wget \
+# restic + postgresql-client power the built-in backup system (docs/BACKUP.md).
+RUN apk add --no-cache ca-certificates tzdata wget restic postgresql-client \
   && adduser -D -u 1000 appuser \
-  && mkdir -p /data/files /app/web/dist \
+  && mkdir -p /data/files /data/backups /app/web/dist \
   && chown -R appuser:appuser /data /app
 
 WORKDIR /app
@@ -33,7 +34,7 @@ ENV APP_ENV=production \
 
 USER appuser
 EXPOSE 8080
-VOLUME ["/data/files"]
+VOLUME ["/data/files", "/data/backups"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
   CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
 

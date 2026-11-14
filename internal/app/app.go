@@ -11,6 +11,7 @@ import (
 	"necipdrive/internal/access"
 	"necipdrive/internal/admin"
 	"necipdrive/internal/auth"
+	"necipdrive/internal/backup"
 	"necipdrive/internal/collab"
 	"necipdrive/internal/config"
 	"necipdrive/internal/drives"
@@ -59,6 +60,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	syncService := syncapi.NewService(db, fileService)
 	driveService := drives.NewService(db, accessSvc)
 	collabService := collab.NewService(db, accessSvc, fileStorage)
+	backupService := backup.NewService(db, backupConfigFromCfg(cfg), cfg.DataDir, cfg.DatabaseURL)
 
 	_ = uploadService.CleanupExpired(ctx)
 	_ = fileService.CleanupTrash(ctx, cfg.TrashRetention)
@@ -90,7 +92,9 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		}
 	}()
 
-	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace)
+	backupService.Start(cleanupCtx)
+
+	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace, backupService)
 	if err != nil {
 		cleanupCancel()
 		db.Close()
@@ -121,6 +125,33 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		cleanupCancel()
 		db.Close()
 	}, nil
+}
+
+// backupConfigFromCfg maps global config onto the backup subsystem config.
+func backupConfigFromCfg(cfg config.Config) backup.Config {
+	return backup.Config{
+		Enabled:       cfg.BackupEnabled,
+		Dir:           cfg.BackupDir,
+		Password:      cfg.BackupPassword,
+		Schedule:      cfg.BackupSchedule,
+		RunOnBoot:     cfg.BackupRunOnBoot,
+		Timeout:       cfg.BackupTimeout,
+		MaxAge:        cfg.BackupMaxAge,
+		KeepDaily:     cfg.BackupKeepDaily,
+		KeepWeekly:    cfg.BackupKeepWeekly,
+		KeepMonthly:   cfg.BackupKeepMonthly,
+		ResticBin:     cfg.BackupResticBin,
+		PgDumpBin:     cfg.BackupPgDumpBin,
+		PgRestoreBin:  cfg.BackupPgRestoreBin,
+		VerifyRestore: cfg.BackupVerifyRestore,
+		WebhookURL:    cfg.BackupWebhookURL,
+		S3Endpoint:    cfg.BackupS3Endpoint,
+		S3Region:      cfg.BackupS3Region,
+		S3Bucket:      cfg.BackupS3Bucket,
+		S3Prefix:      cfg.BackupS3Prefix,
+		S3AccessKey:   cfg.BackupS3AccessKey,
+		S3SecretKey:   cfg.BackupS3SecretKey,
+	}
 }
 
 func staticFS() (fs.FS, error) {
