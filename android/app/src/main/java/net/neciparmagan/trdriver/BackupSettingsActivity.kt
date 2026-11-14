@@ -241,6 +241,18 @@ class BackupSettingsActivity : AppCompatActivity() {
         } else {
             "Henüz yedek çalışmadı"
         }
+        val pending = session.backupPendingCount
+        val pendingLine = if (session.anyBackupEnabled()) {
+            if (pending > 0) "Bekleyen: $pending dosya" else "Bekleyen dosya yok"
+        } else {
+            "Bekleyen: — (yedek kapalı)"
+        }
+        val success = session.lastBackupSuccessAt
+        val successLine = if (success > 0) {
+            "Son tam yedek: ${formatAgo(success)}"
+        } else {
+            "Son tam yedek: henüz tamamlanmadı"
+        }
         val battery = if (OemPowerHelper.isIgnoringBatteryOptimizations(this)) {
             "Pil: muaf ✓"
         } else {
@@ -249,7 +261,7 @@ class BackupSettingsActivity : AppCompatActivity() {
         backupStatus.text =
             "Durum: $on · $net$wifiNow · İşlenen medya: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
                 "Galeri → TR Photos · klasörler → TR Backup / ${session.deviceName}\n" +
-                "$fgs · $heartbeatLine · $battery"
+                "$fgs · $heartbeatLine · $battery\n$pendingLine · $successLine"
         networkHint.text =
             "Yedekleme yalnız Wi‑Fi ile yapılır (fotoğraf, video ve seçilen klasörler)."
     }

@@ -35,6 +35,28 @@ type Config struct {
 	UpdateChannel        string
 	LicenseVendorMode    bool
 	TrustedProxies       []netip.Prefix
+	// Backup subsystem (see internal/backup + docs/BACKUP.md).
+	BackupEnabled       bool
+	BackupDir           string
+	BackupPassword      string
+	BackupSchedule      string
+	BackupRunOnBoot     bool
+	BackupTimeout       time.Duration
+	BackupMaxAge        time.Duration
+	BackupKeepDaily     int
+	BackupKeepWeekly    int
+	BackupKeepMonthly   int
+	BackupResticBin     string
+	BackupPgDumpBin     string
+	BackupPgRestoreBin  string
+	BackupVerifyRestore bool
+	BackupWebhookURL    string
+	BackupS3Endpoint    string
+	BackupS3Region      string
+	BackupS3Bucket      string
+	BackupS3Prefix      string
+	BackupS3AccessKey   string
+	BackupS3SecretKey   string
 }
 
 func Load() (Config, error) {
@@ -64,6 +86,28 @@ func Load() (Config, error) {
 		UpdateManifestURL:    getEnv("UPDATE_MANIFEST_URL", ""),
 		UpdateChannel:        getEnv("UPDATE_CHANNEL", "stable"),
 		LicenseVendorMode:    getEnvBool("LICENSE_VENDOR_MODE", false),
+		// Defaults mirror internal/backup Default* constants.
+		BackupEnabled:       getEnvBool("BACKUP_ENABLED", true),
+		BackupDir:           getEnv("BACKUP_DIR", "./backups/restic"),
+		BackupPassword:      getEnv("BACKUP_PASSWORD", ""),
+		BackupSchedule:      getEnv("BACKUP_SCHEDULE", "02:00"),
+		BackupRunOnBoot:     getEnvBool("BACKUP_RUN_ON_BOOT", false),
+		BackupTimeout:       getEnvDuration("BACKUP_TIMEOUT", 6*time.Hour),
+		BackupMaxAge:        getEnvDuration("BACKUP_MAX_AGE", 30*time.Hour),
+		BackupKeepDaily:     getEnvInt("BACKUP_KEEP_DAILY", 7),
+		BackupKeepWeekly:    getEnvInt("BACKUP_KEEP_WEEKLY", 4),
+		BackupKeepMonthly:   getEnvInt("BACKUP_KEEP_MONTHLY", 6),
+		BackupResticBin:     getEnv("BACKUP_RESTIC_BIN", "restic"),
+		BackupPgDumpBin:     getEnv("BACKUP_PGDUMP_BIN", "pg_dump"),
+		BackupPgRestoreBin:  getEnv("BACKUP_PGRESTORE_BIN", "pg_restore"),
+		BackupVerifyRestore: getEnvBool("BACKUP_VERIFY_RESTORE", false),
+		BackupWebhookURL:    getEnv("BACKUP_WEBHOOK_URL", ""),
+		BackupS3Endpoint:    getEnv("BACKUP_S3_ENDPOINT", ""),
+		BackupS3Region:      getEnv("BACKUP_S3_REGION", ""),
+		BackupS3Bucket:      getEnv("BACKUP_S3_BUCKET", ""),
+		BackupS3Prefix:      getEnv("BACKUP_S3_PREFIX", ""),
+		BackupS3AccessKey:   getEnv("BACKUP_S3_ACCESS_KEY", ""),
+		BackupS3SecretKey:   getEnv("BACKUP_S3_SECRET_KEY", ""),
 	}
 	var err error
 	cfg.TrustedProxies, err = parseTrustedProxies(getEnv("TRUSTED_PROXY_CIDRS", ""))
@@ -84,6 +128,11 @@ func Load() (Config, error) {
 		if cfg.SharePasswordSalt == "change-me" || len(cfg.SharePasswordSalt) < 16 {
 			return Config{}, fmt.Errorf("SHARE_PASSWORD_SALT must be at least 16 characters in production")
 		}
+	}
+	// A missing backup password only disables the scheduler (existing installs
+	// keep booting); a present-but-weak one is a misconfiguration.
+	if cfg.BackupPassword != "" && len(cfg.BackupPassword) < 16 {
+		return Config{}, fmt.Errorf("BACKUP_PASSWORD must be at least 16 characters")
 	}
 	return cfg, nil
 }

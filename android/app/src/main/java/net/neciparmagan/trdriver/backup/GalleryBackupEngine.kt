@@ -292,6 +292,10 @@ object GalleryBackupEngine {
             }
         }
 
+        if (pendingLeft <= 0) {
+            // Fully backed up as of now — drives the "son yedek" line.
+            session.lastBackupSuccessAt = System.currentTimeMillis()
+        }
         BackupStatusWidget.refreshAll(app)
         return GalleryBackupBatchResult(
             morePending = pendingLeft > 0,

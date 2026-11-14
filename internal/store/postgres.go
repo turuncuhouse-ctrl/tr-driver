@@ -284,6 +284,25 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 		)`,
 		`create index if not exists auth_challenges_token_hash_idx on auth_challenges(token_hash)`,
 		`create index if not exists auth_challenges_user_purpose_idx on auth_challenges(user_id, purpose)`,
+		`create table if not exists backup_runs (
+			id uuid primary key default gen_random_uuid(),
+			kind text not null,
+			status text not null,
+			started_at timestamptz not null default now(),
+			finished_at timestamptz,
+			db_bytes bigint not null default 0,
+			files_new bigint not null default 0,
+			files_changed bigint not null default 0,
+			data_added_bytes bigint not null default 0,
+			local_snapshot_id text not null default '',
+			offsite_snapshot_id text not null default '',
+			offsite_ok boolean not null default false,
+			verify_ok boolean not null default false,
+			probe_relpath text not null default '',
+			probe_sha256 text not null default '',
+			error text not null default ''
+		)`,
+		`create index if not exists backup_runs_started_idx on backup_runs(started_at desc)`,
 	}
 
 	for _, stmt := range ddl {

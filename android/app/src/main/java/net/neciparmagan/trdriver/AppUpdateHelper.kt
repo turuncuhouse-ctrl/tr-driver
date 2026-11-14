@@ -35,12 +35,14 @@ object AppUpdateHelper {
 
     /**
      * SHA-256 of the release certificate used by the currently published APK
-     * (subject CN=TR Driver, valid 2026-08-12 → 2053-12-28). Pinning it makes a
-     * tampered/re-signed APK from a compromised server un-installable, and
-     * guarantees updates stay installable over the existing installation.
+     * (subject CN=Necip Armagan, O=Kasanibil, C=TR; new keystore from 2026-11-15).
+     * Pinning it makes a tampered/re-signed APK from a compromised server
+     * un-installable, and guarantees updates stay installable over the existing
+     * installation. Existing installs signed with the previous certificate must
+     * uninstall and reinstall once.
      */
     private const val PINNED_SIGNER_SHA256 =
-        "0339CB5F2DA7B4AA3E421A85C4C2B06ED2898C4A8DBFF3F094A7B3390B81CF80"
+        "F1311C3AA258FFCD4788C4392DA3CFE06B9D38C16C14D1C4DF1923DDEDE75723"
     private var lastCheckAt = 0L
     private var skippedVersionCode = 0
     private var dialogShowing = false

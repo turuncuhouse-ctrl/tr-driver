@@ -14,6 +14,7 @@ Kendi sunucunda çalışan, Google Drive’a para ödemeden dosya bulutu. Go + P
 - Android istemci + QR giriş; kota varsayılanı disk kapasitesine göre
 - Yedekleme işlemi sunucunuzu çok yormayacak şekilde güvenli teker teker yapılmaktadır.
 - Sunucu işlemciniz düşükde olsa sunucunuzu dar boğaz yapmayacak şekilde yavaş ve tek tek yapmaktadır.
+- **Sunucu yedekleri (3-2-1):** her gece şifreli + artımlı `restic` snapshot (veritabanı + dosyalar), S3 offsite replikasyonu, her çalışta geri-yükleme provası, admin paneli + webhook izleme. Kurulum: [`docs/BACKUP.md`](docs/BACKUP.md)
 
 ## Kota
 

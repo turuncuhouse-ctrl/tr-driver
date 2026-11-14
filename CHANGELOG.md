@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0 — Drive benzeri arayüz + sunucu yedekleme
+
+### Added
+- Android çöp kutusu: liste, tekli/toplu geri yükleme ve kalıcı silme (üst klasör uyarısıyla)
+- Android hesap kartında depolama göstergesi (kullanılan/kota/yüzde)
+- Android uygulama-içi salt-okunur PDF önizleme (kaydırmalı sayfalar)
+- Yedek durumu ekranında bekleyen dosya sayısı + son tam yedek zamanı
+- Her gece otomatik şifreli sunucu yedeği: `pg_dump -Fc` + `DATA_DIR`, artımlı `restic` snapshot'ları
+- S3 offsite replikasyonu (Wasabi/B2/Hetzner/MinIO/AWS uyumlu) + kısmi-başarı takibi
+- Saklama politikası (keep-daily/weekly/monthly + prune) ve tekrar-çalışma koruması
+- Her çalışta geri-yükleme provası: `restic check`, `pg_restore --list`, sonda dosya SHA-256, opsiyonel tam restore
+- Admin paneli "Sunucu yedekleri" bölümü: durum, zamanlayıcı, son 10 çalışma, manuel yedek/doğrulama
+- Admin API: `status/runs/run/verify/snapshots` + CLI: `necipdrive backup run|verify|status|snapshots|restore`
+- Webhook bildirimleri (başarı/başarısız/bayat) + kapsamlı runbook: `docs/BACKUP.md`
+
+### Changed
+- Android silme akışı artık "çöp kutusuna taşı" olarak adlandırılıyor (davranış aynı: sunucu zaten soft-delete yapıyordu)
+- Android yedekleme yalnız Wi-Fi kuralı, pil muafiyeti istemi ve hız sınırlaması aynen korundu
+
 ## 0.8.24 — Android: daima çalışan yedek, tam kütüphane taraması, arka plan güncellemesi
 
 ### Added

@@ -44,7 +44,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
 import net.neciparmagan.trdriver.data.FileEntry
+import net.neciparmagan.trdriver.data.MimeHelper
 import net.neciparmagan.trdriver.data.SessionStore
+import net.neciparmagan.trdriver.data.StorageMeter
 import net.neciparmagan.trdriver.presentation.DriveViewModel
 import okhttp3.Headers
 import org.json.JSONObject
@@ -92,6 +94,7 @@ class MainActivity : AppCompatActivity() {
                 SessionStore.KEY_BACKUP_PERCENT,
                 SessionStore.KEY_BACKUP_BYTES_SENT,
                 SessionStore.KEY_BACKUP_BYTES_TOTAL,
+                SessionStore.KEY_BACKUP_SUCCESS,
                 SessionStore.KEY_LAST_MSG,
                 SessionStore.KEY_GALLERY_ON,
                 -> runOnUiThread { refreshBackupUi() }
@@ -102,19 +105,30 @@ class MainActivity : AppCompatActivity() {
         onOpen = { entry ->
             if (vm.state.value.selectionMode) {
                 vm.toggleSelection(entry.id)
+            } else if (driveSection == DriveSection.TRASH) {
+                showTrashContextMenu(entry, list)
             } else {
                 openEntry(entry)
             }
         },
-        onLongPress = { entry -> showFileContextMenu(entry, list) },
+        onLongPress = { entry ->
+            if (driveSection == DriveSection.TRASH) showTrashContextMenu(entry, list)
+            else showFileContextMenu(entry, list)
+        },
         onDownload = { vm.download(it) },
         onDelete = { entry ->
-            AlertDialog.Builder(this)
-                .setMessage("\"${entry.name}\" silinsin mi?")
-                .setPositiveButton("Sil") { _, _ -> vm.deleteEntry(entry) }
-                .setNegativeButton("İptal", null)
-                .show()
+            if (driveSection == DriveSection.TRASH) {
+                confirmPurge(entry)
+            } else {
+                AlertDialog.Builder(this)
+                    .setMessage("\"${entry.name}\" çöp kutusuna taşınsın mı?")
+                    .setPositiveButton("Çöp kutusuna taşı") { _, _ -> vm.deleteEntry(entry) }
+                    .setNegativeButton("İptal", null)
+                    .show()
+            }
         },
+        onRestore = { entry -> vm.restoreEntry(entry) },
+        onPurge = { entry -> confirmPurge(entry) },
         onShare = { vm.shareEntry(it) },
         onStar = { vm.toggleStar(it) },
         onRename = { entry -> promptRename(entry) },
@@ -125,7 +139,7 @@ class MainActivity : AppCompatActivity() {
     private var gridLayout = false
     private var driveSection: DriveSection = DriveSection.FILES
 
-    private enum class DriveSection { HOME, FILES, STARRED }
+    private enum class DriveSection { HOME, FILES, STARRED, TRASH }
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) vm.upload(uri)
@@ -273,11 +287,20 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btnCancelSelect).setOnClickListener { vm.clearSelection() }
         findViewById<Button>(R.id.btnDeleteSelected).setOnClickListener {
-            AlertDialog.Builder(this)
-                .setMessage("Seçili öğeler silinsin mi?")
-                .setPositiveButton("Sil") { _, _ -> vm.deleteSelected() }
-                .setNegativeButton("İptal", null)
-                .show()
+            if (driveSection == DriveSection.TRASH) {
+                AlertDialog.Builder(this)
+                    .setTitle("Kalıcı olarak sil")
+                    .setMessage("Seçili öğeler kalıcı olarak silinsin mi? Bu işlem geri alınamaz.")
+                    .setPositiveButton("Kalıcı sil") { _, _ -> vm.purgeSelected() }
+                    .setNegativeButton("İptal", null)
+                    .show()
+            } else {
+                AlertDialog.Builder(this)
+                    .setMessage("Seçili öğeler çöp kutusuna taşınsın mı?")
+                    .setPositiveButton("Çöp kutusuna taşı") { _, _ -> vm.deleteSelected() }
+                    .setNegativeButton("İptal", null)
+                    .show()
+            }
         }
         findViewById<Button>(R.id.btnDownloadSelected).setOnClickListener { vm.downloadSelected() }
         findViewById<Button>(R.id.btnShareSelected).setOnClickListener {
@@ -346,22 +369,32 @@ class MainActivity : AppCompatActivity() {
                     state.crumbs.lastOrNull()?.id?.takeIf { it.isNotBlank() }?.let {
                         session.lastBrowseFolderId = it
                     }
+                    adapter.setTrashMode(state.trashMode)
                     adapter.submit(state.files, state.selectionMode, state.selectedIds)
                     findViewById<View>(R.id.driveEmpty).visibility =
                         if (state.files.isEmpty() && !state.busy) View.VISIBLE else View.GONE
                     findViewById<TextView>(R.id.driveEmpty).text = when {
                         driveSection == DriveSection.STARRED -> "Yıldızlı öğe yok\nDosyalarda ★ ile işaretleyin"
                         driveSection == DriveSection.HOME -> "Son açılan yok\nDosyalardan bir öğe açın"
+                        driveSection == DriveSection.TRASH -> "Çöp kutusu boş\nSilinen öğeler burada görünür"
                         else -> "Bu klasör boş\n+ ile dosya yükleyin veya klasör oluşturun"
                     }
                     findViewById<View>(R.id.selectionBar).visibility =
                         if (state.selectionMode) View.VISIBLE else View.GONE
+                    // Trashed items can only be purged in bulk; download/share need a live file.
+                    findViewById<View>(R.id.btnDownloadSelected).visibility =
+                        if (state.trashMode) View.GONE else View.VISIBLE
+                    findViewById<View>(R.id.btnShareSelected).visibility =
+                        if (state.trashMode) View.GONE else View.VISIBLE
+                    findViewById<Button>(R.id.btnDeleteSelected).text =
+                        if (state.trashMode) "Kalıcı sil" else "Sil"
                     findViewById<TextView>(R.id.selectionCount).text = "${state.selectedIds.size} seçili"
                     findViewById<View>(R.id.offlineBanner).visibility =
                         if (state.offline) View.VISIBLE else View.GONE
                     findViewById<TextView>(R.id.driveSectionTitle).text = when (driveSection) {
                         DriveSection.HOME -> "Ana sayfa"
                         DriveSection.STARRED -> "Yıldızlı"
+                        DriveSection.TRASH -> "Çöp kutusu"
                         DriveSection.FILES -> "TR Driver"
                     }
                     styleDriveNav()
@@ -385,6 +418,10 @@ class MainActivity : AppCompatActivity() {
                 state.downloaded?.let { file ->
                     openDownloaded(file)
                     vm.consumeDownload()
+                }
+                state.pdfPreview?.let { file ->
+                    startActivity(PdfPreviewActivity.intent(this@MainActivity, file.absolutePath))
+                    vm.consumePdfPreview()
                 }
                 state.shareUrl?.let { url ->
                     val send = Intent(Intent.ACTION_SEND).apply {
@@ -514,6 +551,33 @@ class MainActivity : AppCompatActivity() {
             DriveSection.HOME -> vm.showRecent()
             DriveSection.FILES -> vm.goToFilesRoot()
             DriveSection.STARRED -> vm.showStarred()
+            DriveSection.TRASH -> vm.showTrash()
+        }
+    }
+
+    private fun confirmPurge(entry: FileEntry) {
+        AlertDialog.Builder(this)
+            .setTitle("Kalıcı olarak sil")
+            .setMessage("\"${entry.name}\" kalıcı olarak silinsin mi? Bu işlem geri alınamaz.")
+            .setPositiveButton("Kalıcı sil") { _, _ -> vm.purgeEntry(entry) }
+            .setNegativeButton("İptal", null)
+            .show()
+    }
+
+    private fun showTrashContextMenu(entry: FileEntry, anchor: View) {
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 9, 0, "Seç")
+            menu.add(0, 1, 1, "Geri yükle")
+            menu.add(0, 2, 2, "Kalıcı sil")
+            setOnMenuItemClickListener { mi ->
+                when (mi.itemId) {
+                    9 -> vm.enterSelection(entry.id)
+                    1 -> vm.restoreEntry(entry)
+                    2 -> confirmPurge(entry)
+                }
+                true
+            }
+            show()
         }
     }
 
@@ -572,8 +636,8 @@ class MainActivity : AppCompatActivity() {
                     6 -> promptMove(entry)
                     4 -> {
                         AlertDialog.Builder(this@MainActivity)
-                            .setMessage("\"${entry.name}\" silinsin mi?")
-                            .setPositiveButton("Sil") { _, _ -> vm.deleteEntry(entry) }
+                            .setMessage("\"${entry.name}\" çöp kutusuna taşınsın mı?")
+                            .setPositiveButton("Çöp kutusuna taşı") { _, _ -> vm.deleteEntry(entry) }
                             .setNegativeButton("İptal", null)
                             .show()
                     }
@@ -586,9 +650,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAccountSheet() {
         val mail = titleEmail.text?.toString().orEmpty().ifBlank { session.email }
+        val user = vm.state.value.user
+        val storage = if (user != null) {
+            StorageMeter.summary(user.usedBytes, user.quotaBytes, SessionStore::formatBytes)
+        } else {
+            "Depolama: yükleniyor…"
+        }
         AlertDialog.Builder(this)
             .setTitle("Hesap")
-            .setMessage("E-posta: $mail\nSunucu: ${session.serverUrl}")
+            .setMessage("E-posta: $mail\nSunucu: ${session.serverUrl}\n$storage")
             .setPositiveButton("Çıkış") { _, _ ->
                 session.galleryBackupEnabled = false
                 GalleryBackupWorker.schedule(this)
@@ -608,19 +678,20 @@ class MainActivity : AppCompatActivity() {
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, "★ Yıldızlı")
             menu.add(0, 2, 1, "Son")
-            menu.add(0, 3, 2, "İndirilenler")
-            menu.add(0, 4, 3, "Seç")
-            menu.add(0, 5, 4, "Yükle")
-            menu.add(0, 6, 5, "Yeni klasör")
+            menu.add(0, 14, 2, "Çöp kutusu")
+            menu.add(0, 3, 3, "İndirilenler")
+            menu.add(0, 4, 4, "Seç")
+            menu.add(0, 5, 5, "Yükle")
+            menu.add(0, 6, 6, "Yeni klasör")
             currentIntakePlate()?.let { plate ->
-                menu.add(0, 11, 6, "Fotoğraf ekle · $plate")
+                menu.add(0, 11, 7, "Fotoğraf ekle · $plate")
             }
-            menu.add(0, 10, 7, "Araç kabul")
-            menu.add(0, 12, 8, "TR Photos")
-            menu.add(0, 7, 9, "Yedekleme ayarları")
-            menu.add(0, 13, 10, "Yer aç")
-            menu.add(0, 8, 11, "Müzik")
-            menu.add(0, 9, 12, "Güncellemeyi kontrol et")
+            menu.add(0, 10, 8, "Araç kabul")
+            menu.add(0, 12, 9, "TR Photos")
+            menu.add(0, 7, 10, "Yedekleme ayarları")
+            menu.add(0, 13, 11, "Yer aç")
+            menu.add(0, 8, 12, "Müzik")
+            menu.add(0, 9, 13, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> {
@@ -632,6 +703,11 @@ class MainActivity : AppCompatActivity() {
                         driveSection = DriveSection.HOME
                         styleDriveNav()
                         vm.showRecent()
+                    }
+                    14 -> {
+                        driveSection = DriveSection.TRASH
+                        styleDriveNav()
+                        vm.showTrash()
                     }
                     3 -> showOfflineDownloads()
                     4 -> {
@@ -801,6 +877,10 @@ class MainActivity : AppCompatActivity() {
             PlayerActivity.start(this, entry.name, url, token)
             return
         }
+        if (mime == "application/pdf" || entry.name.endsWith(".pdf", ignoreCase = true)) {
+            vm.previewPdf(entry)
+            return
+        }
         if (isPreviewableMedia(mime)) {
             startActivity(
                 Intent(this, MediaPreviewActivity::class.java).apply {
@@ -873,18 +953,8 @@ class MainActivity : AppCompatActivity() {
             val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
             if (ext.isEmpty()) return "application/octet-stream"
             MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
-            return when (ext) {
-                "jpg", "jpeg" -> "image/jpeg"
-                "png" -> "image/png"
-                "webp" -> "image/webp"
-                "gif" -> "image/gif"
-                "bmp" -> "image/bmp"
-                "heic", "heif" -> "image/heic"
-                "pdf" -> "application/pdf"
-                "mp4", "m4v" -> "video/mp4"
-                "mov" -> "video/quicktime"
-                else -> MediaPreviewActivity.guessMimeFromName(name)
-            }
+            MimeHelper.guessFromExtension(ext)?.let { return it }
+            return MediaPreviewActivity.guessMimeFromName(name)
         }
 
         fun isPreviewableMedia(mime: String): Boolean {
@@ -906,6 +976,8 @@ private class FileAdapter(
     private val onMove: (FileEntry) -> Unit,
     private val onToggleCheck: (FileEntry) -> Unit,
     private val onAddIntakePhotos: (FileEntry) -> Unit,
+    private val onRestore: (FileEntry) -> Unit,
+    private val onPurge: (FileEntry) -> Unit,
 ) : RecyclerView.Adapter<FileAdapter.VH>() {
     private var items: List<FileEntry> = emptyList()
     private var selectionMode: Boolean = false
@@ -914,6 +986,7 @@ private class FileAdapter(
     private var serverUrl: String = ""
     private var pathHint: String = ""
     private var gridMode: Boolean = false
+    private var trashMode: Boolean = false
 
     fun setGridMode(grid: Boolean) {
         if (gridMode == grid) return
@@ -935,6 +1008,12 @@ private class FileAdapter(
 
     fun updatePathHint(path: String) {
         pathHint = path
+    }
+
+    fun setTrashMode(trash: Boolean) {
+        if (trashMode == trash) return
+        trashMode = trash
+        notifyDataSetChanged()
     }
 
     override fun getItemViewType(position: Int): Int = if (gridMode) 1 else 0
@@ -967,6 +1046,19 @@ private class FileAdapter(
         holder.menu.visibility = if (selectionMode) View.GONE else View.VISIBLE
         holder.menu.setOnClickListener { anchor ->
             PopupMenu(anchor.context, anchor).apply {
+                if (trashMode) {
+                    menu.add(0, 1, 1, "Geri yükle")
+                    menu.add(0, 2, 2, "Kalıcı sil")
+                    setOnMenuItemClickListener { mi ->
+                        when (mi.itemId) {
+                            1 -> onRestore(item)
+                            2 -> onPurge(item)
+                        }
+                        true
+                    }
+                    show()
+                    return@setOnClickListener
+                }
                 if (item.kind == "folder" && isIntakePlateFolderRow(pathHint)) {
                     menu.add(0, 10, 0, "Fotoğraf ekle")
                 }

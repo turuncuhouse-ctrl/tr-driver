@@ -240,6 +240,38 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
     }
 
+    suspend fun listTrash(): List<FileEntry> = withContext(Dispatchers.IO) {
+        val req = authed(Request.Builder().url("${base()}/api/trash")).get().build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(ListSerializer(FileEntry.serializer()), text)
+                .let { FileLists.sortDrive(it) }
+        }
+    }
+
+    suspend fun restoreTrash(fileId: String) = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(DeleteRequest.serializer(), DeleteRequest(fileId))
+        val req = authed(Request.Builder().url("${base()}/api/sync/restore"))
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+        }
+    }
+
+    suspend fun purgeTrash(fileId: String) = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(DeleteRequest.serializer(), DeleteRequest(fileId))
+        val req = authed(Request.Builder().url("${base()}/api/sync/purge"))
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+        }
+    }
+
     /**
      * Confirms a remote file still exists (for safe free-up).
      * Uses a lightweight download probe; closes immediately after headers/body start.

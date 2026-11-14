@@ -42,18 +42,30 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
-      - name: Verify update signature matches published APK
+      - name: Compare update signature with published APK
         run: |
+          set -euo pipefail
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
-          "$APKSIGNER" verify --print-certs web/public/apps/TRDriver.apk > /tmp/old-certs.txt
-          "$APKSIGNER" verify --print-certs android/app/build/outputs/apk/release/app-release.apk > /tmp/new-certs.txt
-          old=$(grep -m1 'certificate SHA-256 digest' /tmp/old-certs.txt | awk '{print $NF}')
+          NEW_APK=android/app/build/outputs/apk/release/app-release.apk
+          OLD_APK=web/public/apps/TRDriver.apk
+          "$APKSIGNER" verify --print-certs "$NEW_APK" > /tmp/new-certs.txt
           new=$(grep -m1 'certificate SHA-256 digest' /tmp/new-certs.txt | awk '{print $NF}')
-          if [ -z "$old" ] || [ "$old" != "$new" ]; then
-            echo "Signing certificate does not match the published APK; refusing to publish an incompatible update." >&2
-            cat /tmp/old-certs.txt /tmp/new-certs.txt
-            exit 1
+          if [ ! -f "$OLD_APK" ]; then
+            echo "No published APK to compare; continuing with the new signing certificate."
+            cat /tmp/new-certs.txt
+            exit 0
           fi
+          "$APKSIGNER" verify --print-certs "$OLD_APK" > /tmp/old-certs.txt || true
+          old=$(grep -m1 'certificate SHA-256 digest' /tmp/old-certs.txt | awk '{print $NF}')
+          if [ -n "$old" ] && [ "$old" = "$new" ]; then
+            echo "Published APK signing certificate matches."
+            exit 0
+          fi
+          echo "::warning title=Android signing certificate changed::The new APK is signed with a different certificate than web/public/apps/TRDriver.apk. Existing installs must uninstall and reinstall; the publish step is allowed so a key rotation can ship."
+          echo "----- published APK -----"
+          cat /tmp/old-certs.txt || true
+          echo "----- new APK -----"
+          cat /tmp/new-certs.txt
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v7
         with:

@@ -38,6 +38,8 @@ jobs:
       - name: Build embedded desktop UI
         working-directory: internal/desktop/ui
         run: npm ci && npm run build
+      - name: Install backup test tools
+        run: sudo apt-get update && sudo apt-get install -y restic postgresql-client
       - name: Verify version source
         run: test -s VERSION && ! grep -q '[[:space:]]' VERSION
       - run: go vet ./...
@@ -86,6 +88,9 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+      - name: Run Android unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest --no-daemon
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v7
         with:
