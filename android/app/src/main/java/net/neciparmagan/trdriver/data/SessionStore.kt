@@ -97,6 +97,11 @@ class SessionStore(context: Context) {
             backupOnMobile = false
         }
 
+    /** Last time a backup batch actually ran. Used to detect a silently stalled backup. */
+    var lastBackupHeartbeatAt: Long
+        get() = prefs.getLong(KEY_BACKUP_HEARTBEAT, 0L)
+        set(value) = prefs.edit().putLong(KEY_BACKUP_HEARTBEAT, value).apply()
+
     var lastBackupMessage: String
         get() = prefs.getString(KEY_LAST_MSG, "") ?: ""
         set(value) = prefs.edit().putString(KEY_LAST_MSG, value).apply()
@@ -410,6 +415,7 @@ class SessionStore(context: Context) {
         private const val KEY_BACKUP_MOBILE = "backup_on_mobile"
         private const val KEY_DEVICE = "device_name"
         private const val KEY_BACKUP_FOLDERS = "backup_folders"
+        private const val KEY_BACKUP_HEARTBEAT = "backup_heartbeat_at"
         private const val KEY_LAST_INTAKE_PLATE = "last_intake_plate"
         private const val KEY_LAST_INTAKE_FOLDER_ID = "last_intake_folder_id"
         private const val KEY_RECENT_INTAKE_PLATES = "recent_intake_plates"

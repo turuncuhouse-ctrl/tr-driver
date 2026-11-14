@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -21,6 +22,7 @@ import net.neciparmagan.trdriver.data.AndroidVersionInfo
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.SessionStore
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * Auto-update: checks server, downloads APK in background, notifies for one-tap install.
@@ -30,6 +32,15 @@ object AppUpdateHelper {
     private const val THROTTLE_MS = 12_000L
     private const val CHANNEL_ID = "trdriver_updates"
     private const val NOTIFY_ID = 4201
+
+    /**
+     * SHA-256 of the release certificate used by the currently published APK
+     * (subject CN=TR Driver, valid 2026-08-12 → 2053-12-28). Pinning it makes a
+     * tampered/re-signed APK from a compromised server un-installable, and
+     * guarantees updates stay installable over the existing installation.
+     */
+    private const val PINNED_SIGNER_SHA256 =
+        "0339CB5F2DA7B4AA3E421A85C4C2B06ED2898C4A8DBFF3F094A7B3390B81CF80"
     private var lastCheckAt = 0L
     private var skippedVersionCode = 0
     private var dialogShowing = false
@@ -62,9 +73,11 @@ object AppUpdateHelper {
                     }
                     return@launch
                 }
-                if (!force && info.versionCode == skippedVersionCode) return@launch
+                // A version below minSupportedCode must not be skippable.
+                val forced = info.minSupportedCode > BuildConfig.VERSION_CODE
+                if (!force && !forced && info.versionCode == skippedVersionCode) return@launch
 
-                if (force) {
+                if (force || forced) {
                     showUpdateDialog(activity, api, info)
                 } else {
                     // Silent auto-download; user only taps install notification.
@@ -73,6 +86,81 @@ object AppUpdateHelper {
             } catch (e: Exception) {
                 if (force) toast(activity, "Güncelleme kontrolü başarısız: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * Background check used by AppUpdateWorker. Does NOT download or install:
+     * it only raises a notification so the user can open the app and complete
+     * the permission-gated install flow.
+     */
+    suspend fun checkFromBackground(context: Context) {
+        val app = context.applicationContext
+        val session = SessionStore(app)
+        if (session.serverUrl.isBlank()) return
+        val api = DriveApi(session, app)
+        val info = withContext(Dispatchers.IO) { api.fetchAndroidVersion() }
+        if (!info.apkAvailable || info.versionCode <= 0) return
+        if (info.versionCode <= BuildConfig.VERSION_CODE) return
+        notifyUpdateAvailable(app, info)
+    }
+
+    private fun notifyUpdateAvailable(context: Context, info: AndroidVersionInfo) {
+        ensureUpdateChannel(context)
+        val forced = info.minSupportedCode > BuildConfig.VERSION_CODE
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("tr_install_update", true)
+        }
+        val pi = PendingIntent.getActivity(
+            context,
+            92,
+            open,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val n = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_backup)
+            .setContentTitle(
+                if (forced) "TR Driver zorunlu güncelleme" else "TR Driver güncelleme var",
+            )
+            .setContentText("v${info.versionName} hazır — kurmak için dokunun")
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .setPriority(
+                if (forced) NotificationCompat.PRIORITY_HIGH
+                else NotificationCompat.PRIORITY_DEFAULT,
+            )
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(NOTIFY_ID, n)
+    }
+
+    /**
+     * Verify the downloaded APK's signing certificate against the pinned
+     * release cert before offering it for installation. Android already checks
+     * this at install time, but pinning also blocks a server-side APK swap.
+     *
+     * If the OS cannot expose signers (older framework / v2-only archive), we
+     * fail open — Android's own installer verification still applies — so a
+     * framework quirk can never permanently block legitimate updates.
+     */
+    private fun verifyReleaseSignature(context: Context, file: File): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return true
+        return try {
+            val info = context.packageManager.getPackageArchiveInfo(
+                file.absolutePath,
+                PackageManager.GET_SIGNING_CERTIFICATES,
+            ) ?: return true
+            val signers = info.signingInfo?.apkContentsSigners
+            if (signers.isNullOrEmpty()) return true
+            val md = MessageDigest.getInstance("SHA-256")
+            signers.any { sig ->
+                val hex = md.digest(sig.toByteArray()).joinToString("") { b ->
+                    "%02X".format(b.toInt() and 0xFF)
+                }
+                hex.equals(PINNED_SIGNER_SHA256, ignoreCase = true)
+            }
+        } catch (e: Exception) {
+            true
         }
     }
 
@@ -105,11 +193,13 @@ object AppUpdateHelper {
         if (dialogShowing || activity.isFinishing) return
         dialogShowing = true
         val notes = info.releaseNotes.ifBlank { "Yeni sürüm hazır." }
+        val forced = info.minSupportedCode > BuildConfig.VERSION_CODE
         AlertDialog.Builder(activity)
-            .setTitle("Güncelleme var")
+            .setTitle(if (forced) "Zorunlu güncelleme" else "Güncelleme var")
             .setMessage(
                 "v${info.versionName} (kod ${info.versionCode})\n\n$notes\n\n" +
-                    "Şu an: v${BuildConfig.VERSION_NAME}",
+                    "Şu an: v${BuildConfig.VERSION_NAME}" +
+                    (if (forced) "\n\nBu sürüm artık desteklenmiyor; güncelleme önerilir." else ""),
             )
             .setPositiveButton("Güncelle") { _, _ ->
                 dialogShowing = false
@@ -137,6 +227,13 @@ object AppUpdateHelper {
             try {
                 val file = withContext(Dispatchers.IO) {
                     api.downloadApkUpdate(info.downloadURL.ifBlank { info.apkPath })
+                }
+                if (!verifyReleaseSignature(activity.applicationContext, file)) {
+                    runCatching { file.delete() }
+                    if (!silent) {
+                        toast(activity, "Güncelleme imzası doğrulanamadı; kurulum iptal edildi")
+                    }
+                    return@launch
                 }
                 notifyReadyToInstall(activity, file, info)
                 if (!silent) installApk(activity, file)

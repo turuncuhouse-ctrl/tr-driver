@@ -425,11 +425,18 @@ class MainActivity : AppCompatActivity() {
         if (::backupChip.isInitialized) refreshBackupUi()
         refreshMiniPlayer()
         AppUpdateHelper.onMainResume(this)
-        if (intent?.getBooleanExtra("tr_install_update", false) == true) {
+        val cameFromUpdateNotification =
+            intent?.getBooleanExtra("tr_install_update", false) == true
+        if (cameFromUpdateNotification) {
             intent.removeExtra("tr_install_update")
         }
         if (session.isLoggedIn) {
-            AppUpdateHelper.check(this, force = false, silentIfCurrent = true)
+            // A background update notification should open the dialog immediately.
+            AppUpdateHelper.check(
+                this,
+                force = cameFromUpdateNotification,
+                silentIfCurrent = !cameFromUpdateNotification,
+            )
         }
         runAppBootstrapIfNeeded()
     }

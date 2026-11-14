@@ -1,63 +1,75 @@
 package net.neciparmagan.trdriver.backup
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
 import net.neciparmagan.trdriver.data.SessionStore
-import net.neciparmagan.trdriver.data.UploadNetworkGate
 import net.neciparmagan.trdriver.widget.BackupStatusWidget
-import java.util.concurrent.TimeUnit
 
+/**
+ * Bounded WorkManager fallback.
+ *
+ * The persistent TrKeepAliveService does the continuous work. This worker only
+ * runs when that service is not alive (process killed, or Android 12+ refused a
+ * background FGS launch). It never starts a second foreground service from the
+ * background — that used to throw ForegroundServiceStartNotAllowedException and
+ * silently kill the backup chain.
+ */
 class GalleryBackupWorker(
     appContext: Context,
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val session = SessionStore(applicationContext)
+        val app = applicationContext
+        val session = SessionStore(app)
         if (!session.isLoggedIn || !session.anyBackupEnabled()) {
             session.clearBackupProgress()
-            BackupStatusWidget.refreshAll(applicationContext)
+            BackupStatusWidget.refreshAll(app)
+            BackupController.ensure(app)
             return Result.success()
         }
 
-        // Foreground service path (when allowed from background).
-        if (GalleryBackupForegroundService.running) {
-            return Result.success()
-        }
-        if (GalleryBackupForegroundService.tryStart(applicationContext)) {
+        if (TrKeepAliveService.running) {
+            // Someone else is uploading; just nudge the loop and re-arm triggers.
+            BackupController.ensure(app)
+            BackupController.requestKick()
             return Result.success()
         }
 
-        // Fallback: run inside worker with typed foreground notification (Android 10+).
+        // Older Android versions allow an FGS launch from a worker; re-arm the
+        // persistent service there. On 12+ the OS refuses, so we do bounded work.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            TrKeepAliveService.startIfNeeded(app)
+            if (TrKeepAliveService.running) {
+                BackupController.requestKick()
+                return Result.success()
+            }
+        }
+
         safeSetForeground("TR Driver yedekleme…")
         return try {
             if (session.galleryBackupEnabled) {
                 val result = GalleryBackupEngine.runBatch(
-                    context = applicationContext,
+                    context = app,
                     isStopped = { isStopped },
                 )
+                session.lastBackupHeartbeatAt = System.currentTimeMillis()
                 if (result.scheduleContinue && session.galleryBackupEnabled) {
-                    scheduleContinue(applicationContext, result.continueDelaySec)
+                    BackupController.scheduleContinue(app, result.continueDelaySec)
                 }
             }
             Result.success()
         } catch (e: CancellationException) {
             if (session.anyBackupEnabled() && session.isLoggedIn) {
-                scheduleContinue(applicationContext, continueDelaySeconds(applicationContext, session))
+                BackupController.scheduleContinue(app, 5L)
             }
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "backup failed", e)
+            Log.e(TAG, "fallback backup failed", e)
             Result.retry()
         }
     }
@@ -72,104 +84,16 @@ class GalleryBackupWorker(
 
     companion object {
         private const val TAG = "GalleryBackup"
-        const val UNIQUE_PERIODIC = "trdriver_gallery_periodic"
-        const val UNIQUE_ONCE = "trdriver_gallery_once"
-        const val UNIQUE_CONTINUE = "trdriver_gallery_continue"
 
-        private fun continueDelaySeconds(context: Context, session: SessionStore): Long {
-            return if (UploadNetworkGate.isWifi(context)) 2L else 30L
-        }
+        /** Called from Activities / the backup switch: safe to start the FGS. */
+        fun schedule(context: Context) =
+            BackupController.ensure(context, startForegroundService = true)
 
-        fun schedule(context: Context) {
-            val session = SessionStore(context)
-            val wm = WorkManager.getInstance(context.applicationContext)
-            if (!session.anyBackupEnabled() || !session.isLoggedIn) {
-                wm.cancelUniqueWork(UNIQUE_PERIODIC)
-                wm.cancelUniqueWork(UNIQUE_ONCE)
-                wm.cancelUniqueWork(UNIQUE_CONTINUE)
-                session.clearBackupProgress(message = session.lastBackupMessage.ifBlank { "Yedek kapalı" })
-                BackupStatusWidget.refreshAll(context)
-                return
-            }
-            val constraints = constraints(session)
-            val periodic = PeriodicWorkRequestBuilder<GalleryBackupWorker>(30, TimeUnit.MINUTES)
-                .setConstraints(constraints)
-                .build()
-            wm.enqueueUniquePeriodicWork(
-                UNIQUE_PERIODIC,
-                ExistingPeriodicWorkPolicy.UPDATE,
-                periodic,
-            )
-            enqueueOnce(context, ExistingWorkPolicy.KEEP)
-        }
+        /** User tapped "Yedekle". */
+        fun runNow(context: Context) = BackupController.runNow(context)
 
-        /** User tapped "Yedekle" — start foreground service immediately (safe on all API levels). */
-        fun runNow(context: Context) {
-            val session = SessionStore(context)
-            if (!session.isLoggedIn) return
-            if (!session.anyBackupEnabled()) {
-                session.galleryBackupEnabled = true
-            }
-            session.updateBackupProgress(
-                active = true,
-                currentFile = "",
-                doneCount = session.backupDoneCount,
-                pendingCount = session.backupPendingCount.coerceAtLeast(1),
-                message = "Yedek başlatılıyor…",
-            )
-            BackupStatusWidget.refreshAll(context)
-            try {
-                GalleryBackupForegroundService.start(context)
-            } catch (e: Exception) {
-                Log.w(TAG, "FGS start failed, using WorkManager", e)
-                enqueueOnce(context, ExistingWorkPolicy.REPLACE)
-            }
-        }
-
-        /**
-         * Schedule the next backup batch.
-         * WorkManager forbids combining setExpedited() with setInitialDelay() —
-         * that IllegalArgumentException crashed Wi‑Fi resume (WifiBackupWatcher).
-         */
-        fun scheduleContinue(context: Context, delaySeconds: Long = 1) {
-            val session = SessionStore(context)
-            if (!session.anyBackupEnabled() || !session.isLoggedIn) return
-            val delay = delaySeconds.coerceAtLeast(0L)
-            val builder = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
-                .setConstraints(constraints(session))
-            if (delay > 0L) {
-                builder.setInitialDelay(delay, TimeUnit.SECONDS)
-            } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                // Immediate only — never pair expedited with a delay.
-                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            }
-            runCatching {
-                WorkManager.getInstance(context.applicationContext)
-                    .enqueueUniqueWork(UNIQUE_CONTINUE, ExistingWorkPolicy.REPLACE, builder.build())
-            }.onFailure { e ->
-                Log.e(TAG, "scheduleContinue failed delay=$delay", e)
-            }
-        }
-
-        private fun enqueueOnce(context: Context, policy: ExistingWorkPolicy) {
-            val session = SessionStore(context)
-            val builder = OneTimeWorkRequestBuilder<GalleryBackupWorker>()
-                .setConstraints(constraints(session))
-            // Immediate kickoff may be expedited; no delay here.
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            }
-            runCatching {
-                WorkManager.getInstance(context.applicationContext)
-                    .enqueueUniqueWork(UNIQUE_ONCE, policy, builder.build())
-            }.onFailure { e ->
-                Log.e(TAG, "enqueueOnce failed", e)
-            }
-        }
-
-        private fun constraints(session: SessionStore) = Constraints.Builder()
-            .setRequiredNetworkType(UploadNetworkGate.workManagerNetworkType(session))
-            .build()
-
+        /** Kept for compatibility with existing call sites. */
+        fun scheduleContinue(context: Context, delaySeconds: Long = 1L) =
+            BackupController.scheduleContinue(context, delaySeconds)
     }
 }

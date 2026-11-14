@@ -228,11 +228,40 @@ class BackupSettingsActivity : AppCompatActivity() {
         val oem = if (OemPowerHelper.isXiaomiFamily()) " · Xiaomi/HyperOS" else ""
         val partial = if (MediaAccess.hasPartialMediaAccess(this)) " · ⚠ sınırlı galeri" else ""
         val wifiNow = if (UploadNetworkGate.isWifi(this)) " · Wi‑Fi bağlı" else " · Wi‑Fi bekleniyor"
+        val fgs = if (!session.anyBackupEnabled()) {
+            "Arka plan: kapalı"
+        } else if (TrKeepAliveService.running) {
+            "Arka plan: çalışıyor ✓"
+        } else {
+            "Arka plan: hazırlanıyor…"
+        }
+        val heartbeat = session.lastBackupHeartbeatAt
+        val heartbeatLine = if (heartbeat > 0) {
+            "Son çalışma: ${formatAgo(heartbeat)}"
+        } else {
+            "Henüz yedek çalışmadı"
+        }
+        val battery = if (OemPowerHelper.isIgnoringBatteryOptimizations(this)) {
+            "Pil: muaf ✓"
+        } else {
+            "Pil: kısıtlı olabilir ⚠"
+        }
         backupStatus.text =
             "Durum: $on · $net$wifiNow · İşlenen medya: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
-                "Galeri → TR Photos · klasörler → TR Backup / ${session.deviceName}"
+                "Galeri → TR Photos · klasörler → TR Backup / ${session.deviceName}\n" +
+                "$fgs · $heartbeatLine · $battery"
         networkHint.text =
             "Yedekleme yalnız Wi‑Fi ile yapılır (fotoğraf, video ve seçilen klasörler)."
+    }
+
+    private fun formatAgo(atMs: Long): String {
+        val diffMin = ((System.currentTimeMillis() - atMs).coerceAtLeast(0L) / 60_000L).toInt()
+        return when {
+            diffMin < 1 -> "az önce"
+            diffMin < 60 -> "$diffMin dk önce"
+            diffMin < 60 * 24 -> "${diffMin / 60} sa önce"
+            else -> "${diffMin / (60 * 24)} gün önce"
+        }
     }
 
     private fun mediaPermissions(): Array<String> = MediaAccess.mediaPermissionsForRequest()

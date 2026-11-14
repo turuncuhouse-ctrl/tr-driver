@@ -152,6 +152,52 @@ class UploadedMediaDb(context: Context) :
         ).use { return if (it.moveToFirst()) it.getLong(0) else 0L }
     }
 
+    /**
+     * Rolling window for remote integrity verification.
+     * Returns rows that still have a remote id, oldest first, so repeated runs
+     * eventually cover the whole catalogue without a huge burst of requests.
+     */
+    fun listForVerification(offset: Int = 0, limit: Int = 40): List<UploadedMediaRow> {
+        val out = ArrayList<UploadedMediaRow>(limit)
+        readableDatabase.rawQuery(
+            """
+            SELECT media_key, remote_id, size_bytes, uploaded_at, local_uri, freed_at
+            FROM uploaded_media
+            WHERE remote_id <> ''
+            ORDER BY uploaded_at ASC
+            LIMIT ? OFFSET ?
+            """.trimIndent(),
+            arrayOf(limit.toString(), offset.coerceAtLeast(0).toString()),
+        ).use { c ->
+            val iKey = c.getColumnIndexOrThrow("media_key")
+            val iRemote = c.getColumnIndexOrThrow("remote_id")
+            val iSize = c.getColumnIndexOrThrow("size_bytes")
+            val iUp = c.getColumnIndexOrThrow("uploaded_at")
+            val iUri = c.getColumnIndexOrThrow("local_uri")
+            val iFreed = c.getColumnIndexOrThrow("freed_at")
+            while (c.moveToNext()) {
+                out += UploadedMediaRow(
+                    mediaKey = c.getString(iKey),
+                    remoteId = c.getString(iRemote),
+                    sizeBytes = c.getLong(iSize),
+                    uploadedAt = c.getLong(iUp),
+                    localUri = c.getString(iUri) ?: "",
+                    freedAt = if (c.isNull(iFreed)) null else c.getLong(iFreed),
+                )
+            }
+        }
+        return out
+    }
+
+    /** Forget a backup record whose remote copy is gone so it gets re-uploaded. */
+    fun forget(mediaKey: String) {
+        if (mediaKey.isBlank()) return
+        writableDatabase.execSQL(
+            "DELETE FROM uploaded_media WHERE media_key=?",
+            arrayOf(mediaKey),
+        )
+    }
+
     /** Candidates still on device (not marked freed). */
     fun listFreeable(limit: Int = 2000): List<UploadedMediaRow> {
         val out = ArrayList<UploadedMediaRow>()
