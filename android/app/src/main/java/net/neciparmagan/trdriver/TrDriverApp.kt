@@ -3,6 +3,7 @@ package net.neciparmagan.trdriver
 import android.app.Application
 import net.neciparmagan.trdriver.backup.BackupController
 import net.neciparmagan.trdriver.backup.WifiBackupWatcher
+import net.neciparmagan.trdriver.calls.CallController
 import net.neciparmagan.trdriver.data.SessionStore
 
 class TrDriverApp : Application() {
@@ -14,6 +15,7 @@ class TrDriverApp : Application() {
         session.wifiOnlyBackup = true
 
         WifiBackupWatcher.start(this)
+        CallController.init(this)
 
         // No foreground-service launch here: Application.onCreate also runs for
         // boot receivers, and Android 12+ refuses an FGS started that way.

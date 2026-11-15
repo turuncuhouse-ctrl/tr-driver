@@ -331,6 +331,12 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 			total_items int not null default 0,
 			primary key (user_id, kind, device_id)
 		)`,
+		// Encrypted LocalTel IP-phone / SIP provider configuration per user.
+		`create table if not exists localtel_configs (
+			user_id uuid primary key references users(id) on delete cascade,
+			payload bytea not null,
+			updated_at timestamptz not null default now()
+		)`,
 	}
 
 	for _, stmt := range ddl {

@@ -96,6 +96,16 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="QR ile giriş" />
+
+            <Button
+                android:id="@+id/btnLoginCalls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:backgroundTint="@color/tr_sky"
+                android:text="LocalTel Aramalar"
+                android:textAllCaps="false"
+                android:textColor="@color/tr_ink" />
         </LinearLayout>
     </ScrollView>
 
@@ -220,6 +230,19 @@
                 android:backgroundTint="#E8F2FC"
                 android:text="TR Galeri"
                 android:textColor="@color/tr_blue"
+                android:textStyle="bold"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnCalls"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="4dp"
+                android:minWidth="0dp"
+                android:paddingHorizontal="10dp"
+                android:backgroundTint="#DCFCE7"
+                android:text="Aramalar"
+                android:textColor="#166534"
                 android:textStyle="bold"
                 android:textAllCaps="false" />
 

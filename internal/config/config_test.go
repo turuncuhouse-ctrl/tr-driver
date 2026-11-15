@@ -36,3 +36,21 @@ func TestPersonalBackupKeyRejectsShortExplicitValue(t *testing.T) {
 		t.Fatal("expected a short PERSONAL_BACKUP_KEY to be rejected")
 	}
 }
+
+func TestLocalTelKeyDefaultsAndRejectsShortExplicitValue(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db?sslmode=disable")
+	t.Setenv("SESSION_SECRET", "session-secret-for-localtel-tests-1234")
+	t.Setenv("PERSONAL_BACKUP_KEY", "personal-backup-key-for-localtel-tests")
+	t.Setenv("LOCAL_TEL_KEY", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LocalTelKey != cfg.PersonalBackupKey {
+		t.Fatalf("localtel key should fall back to personal backup key, got %q", cfg.LocalTelKey)
+	}
+	t.Setenv("LOCAL_TEL_KEY", "short")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected short LOCAL_TEL_KEY to be rejected")
+	}
+}
