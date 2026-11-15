@@ -450,10 +450,10 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         return cleaned.ifBlank { "Android" }
     }
 
-    suspend fun register(email: String, password: String, displayName: String): DeviceLoginResponse = withContext(Dispatchers.IO) {
+    suspend fun register(email: String, password: String, displayName: String, phone: String = ""): DeviceLoginResponse = withContext(Dispatchers.IO) {
         val payload = json.encodeToString(
             RegisterRequest.serializer(),
-            RegisterRequest(email = email, password = password, displayName = displayName),
+            RegisterRequest(email = email, password = password, displayName = displayName, phone = phone),
         )
         val req = Request.Builder()
             .url("${base()}/api/auth/register")

@@ -63,7 +63,7 @@ func NewRouter(
 	updateHandler := updates.NewHandler(updates.Config{ManifestURL: cfg.UpdateManifestURL, Channel: cfg.UpdateChannel})
 	backupHandler := backup.NewHandler(backupService)
 	personalHandler := personalbackup.NewHandler(personalService)
-	localtelHandler := localtel.NewHandler(localtelService, localtelHub)
+	localtelHandler := localtel.NewHandler(localtelService, localtelHub, cfg.TrustedProxies)
 	davHandler := webdavx.New(authService, fileService, cfg.TrustedProxies)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +134,7 @@ func NewRouter(
 	mux.Handle(personalbackup.BasePath, authHandler.RequireAuth(personalHandler))
 	// LocalTel IP-phone / SIP configuration and gateway signaling relay.
 	mux.Handle(localtel.BasePath, authHandler.RequireAuth(localtelHandler))
+	mux.HandleFunc(localtel.GatewayPath, localtelHandler.ServeGatewayWS)
 	mux.Handle("/api/sync/snapshot", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Snapshot)))
 	mux.Handle("/api/sync/changes", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Changes)))
 	mux.Handle("/api/sync/folders", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Folder)))

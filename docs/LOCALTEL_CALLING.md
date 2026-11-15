@@ -1,49 +1,39 @@
-# TR Driver — Aşama 3: LocalTel IP Sesli Arama
+# TR Driver 0.13.0 — LocalTel ve izinler
 
-Bu belge TR Driver **0.12.0** sürümünde eklenen uygulama içi WhatsApp benzeri **LocalTel** sesli IP arama altyapısını, mimari kararlarını, bilinmeyen/varsayılan noktaları ve güvenlik sınırlarını açıklar.
+TR Driver 0.13.0 (Android `versionCode` 47) LocalTel'i varsayılan olarak sıfır yapılandırmalı hale getirir. Kullanıcı TR Driver'a giriş yaptıktan sonra uygulama hesabı sunucudan alır; normal arama ekranında SIP sunucusu, realm, port, kullanıcı adı veya parola girilmez. Eski manuel SIP sağlayıcısı yalnızca **LocalTel Aramalar → Arama Durumu → Gelişmiş ayarları göster** altında bulunur.
 
-## 1. Keşif ve Bilinmeyenler / Varsayımlar
+## Yerleşik çağrı geçidi
 
-Depo, önceki PR'lar (#1–#6), dokümantasyon ve kamuya açık kaynaklar incelendiğinde LocalTel için sabit bir satıcı API'si veya örnek SIP sunucusu yer almıyordu. Bu nedenle iki standart aktarım modunu destekleyen yapılandırılabilir bir sağlayıcı arayüzü (`LocalTelCallProvider`) kuruldu:
+- `GET /api/localtel/config` kimliği doğrulanmış cihazın kendi hesabını ilk istekte oluşturur ve WSS adresi, dahili numara, kullanıcı adı, şifreli saklanan hesap parolası ve kısa ömürlü imzalı WebSocket token'ını `Cache-Control: no-store` ile döndürür.
+- İstemci WebSocket'i mevcut TR Driver alan adındaki `wss://<alan-adı>/localtel/ws` yoluna açar. Yeni port, NPM host, DNS kaydı veya SIP konteyneri gerekmez. `/localtel/ws` kısa ömürlü bearer token ile doğrulanır; `/api/localtel/ws` eski cihaz-token akışıyla geriye dönük uyumludur.
+- Sunucu her kullanıcı için kriptografik rastgele kimlik bilgileri üretir. Üyelikte isteğe bağlı telefon numarası girilmişse normalize edilmiş numara o kullanıcının aranabilir dahili olur; yoksa benzersiz beş haneli dahili atanır. Hesap parolası AES‑256‑GCM ve kullanıcıya bağlı AAD ile `localtel_accounts.password_enc` içinde tutulur; anahtar `LOCAL_TEL_KEY` (yoksa `PERSONAL_BACKUP_KEY`, ardından `SESSION_SECRET`) üzerinden türetilir.
+- `invite` hedefi ayrılmış dahili/hesap adıyla çözülür; çağrıya özel, süreli rotada iki katılımcı saklanır. Çağrı sinyali ve G.711 PCMU ses çerçeveleri yalnızca diğer katılımcıya aktarılır. Sunucu, katılımcı olmayan bir kullanıcının çağrı sinyali göndermesini reddeder. Medya WSS üzerinden sunucu tarafından aktarıldığından varsayılan kurulumda ICE/STUN/TURN servisi gerekmez.
+- WebSocket token'ları 15 dakika geçerlidir (varsayılan); Android arka plan dinleyicisi token'ı yeniler ve canlı çağrı yokken bağlantıyı tazeler. Kimlik bilgileri ve token'lar sunucu/Android loglarına yazılmaz. Yapılandırma endpoint'i kullanıcı başına hız sınırına ve no-store başlıklarına sahiptir; WSS bağlantıları IP ve kullanıcı başına sınırlanır.
+- WebSocket route'u uygulamanın mevcut HTTP(S) portunda çalışır. Ters proxy, aynı TR Driver host için WebSocket upgrade'i uygulamaya iletmelidir.
 
-1. **Doğrudan SIP Modu (`providerType = "sip"`, `SipLocalTelProvider`)**
-   - Varsayım: Mevcut LocalTel altyapısı standart **RFC 3261 SIP** (`REGISTER` / `INVITE` / `ACK` / `CANCEL` / `BYE`), Digest (`MD5` veya `SHA-256`) kimlik doğrulama ve **SDP + G.711 PCMU/PCMA RTP (RFC 3550 / RFC 2833 DTMF)** medya akışını destekler.
-   - Desteklenen taşımalar: `udp` (varsayılan port `5060`), `tcp` (`5060`), `tls` (`5061`).
-   - Bilinmeyen / dış ağ sınırı: Cihaz sıkı bir mobil taşıyıcı NAT arkasındaysa ve PBX tarafında simetrik RTP / ICE-STUN etkin değilse doğrudan UDP/SIP ulaşamayabilir; bu senaryolar için aşağıdaki Ağ Geçidi (Gateway) modu sağlanmıştır.
-2. **Ağ Geçidi / Relay Modu (`providerType = "gateway"`, `GatewayLocalTelProvider`)**
-   - Varsayım: Sunucu URL'si boş bırakılırsa uygulama kimliği doğrulanmış TR Driver sunucusundaki `/api/localtel/ws` WebSocket aktarıcısına bağlanır (veya harici bir `wss://` / `https://` LocalTel ağ geçidine bağlanabilir).
-   - Çağrı sinyalleri (`invite`, `ringing`, `accept`, `reject`, `hangup`, `cancel`) ve G.711 PCMU ses çerçeveleri JSON WebSocket mesajlarıyla taşınır.
-3. **Arka Plan Uyanma (Push)**
-   - TR Driver de-Googled / kendi kendine barındırılan cihazları da desteklediği için zorunlu FCM bağımlılığı eklenmemiştir. Gelen aramalar `LocalTelListenerService` (`dataSync` ön plan servisi) açıkken canlı SIP/WebSocket oturumu üzerinden alınır. İleride özel push ağ geçidi eklenirse `LocalTelCallProvider` arayüzü değişmeden uyarlanabilir.
+### Yeni ortam değişkenleri
 
-## 2. Android Mimarisi
+- `LOCAL_TEL_DOMAIN` — gateway URL'sinde kullanılacak alan adı (isteğe bağlı; boşsa `PUBLIC_BASE_URL` hostu, sonra gelen isteğin Host başlığı kullanılır; TLS sertifikasının bu hostu kapsaması gerekir).
+- `LOCAL_TEL_TOKEN_TTL` — kısa ömürlü gateway token süresi; varsayılan `15m`.
+- `LOCAL_TEL_AUTO_PROVISION` — ilk istekte kullanıcı LocalTel hesabı oluşturma anahtarı; varsayılan `true`.
+- `LOCAL_TEL_KEY` — önceden mevcut, isteğe bağlı şifreleme anahtarı; boş bırakılırsa var olan `PERSONAL_BACKUP_KEY`/`SESSION_SECRET` fallback zinciri kullanılır.
 
-`android/app/src/main/java/net/neciparmagan/trdriver/calls/`
+Ek servis yoktur; LocalTel sinyalizasyon ve ses relay'i TR Driver Go uygulaması içinde çalışır. `docker-compose.stack.yml`, `docker-compose.easy.yml` ve `docker-compose.portainer.yml` aynı değişkenleri uygulama servisine aktarır.
 
-- **`LocalTelCallProvider` (`LocalTelModels.kt`)**: Sağlayıcıdan bağımsız çağrı başlatma, yanıtlama, reddetme, kapatma, sessize alma ve DTMF arayüzü.
-- **`PhoneNumberNormalizer` & `ContactMatcher` & `AndroidContactDirectory`**:
-  - Aşama 2 `READ_CONTACTS` iznini kullanarak Android rehberini (`ContactsContract`) yerel dizine alır (hiçbir kişi bilgisi günlüklere yazılmaz).
-  - Türkiye (`+90`, `0090`, `05xx`, `5xx`, sabit hatlar, `444` numaralar), uluslararası E.164 (`+1`, `+49` vb. — farklı ülke kodları arasında yanlış eşleşme engellenir), kısa dahili (`2–6` hane) ve `sip:`/`tel:` URI biçimlerini tutarlı biçimde normalleştirir.
-- **`CallStateMachine`**: Saf Kotlin durum makinesi (`IDLE → OUTGOING_DIALING → OUTGOING_RINGING → INCOMING_RINGING → CONNECTING → ACTIVE → ENDED`). Çağrı bitiminde sessiz/hoparlör/bekletme bayraklarını sıfırlar ve temizlik gereksinimini üretir.
-- **Kilit Ekranı ve Telecom Entegrasyonu**:
-  - `TrConnectionService` & `TelecomHelper`: `PhoneAccount.CAPABILITY_SELF_MANAGED` ile sisteme VoIP araması bildirir (`tel` / `sip` şemaları), cihaz desteklemiyorsa sorunsuz doğrudan çağrı akışına düşer.
-  - `TrCallService`: `phoneCall|microphone` ön plan servisi; zil çalarken yalnızca `PHONE_CALL` tipiyle başlar, `MICROPHONE` tipini yalnızca çağrı yanıtlanıp `RECORD_AUDIO` izni doğrulandıktan sonra ekler (Android 14 uyumlu).
-  - `CallNotifications`: `NotificationCompat.CallStyle.forIncomingCall` + `setFullScreenIntent(..., true)` ile kilit ekranında yüksek öncelikli çağrı bildirimi üretir.
-  - `CallActivity`: `showWhenLocked` + `turnScreenOn` ve sabit konumlu alt kontrol yuvası sayesinde durum değişiminde kaymayan büyük **Aç** / **Reddet** düğmeleri sunar.
-  - `CallAudioController`: `AudioFocusRequest`, zil sesi, giden çalma tonu, `MusicService` duraklatma, hoparlör/Bluetooth ses yönlendirme, yakınlık sensörü kilidi ve çağrı bitiminde tam kaynak serbest bırakma.
-- **İzin Akışı (`CallPermissions`)**: `RECORD_AUDIO`, `READ_CONTACTS`, `POST_NOTIFICATIONS` (Android 13+) ve `USE_FULL_SCREEN_INTENT` (Android 14+ Ayarlar yönlendirmesi) her zaman önce Türkçe açıklama diyaloğu gösterilerek istenir.
+## Android izin sihirbazı ve SMS geri yükleme
 
-## 3. Sunucu API'si (`internal/localtel`)
+İlk açılışta ve ana menü **İzinler** bölümünde Türkçe neden/status gösteren adım adım sihirbaz açılır. Rehber, SMS okuma, telefon/ConnectionService, mikrofon, bildirim, medya/kısmi medya, tüm dosyalar, pil optimizasyonu, tam ekran arama, uygulama içi güncelleme, kamera ve Bluetooth durumlarını gösterir. Kalıcı reddedilen runtime izinleri uygulama bilgisine; özel erişimler kendi Android ayar sayfasına yönlendirilir. Android 13+ kısıtlı SMS izni için `⋮ → Kısıtlı ayarlara izin ver` açıklaması gösterilir. Ana ekranda eksik izin kartı ilgili özelliklerin duraklatıldığını açıklar; yedekleme/arama özellikleri izin kontrolleri olmadan sağlayıcıya erişmez.
 
-Tüm uç noktalar `authHandler.RequireAuth` arkasındadır ve yalnızca çağıranın kendi kullanıcı kimliğine (`user_id`) bağlıdır:
+SMS yedeklemesi `READ_SMS` ile okunmaya devam eder. Geri yükleme, Android `ROLE_SMS` onayını geçici olarak ister; SMS/WAP push alıcıları, `RESPOND_VIA_MESSAGE` servisi ve `SENDTO` aktivitesi rol uygunluğu için manifestte tanımlıdır. Kayıtlar cihazın SMS sağlayıcısına yinelenen kayıt kontrolüyle eklenir. Tamamlanınca önceki varsayılan SMS uygulamasını seçmek için Android varsayılan uygulamalar ayarları açılır; kullanıcı önceki uygulamayı yeniden seçtiğinde sihirbaz onu açar.
 
-- `GET /api/localtel/config` — Kayıtlı ayar özetini döner (`hasSecret: bool`, ham parola **asla** dönülmez).
-- `PUT /api/localtel/config` — Ayarları ve parolayı doğrular, `LOCAL_TEL_KEY` (veya `PERSONAL_BACKUP_KEY` / `SESSION_SECRET`) üzerinden kullanıcıya bağlı **AES‑256‑GCM** ile `localtel_configs` tablosuna şifreli yazar. Parola alanı boş gönderilirse önceki parola korunur (`clearSecret: true` ile silinir).
-- `DELETE /api/localtel/config` — Kullanıcının LocalTel yapılandırmasını siler.
-- `GET /api/localtel/config/provision` — Kimliği doğrulanmış cihaza `Cache-Control: no-store` başlığıyla cihaz kurulum bilgisini verir.
-- `POST /api/localtel/signal` ve `GET /api/localtel/ws` — Yalnızca aynı kullanıcının bağlı cihazları arasında çalışan WebSocket/HTTP çağrı sinyalizasyon aktarıcısı (`Origin` doğrulamalı, hız sınırlı).
+## Yedekleme ve arama davranışı
 
-## 4. Mevcut Yedekleme Davranışının Korunması
+Var olan kişisel/galeri yedekleme kuralları değişmez: kişisel veri upload'ı Wi‑Fi-only, artımlı ve run-lock/kota/sınırlı batch kurallarına bağlıdır. LocalTel dinleyicisi çağrı için mobil veri kullanabilir fakat yedekleme ağ geçidini değiştirmez. Kilit ekranındaki gelen arama UI'si ve rehber numarası eşleştirmesi korunmuştur.
 
-- `TrKeepAliveService` ve `GalleryBackupWorker` yalnızca Wi‑Fi üzerinde, hız/bant genişliği limitleriyle çalışmaya devam eder (`wifiOnlyBackup = true` korunur).
-- LocalTel aramaları ayrı servisler (`TrCallService`, `LocalTelListenerService`) üzerinden hem Wi‑Fi hem mobil veri ağlarında yedeklemeyi etkilemeden çalışır.
+## API özeti
+
+- `GET /api/localtel/config` — authenticated, kullanıcıya özel, sıfır yapılandırma config + kısa ömürlü gateway token; no-store ve rate-limited.
+- `PUT /api/localtel/config`, `DELETE /api/localtel/config` — gelişmiş manuel sağlayıcı yapılandırması.
+- `GET /api/localtel/config/provision` — eski manuel cihaz kurulum endpoint'i.
+- `POST /api/localtel/signal`, `GET /api/localtel/ws` — eski authenticated signaling endpoint'leri.
+- `GET /localtel/ws` — kısa ömürlü bearer token doğrulamalı aynı-domain WSS relay endpoint'i.

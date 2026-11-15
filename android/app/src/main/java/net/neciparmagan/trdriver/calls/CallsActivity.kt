@@ -49,6 +49,9 @@ class CallsActivity : AppCompatActivity() {
     private lateinit var tabSettings: Button
     private lateinit var panelDialer: View
     private lateinit var panelSettings: View
+    private lateinit var tvLocalTelConfigStatus: TextView
+    private lateinit var layoutAdvancedLocalTel: View
+    private lateinit var btnAdvancedLocalTel: Button
 
     private lateinit var cardPermissions: View
     private lateinit var tvPermissionsSummary: TextView
@@ -142,7 +145,17 @@ class CallsActivity : AppCompatActivity() {
         observeStates()
 
         reloadContactsAsync(forceRefresh = false)
-        if (session.localTelEnabled && session.localTelAutoRegister) {
+        val currentConfig = session.loadLocalTelConfig()
+        if (session.isLoggedIn && (currentConfig.providerType == LocalTelProviderType.GATEWAY || !currentConfig.enabled)) {
+            lifecycleScope.launch {
+                configApi.fetchGatewayConfig().onSuccess { autoConfig ->
+                    session.saveLocalTelConfig(autoConfig)
+                    loadConfigIntoForm(autoConfig)
+                    CallController.ensureProviderStarted(this@CallsActivity, forceRestart = true)
+                    LocalTelListenerService.syncState(this@CallsActivity)
+                }
+            }
+        } else if (session.localTelEnabled && session.localTelAutoRegister) {
             LocalTelListenerService.syncState(this)
         }
     }
@@ -162,6 +175,9 @@ class CallsActivity : AppCompatActivity() {
         tabSettings = findViewById(R.id.tabSettings)
         panelDialer = findViewById(R.id.panelDialerContacts)
         panelSettings = findViewById(R.id.panelLocalTelSettings)
+        tvLocalTelConfigStatus = findViewById(R.id.tvLocalTelConfigStatus)
+        layoutAdvancedLocalTel = findViewById(R.id.layoutAdvancedLocalTel)
+        btnAdvancedLocalTel = findViewById(R.id.btnAdvancedLocalTel)
 
         cardPermissions = findViewById(R.id.cardPermissions)
         tvPermissionsSummary = findViewById(R.id.tvPermissionsSummary)
@@ -218,6 +234,14 @@ class CallsActivity : AppCompatActivity() {
 
         tabDialer.setOnClickListener { selectTab(showSettings = false) }
         tabSettings.setOnClickListener { selectTab(showSettings = true) }
+        btnAdvancedLocalTel.setOnClickListener {
+            val show = layoutAdvancedLocalTel.visibility != View.VISIBLE
+            layoutAdvancedLocalTel.visibility = if (show) View.VISIBLE else View.GONE
+            btnAdvancedLocalTel.text = if (show) "Gelişmiş ayarları gizle" else "Gelişmiş ayarları göster"
+        }
+        findViewById<Button>(R.id.btnReconnectLocalTel).setOnClickListener {
+            reconnectLocalTel()
+        }
 
         btnFixMicPerm.setOnClickListener {
             CallPermissions.showMicrophoneExplanation(this) {
@@ -351,6 +375,7 @@ class CallsActivity : AppCompatActivity() {
                     CallController.providerStatus.collect { snap ->
                         val prefix = if (session.localTelEnabled) snap.statusText else "LocalTel kapalı"
                         tvHeaderStatus.text = prefix
+                        refreshLocalTelStatus(snap)
                     }
                 }
                 launch {
@@ -359,6 +384,36 @@ class CallsActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+    }
+
+    private fun refreshLocalTelStatus(snap: ProviderStatusSnapshot = CallController.providerStatus.value) {
+        val text = when (snap.state) {
+            ProviderRegistrationState.REGISTERED -> "Bağlı"
+            ProviderRegistrationState.REGISTERING -> "Bağlanıyor"
+            ProviderRegistrationState.ERROR -> "Hata: ${snap.lastError.ifBlank { snap.statusText }}"
+            ProviderRegistrationState.DISABLED -> if (session.localTelEnabled) "Hata: bağlantı kapalı" else "Bağlanıyor: hesap bekleniyor"
+        }
+        tvLocalTelConfigStatus.text = text
+    }
+
+    private fun reconnectLocalTel() {
+        val config = session.loadLocalTelConfig()
+        if (config.providerType == LocalTelProviderType.GATEWAY && configApi.hasSession()) {
+            lifecycleScope.launch {
+                tvLocalTelConfigStatus.text = "Bağlanıyor"
+                configApi.fetchGatewayConfig().onSuccess { refreshed ->
+                    session.saveLocalTelConfig(refreshed)
+                    CallController.ensureProviderStarted(this@CallsActivity, forceRestart = true)
+                    LocalTelListenerService.syncState(this@CallsActivity)
+                }.onFailure {
+                    tvLocalTelConfigStatus.text = "Hata: sunucu ayarları alınamadı"
+                    CallController.ensureProviderStarted(this@CallsActivity, forceRestart = true)
+                }
+            }
+        } else {
+            CallController.ensureProviderStarted(this, forceRestart = true)
+            LocalTelListenerService.syncState(this)
         }
     }
 
@@ -584,7 +639,9 @@ class CallsActivity : AppCompatActivity() {
             return
         }
         lifecycleScope.launch {
-            val res = configApi.provisionConfig()
+            val res = configApi.fetchGatewayConfig().recoverCatching {
+                configApi.provisionConfig().getOrThrow()
+            }
             res.onSuccess { loaded ->
                 session.saveLocalTelConfig(loaded)
                 loadConfigIntoForm(loaded)

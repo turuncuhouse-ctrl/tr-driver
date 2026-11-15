@@ -40,8 +40,13 @@ type Config struct {
 	PersonalBackupKey string
 	// Encryption key for saved LocalTel SIP/gateway credentials. Falls back to
 	// PersonalBackupKey (then SessionSecret) when empty.
-	LocalTelKey    string
-	TrustedProxies []netip.Prefix
+	LocalTelKey string
+	// LocalTel zero-config gateway settings. The server auto-provisions a
+	// calling account per user and exposes a WSS gateway on its own domain.
+	LocalTelDomain        string
+	LocalTelTokenTTL      time.Duration
+	LocalTelAutoProvision bool
+	TrustedProxies        []netip.Prefix
 	// Backup subsystem (see internal/backup + docs/BACKUP.md).
 	BackupEnabled       bool
 	BackupDir           string
@@ -75,26 +80,29 @@ func Load() (Config, error) {
 		DataDir:       getEnv("DATA_DIR", "./data"),
 		PublicBaseURL: strings.TrimRight(getEnv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
 		// 0 / unset / "auto" → resolve from DATA_DIR disk capacity at startup
-		FreeQuotaBytes:       getEnvQuotaBytes("FREE_QUOTA_BYTES"),
-		MaxUploadBytes:       getEnvInt64("MAX_UPLOAD_BYTES", 10*1024*1024*1024),
-		MaxUploadBatchBytes:  getEnvInt64("MAX_UPLOAD_BATCH_BYTES", 10*1024*1024*1024),
-		UploadChunkBytes:     getEnvInt64("UPLOAD_CHUNK_BYTES", 8*1024*1024),
-		UploadSessionTTL:     getEnvDuration("UPLOAD_SESSION_TTL", 48*time.Hour),
-		MaxBatchFiles:        getEnvInt("MAX_BATCH_FILES", 2000),
-		MaxConcurrentChunks:  getEnvInt("MAX_CONCURRENT_CHUNKS", 2),
-		MaxConcurrentUploads: getEnvInt("MAX_CONCURRENT_UPLOADS", 3),
-		SessionTTL:           getEnvDuration("SESSION_TTL", 24*time.Hour),
-		DeviceTokenTTL:       getEnvDuration("DEVICE_TOKEN_TTL", 0),
-		TrashRetention:       getEnvDuration("TRASH_RETENTION", 720*time.Hour),
-		FileChangeRetention:  getEnvDuration("FILE_CHANGE_RETENTION", 2160*time.Hour),
-		ShareTokenBytes:      getEnvInt("SHARE_TOKEN_BYTES", 24),
-		SharePasswordSalt:    getEnv("SHARE_PASSWORD_SALT", "change-me"),
-		AllowRegistration:    getEnvBool("ALLOW_REGISTRATION", true),
-		UpdateManifestURL:    getEnv("UPDATE_MANIFEST_URL", ""),
-		UpdateChannel:        getEnv("UPDATE_CHANNEL", "stable"),
-		LicenseVendorMode:    getEnvBool("LICENSE_VENDOR_MODE", false),
-		PersonalBackupKey:    getEnv("PERSONAL_BACKUP_KEY", ""),
-		LocalTelKey:          getEnv("LOCAL_TEL_KEY", ""),
+		FreeQuotaBytes:        getEnvQuotaBytes("FREE_QUOTA_BYTES"),
+		MaxUploadBytes:        getEnvInt64("MAX_UPLOAD_BYTES", 10*1024*1024*1024),
+		MaxUploadBatchBytes:   getEnvInt64("MAX_UPLOAD_BATCH_BYTES", 10*1024*1024*1024),
+		UploadChunkBytes:      getEnvInt64("UPLOAD_CHUNK_BYTES", 8*1024*1024),
+		UploadSessionTTL:      getEnvDuration("UPLOAD_SESSION_TTL", 48*time.Hour),
+		MaxBatchFiles:         getEnvInt("MAX_BATCH_FILES", 2000),
+		MaxConcurrentChunks:   getEnvInt("MAX_CONCURRENT_CHUNKS", 2),
+		MaxConcurrentUploads:  getEnvInt("MAX_CONCURRENT_UPLOADS", 3),
+		SessionTTL:            getEnvDuration("SESSION_TTL", 24*time.Hour),
+		DeviceTokenTTL:        getEnvDuration("DEVICE_TOKEN_TTL", 0),
+		TrashRetention:        getEnvDuration("TRASH_RETENTION", 720*time.Hour),
+		FileChangeRetention:   getEnvDuration("FILE_CHANGE_RETENTION", 2160*time.Hour),
+		ShareTokenBytes:       getEnvInt("SHARE_TOKEN_BYTES", 24),
+		SharePasswordSalt:     getEnv("SHARE_PASSWORD_SALT", "change-me"),
+		AllowRegistration:     getEnvBool("ALLOW_REGISTRATION", true),
+		UpdateManifestURL:     getEnv("UPDATE_MANIFEST_URL", ""),
+		UpdateChannel:         getEnv("UPDATE_CHANNEL", "stable"),
+		LicenseVendorMode:     getEnvBool("LICENSE_VENDOR_MODE", false),
+		PersonalBackupKey:     getEnv("PERSONAL_BACKUP_KEY", ""),
+		LocalTelKey:           getEnv("LOCAL_TEL_KEY", ""),
+		LocalTelDomain:        getEnv("LOCAL_TEL_DOMAIN", ""),
+		LocalTelTokenTTL:      getEnvDuration("LOCAL_TEL_TOKEN_TTL", 15*time.Minute),
+		LocalTelAutoProvision: getEnvBool("LOCAL_TEL_AUTO_PROVISION", true),
 		// Defaults mirror internal/backup Default* constants.
 		BackupEnabled:       getEnvBool("BACKUP_ENABLED", true),
 		BackupDir:           getEnv("BACKUP_DIR", "./backups/restic"),
@@ -141,6 +149,9 @@ func Load() (Config, error) {
 	}
 	if len(cfg.LocalTelKey) < 16 {
 		return Config{}, fmt.Errorf("LOCAL_TEL_KEY must be at least 16 characters")
+	}
+	if cfg.LocalTelTokenTTL <= 0 {
+		return Config{}, fmt.Errorf("LOCAL_TEL_TOKEN_TTL must be positive")
 	}
 	if cfg.AppEnv == "production" {
 		if cfg.SessionSecret == "change-me" || strings.Contains(strings.ToLower(cfg.SessionSecret), "degistir") {

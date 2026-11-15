@@ -454,7 +454,7 @@ class SessionStore(context: Context) {
         return "Yedek: açık · $last$comms"
     }
 
-    // --- LocalTel IP arama (0.12.0) -----------------------------------------
+    // --- LocalTel IP arama (0.13.0) -----------------------------------------
     // Secret stays inside EncryptedSharedPreferences (SecurePrefs) locally
     // and is never written to logs.
 
@@ -531,6 +531,8 @@ class SessionStore(context: Context) {
             defaultCountryCode = localTelCountryCode,
             autoRegister = localTelAutoRegister,
             syncToServer = localTelSyncToServer,
+            gatewayToken = prefs.getString(KEY_LT_GATEWAY_TOKEN, "") ?: "",
+            gatewayTokenExpiresAt = prefs.getLong(KEY_LT_GATEWAY_TOKEN_EXP, 0L),
         )
     }
 
@@ -550,6 +552,8 @@ class SessionStore(context: Context) {
             .putString(KEY_LT_COUNTRY, config.defaultCountryCode.filter { it in '0'..'9' }.ifEmpty { "90" })
             .putBoolean(KEY_LT_AUTO_REG, config.autoRegister)
             .putBoolean(KEY_LT_SYNC_SERVER, config.syncToServer)
+            .putString(KEY_LT_GATEWAY_TOKEN, config.gatewayToken)
+            .putLong(KEY_LT_GATEWAY_TOKEN_EXP, config.gatewayTokenExpiresAt)
             .apply()
     }
 
@@ -569,6 +573,8 @@ class SessionStore(context: Context) {
             .remove(KEY_LT_COUNTRY)
             .remove(KEY_LT_AUTO_REG)
             .remove(KEY_LT_SYNC_SERVER)
+            .remove(KEY_LT_GATEWAY_TOKEN)
+            .remove(KEY_LT_GATEWAY_TOKEN_EXP)
             .apply()
     }
 
@@ -579,6 +585,8 @@ class SessionStore(context: Context) {
             .remove(KEY_TOKEN)
             .remove(KEY_ROOT)
             .remove(KEY_PHOTOS_ROOT)
+            .remove(KEY_LT_GATEWAY_TOKEN)
+            .remove(KEY_LT_GATEWAY_TOKEN_EXP)
         if (localTelSyncToServer) {
             editor.remove(KEY_LT_SECRET)
         }
@@ -654,5 +662,7 @@ class SessionStore(context: Context) {
         private const val KEY_LT_COUNTRY = "lt_country"
         private const val KEY_LT_AUTO_REG = "lt_auto_reg"
         private const val KEY_LT_SYNC_SERVER = "lt_sync_server"
+        private const val KEY_LT_GATEWAY_TOKEN = "lt_gateway_token"
+        private const val KEY_LT_GATEWAY_TOKEN_EXP = "lt_gateway_token_exp"
     }
 }

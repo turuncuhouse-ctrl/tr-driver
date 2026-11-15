@@ -174,6 +174,9 @@ class BackupSettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_backup_settings)
+        findViewById<Button>(R.id.btnOpenPermissionWizard).setOnClickListener {
+            startActivity(Intent(this, PermissionWizardActivity::class.java))
+        }
         session = SessionStore(this)
         session.wifiOnlyBackup = true
 

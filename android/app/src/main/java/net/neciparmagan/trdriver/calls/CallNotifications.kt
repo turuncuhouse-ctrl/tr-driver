@@ -210,12 +210,12 @@ object CallNotifications {
             .build()
 
         val id = MISSED_NOTIFICATION_BASE + (state.callId.hashCode() and 0x0f)
-        nm.notify(id, notif)
+        runCatching { nm.notify(id, notif) }
     }
 
     fun cancelCallNotification(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        nm.cancel(CALL_NOTIFICATION_ID)
+        runCatching { nm.cancel(CALL_NOTIFICATION_ID) }
     }
 
     private fun serviceActionPi(

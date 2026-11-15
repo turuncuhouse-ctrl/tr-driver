@@ -305,14 +305,9 @@ class PhotosLibraryActivity : AppCompatActivity() {
         })
 
         if (!AppBootstrap.isBootstrapped(this)) {
-            val needed = AppBootstrap.neededPermissions(this)
-            if (needed.isNotEmpty()) {
-                permissionLauncher.launch(needed)
-            } else {
-                finishBootstrapAfterPermissions()
-            }
+            startActivity(Intent(this, PermissionWizardActivity::class.java))
         } else if (!hasMediaPermission()) {
-            permissionLauncher.launch(mediaPermissions())
+            startActivity(Intent(this, PermissionWizardActivity::class.java).putExtra(PermissionWizardActivity.EXTRA_STEP, 5))
         } else if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
             val uri = intent.data!!
             val name = intent.getStringExtra(Intent.EXTRA_TITLE)

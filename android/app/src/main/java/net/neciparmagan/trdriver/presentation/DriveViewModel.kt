@@ -79,14 +79,14 @@ class DriveViewModel(app: Application) : AndroidViewModel(app) {
     fun consumeShareUrl() = _state.update { it.copy(shareUrl = null) }
     fun consumePdfPreview() = _state.update { it.copy(pdfPreview = null) }
 
-    fun register() {
+    fun register(phone: String = "") {
         val s = _state.value
         viewModelScope.launch {
             _state.update { it.copy(busy = true, message = null) }
             try {
                 session.serverUrl = s.serverUrl
                 val name = s.displayName.ifBlank { s.email.substringBefore("@") }
-                val resp = api.register(s.email.trim(), s.password, name)
+                val resp = api.register(s.email.trim(), s.password, name, phone)
                 _state.update {
                     it.copy(
                         busy = false,

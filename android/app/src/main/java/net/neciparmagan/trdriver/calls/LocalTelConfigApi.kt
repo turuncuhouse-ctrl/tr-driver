@@ -61,6 +61,42 @@ class LocalTelConfigApi(private val session: SessionStore) {
         }
     }
 
+    /** Fetches the zero-configuration account and its short-lived WS token. */
+    suspend fun fetchGatewayConfig(): Result<LocalTelConfig> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!hasSession()) error("TR Driver oturumu açık değil")
+            val req = authed("${baseUrl()}/api/localtel/config").get().build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) error(parseError(text))
+                val dto = json.decodeFromString(LocalTelConfigViewDto.serializer(), text)
+                val gateway = dto.gateway
+                if (gateway == null) {
+                    error("Sunucu otomatik arama hesabı sağlamadı")
+                }
+                LocalTelConfig(
+                    enabled = dto.enabled,
+                    providerType = LocalTelProviderType.GATEWAY,
+                    serverUrl = gateway.wssUrl,
+                    sipDomain = gateway.domain,
+                    sipPort = 443,
+                    transport = LocalTelTransport.WSS,
+                    username = gateway.username,
+                    extension = gateway.extension,
+                    displayName = dto.displayName,
+                    secret = gateway.secret,
+                    defaultCountryCode = dto.defaultCountryCode.ifBlank { "90" },
+                    autoRegister = true,
+                    syncToServer = true,
+                    gatewayToken = gateway.token,
+                    gatewayTokenExpiresAt = gateway.tokenExpiresAt?.let {
+                        runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrDefault(0L)
+                    } ?: 0L,
+                )
+            }
+        }
+    }
+
     suspend fun provisionConfig(): Result<LocalTelConfig> = withContext(Dispatchers.IO) {
         runCatching {
             if (!hasSession()) error("TR Driver oturumu açık değil")

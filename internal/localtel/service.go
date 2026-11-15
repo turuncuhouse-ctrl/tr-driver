@@ -76,6 +76,10 @@ type ConfigView struct {
 	AutoRegister       bool       `json:"autoRegister"`
 	HasSecret          bool       `json:"hasSecret"`
 	UpdatedAt          *time.Time `json:"updatedAt,omitempty"`
+	// Mode is "auto" (server-provisioned gateway account) or "manual".
+	Mode            string       `json:"mode"`
+	AutoProvisioned bool         `json:"autoProvisioned"`
+	Gateway         *GatewayView `json:"gateway,omitempty"`
 }
 
 // ConfigProvision includes the decrypted secret for authenticated device
@@ -102,15 +106,38 @@ type storedConfig struct {
 }
 
 type Service struct {
-	db    *pgxpool.Pool
-	vault *Vault
+	db            *pgxpool.Pool
+	vault         *Vault
+	domain        string
+	tokens        *TokenService
+	autoProvision bool
 }
 
 func NewService(db *pgxpool.Pool, vault *Vault) (*Service, error) {
 	if vault == nil {
 		return nil, errors.New("localtel encryption vault is required")
 	}
-	return &Service{db: db, vault: vault}, nil
+	return &Service{
+		db:            db,
+		vault:         vault,
+		tokens:        NewTokenService(vault, 15*time.Minute),
+		autoProvision: true,
+	}, nil
+}
+
+// Configure sets the public gateway domain, short-lived token TTL and whether
+// calling accounts are auto-provisioned. A zero token TTL keeps the default.
+func (s *Service) Configure(domain string, tokenTTL time.Duration, autoProvision bool) {
+	s.domain = strings.TrimSpace(domain)
+	if tokenTTL > 0 {
+		s.tokens = NewTokenService(s.vault, tokenTTL)
+	}
+	s.autoProvision = autoProvision
+}
+
+// autoProvisionEnabled reports whether new users get a server-side account.
+func (s *Service) autoProvisionEnabled() bool {
+	return s.autoProvision
 }
 
 func defaultView() *ConfigView {

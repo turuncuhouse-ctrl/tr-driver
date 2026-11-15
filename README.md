@@ -15,7 +15,7 @@ Kendi sunucunda çalışan, Google Drive’a para ödemeden dosya bulutu. Go + P
 - Yedekleme işlemi sunucunuzu çok yormayacak şekilde güvenli teker teker yapılmaktadır.
 - Sunucu işlemciniz düşükde olsa sunucunuzu dar boğaz yapmayacak şekilde yavaş ve tek tek yapmaktadır.
 - **Rehber + SMS yedeği (0.11.0):** Android istemci kişileri ve mesajları yalnız Wi‑Fi üzerinden, artımlı olarak yükler; sunucuda AES‑256‑GCM ile şifreli saklanır, geri yükleme listesi ve tek tıkla silme vardır. Kurulum: [`docs/PERSONAL_BACKUP.md`](docs/PERSONAL_BACKUP.md)
-- **LocalTel IP sesli arama (0.12.0):** Android içinde WhatsApp benzeri sesli arama (`SipLocalTelProvider` / `GatewayLocalTelProvider`), rehber eşleştirme, kilit ekranında sabit **Aç / Reddet** düğmeleri ve şifreli sunucu ayarı (`/api/localtel/*`). Ayrıntılar: [`docs/LOCALTEL_CALLING.md`](docs/LOCALTEL_CALLING.md)
+- **LocalTel IP sesli arama (0.13.0):** TR Driver alan adındaki WSS geçidinde sıfır yapılandırmalı çağrı hesabı, rehber eşleştirme ve kilit ekranında sabit **Aç / Reddet** düğmeleri. Türkçe izin sihirbazı ve geçici `ROLE_SMS` ile SMS yedeği geri yükleme. Ayrıntılar: [`docs/LOCALTEL_CALLING.md`](docs/LOCALTEL_CALLING.md)
 - **Sunucu yedekleri (3-2-1):** her gece şifreli + artımlı `restic` snapshot (veritabanı + dosyalar), S3 offsite replikasyonu, her çalışta geri-yükleme provası, admin paneli + webhook izleme. Kurulum: [`docs/BACKUP.md`](docs/BACKUP.md)
 
 ## Kota

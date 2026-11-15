@@ -59,9 +59,17 @@ func NewService(db *pgxpool.Pool, cfg config.Config, license LicenseGate) *Servi
 	}
 }
 
-func (s *Service) Register(ctx context.Context, email, password, displayName string) (*domain.User, string, error) {
+func (s *Service) Register(ctx context.Context, email, password, displayName string, phone ...string) (*domain.User, string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	displayName = strings.TrimSpace(displayName)
+	phoneNumber := ""
+	if len(phone) > 0 {
+		var phoneErr error
+		phoneNumber, phoneErr = normalizePhone(phone[0])
+		if phoneErr != nil {
+			return nil, "", phoneErr
+		}
+	}
 	if email == "" || password == "" || displayName == "" {
 		return nil, "", errors.New("email, password and display name are required")
 	}
@@ -104,14 +112,14 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 	quotaBytes := s.defaultQuotaBytes(ctx)
 	var user domain.User
 	err = tx.QueryRow(ctx, `
-		insert into users (email, password_hash, display_name, role, plan_code, quota_bytes)
+		insert into users (email, password_hash, display_name, phone, role, plan_code, quota_bytes)
 		values (
-			$1, $2, $3,
+			$1, $2, $3, $4,
 			case when exists(select 1 from users where role = 'admin') then 'user' else 'admin' end,
-			'free', $4
+			'free', $5
 		)
 		returning id::text, email, display_name, role, plan_code, quota_bytes, used_bytes, reserved_bytes, created_at, last_login_at`,
-		email, passwordHash, displayName, quotaBytes,
+		email, passwordHash, displayName, phoneNumber, quotaBytes,
 	).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.PlanCode, &user.QuotaBytes, &user.UsedBytes, &user.ReservedBytes, &user.CreatedAt, &user.LastLoginAt)
 	if err != nil {
 		return nil, "", err
