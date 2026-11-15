@@ -210,4 +210,22 @@ func TestLocalTelCallFlowEndToEnd(t *testing.T) {
 	if !foundB {
 		t.Fatal("directory should list B as online")
 	}
+
+	// Hashed contact discovery: only the registered phone of B matches.
+	body := `{"hashes":["` + localtel.ContactHash("+90 532 111 22 33") + `","` + localtel.ContactHash("05999999999") + `"]}`
+	mreq, _ := http.NewRequest(http.MethodPost, srv.URL+localtel.BasePath+"contacts/match", strings.NewReader(body))
+	mreq.Header.Set("Authorization", "Bearer "+tokens["a"])
+	mreq.Header.Set("Content-Type", "application/json")
+	mresp, err := http.DefaultClient.Do(mreq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mresp.Body.Close()
+	var matches []localtel.ContactMatch
+	if err := json.NewDecoder(mresp.Body).Decode(&matches); err != nil || mresp.StatusCode != 200 {
+		t.Fatalf("match: %d %v", mresp.StatusCode, err)
+	}
+	if len(matches) != 1 || matches[0].Extension != accts["b"].Extension || !matches[0].Online {
+		t.Fatalf("unexpected matches: %+v", matches)
+	}
 }

@@ -47,6 +47,9 @@ class ContactIndex internal constructor(
 ) {
     fun size(): Int = entries.size
 
+    /** Every phone number in the address book (for hashed TR Driver matching). */
+    fun allPhoneNumbers(): List<String> = entries.flatMap { e -> e.phones.map { it.rawNumber } }
+
     fun match(rawInput: String?, defaultCountryCode: String = "90"): ContactMatchResult? {
         val query = PhoneNumberNormalizer.normalize(rawInput, defaultCountryCode)
         if (!query.isDialable) return null

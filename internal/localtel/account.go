@@ -3,6 +3,7 @@ package localtel
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -370,6 +371,59 @@ func (s *Service) Directory(ctx context.Context, userID string) ([]DirectoryEntr
 			return nil, err
 		}
 		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ContactMatch is a member found through a hashed contact number.
+type ContactMatch struct {
+	Hash      string `json:"hash"`
+	Name      string `json:"name"`
+	Extension string `json:"extension"`
+	Online    bool   `json:"online"`
+	userID    string
+}
+
+// ContactHash is sha256 (hex) of the last 10 digits of a phone number; the app
+// sends these instead of raw contact numbers.
+func ContactHash(phone string) string {
+	d := normalizeDial(phone).digits
+	if len(d) < 10 {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(d[len(d)-10:]))
+	return hex.EncodeToString(sum[:])
+}
+
+// MatchContacts returns the members (other than the caller) whose registered
+// phone hashes to one of the given values.
+func (s *Service) MatchContacts(ctx context.Context, userID string, hashes []string) ([]ContactMatch, error) {
+	if s.db == nil {
+		return nil, errors.New("localtel database is unavailable")
+	}
+	want := make(map[string]struct{}, len(hashes))
+	for _, h := range hashes {
+		want[strings.ToLower(strings.TrimSpace(h))] = struct{}{}
+	}
+	rows, err := s.db.Query(ctx, `
+		select u.phone, coalesce(nullif(a.display_name, ''), nullif(u.display_name, ''), split_part(u.email, '@', 1)), a.extension, a.user_id::text
+		from localtel_accounts a join users u on u.id = a.user_id
+		where a.user_id <> $1::uuid and length(u.phone) >= 10`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ContactMatch{}
+	for rows.Next() {
+		var phone string
+		var m ContactMatch
+		if err := rows.Scan(&phone, &m.Name, &m.Extension, &m.userID); err != nil {
+			return nil, err
+		}
+		m.Hash = ContactHash(phone)
+		if _, ok := want[m.Hash]; ok {
+			out = append(out, m)
+		}
 	}
 	return out, rows.Err()
 }

@@ -8,6 +8,8 @@
 - Davet, karşı kullanıcının tüm açık oturumlarında çalar.
 
 ### Added
+- WhatsApp tarzı rehber eşleşmesi: rehber yüklenince numaralar (son 10 hane, SHA-256 hash'li) sunucuyla eşleştirilir (`POST /api/localtel/contacts/match`), TR Driver kullanan kişiler listede "✔ TR Driver" ile işaretlenir ve rehberden aranınca doğru hesaba gider. Eşleşmeyen numara için "Bu numara kimin?" seçimi (bir kez, kalıcı) veya "TR Driver kullanmıyor" mesajı.
+- Kendi numaranı girmek ilk açılışta zorunlu tek adım (SIM'den öneri, izin varsa); kayıtlı numara yoksa Ana ekran ve Aramalar bu adımı sorar.
 - Aramalar ekranında "TR Driver kullanıcıları" listesi (`GET /api/localtel/directory`, ad + dahili + çevrimiçi durumu); numara bilmeden tek dokunuşla arama.
 - İki sahte WS istemcili uçtan uca entegrasyon testi (davet/çalıyor/kabul/ses/kapat, çoklu oturum, meşgul, çevrimdışı, bulunamadı, bayat durum).
 

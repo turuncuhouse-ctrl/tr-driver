@@ -350,7 +350,7 @@ class GatewayLocalTelProvider(
                         "unknown_target", "caller_unprovisioned" -> _events.tryEmit(
                             CallProviderEvent.CallError(
                                 msg.callId, CallEndReason.NOT_FOUND,
-                                "Bulunamadı: bu numara kayıtlı bir TR Driver kullanıcısına ait değil. " +
+                                "Bulunamadı: bu kişi TR Driver kullanmıyor ya da numarasını kaydetmemiş. " +
                                     "Aramalar ekranındaki \"TR Driver kullanıcıları\" listesinden arayın.",
                             ),
                         )

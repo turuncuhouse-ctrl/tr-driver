@@ -76,6 +76,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Cache-Control", "no-store, private")
 		httpx.WriteJSON(w, http.StatusOK, list)
+	case "contacts/match":
+		if r.Method != http.MethodPost {
+			httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !h.limiter.allow("match:" + user.ID) {
+			w.Header().Set("Retry-After", "60")
+			httpx.Error(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
+		var in struct {
+			Hashes []string `json:"hashes"`
+		}
+		if err := httpx.ReadJSON(r, &in); err != nil || len(in.Hashes) > 5000 {
+			httpx.Error(w, http.StatusBadRequest, "invalid request")
+			return
+		}
+		matches, err := h.service.MatchContacts(r.Context(), user.ID, in.Hashes)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		for i := range matches {
+			matches[i].Online = h.hub.ConnectedCount(matches[i].userID) > 0
+		}
+		w.Header().Set("Cache-Control", "no-store, private")
+		httpx.WriteJSON(w, http.StatusOK, matches)
 	case "phone":
 		h.handlePhone(w, r, user.ID)
 	case "signal":
