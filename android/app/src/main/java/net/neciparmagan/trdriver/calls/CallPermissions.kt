@@ -56,6 +56,19 @@ object CallPermissions {
             .show()
     }
 
+    fun showContactsExplanation(activity: Activity, onAccept: () -> Unit) {
+        AlertDialog.Builder(activity)
+            .setTitle("Rehber izni")
+            .setMessage(
+                "Gelen ve giden LocalTel aramalarında arayan kişinin adını gösterebilmek ve " +
+                    "kayıtlı kişilerinizi buradan arayabilmek için rehber erişimi gereklidir. " +
+                    "Rehberiniz arama amacıyla sunucuya gönderilmez.",
+            )
+            .setPositiveButton("İzin ver") { _, _ -> onAccept() }
+            .setNegativeButton("Şimdi değil", null)
+            .show()
+    }
+
     fun showFullScreenIntentExplanation(activity: Activity, onAccept: () -> Unit) {
         AlertDialog.Builder(activity)
             .setTitle("Kilit ekranında gelen arama")

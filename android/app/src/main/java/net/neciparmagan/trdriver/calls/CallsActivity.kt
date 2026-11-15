@@ -225,7 +225,7 @@ class CallsActivity : AppCompatActivity() {
             }
         }
         btnFixContactsPerm.setOnClickListener {
-            CommsAccess.showContactsExplanation(this) {
+            CallPermissions.showContactsExplanation(this) {
                 contactsPermLauncher.launch(Manifest.permission.READ_CONTACTS)
             }
         }
@@ -283,7 +283,7 @@ class CallsActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnRefreshContacts).setOnClickListener {
             if (!CommsAccess.hasContactsAccess(this)) {
-                CommsAccess.showContactsExplanation(this) {
+                CallPermissions.showContactsExplanation(this) {
                     contactsPermLauncher.launch(Manifest.permission.READ_CONTACTS)
                 }
             } else {

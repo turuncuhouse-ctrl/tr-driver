@@ -262,6 +262,7 @@ class SipLocalTelProvider(private val context: Context) : LocalTelCallProvider {
                 engine.start(remote.ip, remote.port, pt)
             }
             _events.tryEmit(CallProviderEvent.CallConnected(callId))
+            Unit
         }
     }
 

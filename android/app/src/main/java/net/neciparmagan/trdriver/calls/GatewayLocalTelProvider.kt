@@ -220,6 +220,7 @@ class GatewayLocalTelProvider(
             )
             startAudioBridge(callId)
             _events.tryEmit(CallProviderEvent.CallConnected(callId))
+            Unit
         }
     }
 

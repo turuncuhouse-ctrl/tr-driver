@@ -1,5 +1,6 @@
 package net.neciparmagan.trdriver.calls
 
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
@@ -85,6 +86,7 @@ object TelecomHelper {
         }.getOrDefault(false)
     }
 
+    @SuppressLint("MissingPermission")
     fun reportOutgoingCall(
         context: Context,
         callId: String,
