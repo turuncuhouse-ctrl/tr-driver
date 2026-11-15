@@ -89,6 +89,10 @@
             android:exported="false"
             android:theme="@style/Theme.TRDriver" />
         <activity
+            android:name=".SharedSpaceActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TRDriver" />
+        <activity
             android:name=".PhotosLibraryActivity"
             android:exported="true"
             android:icon="@drawable/ic_gallery_app"

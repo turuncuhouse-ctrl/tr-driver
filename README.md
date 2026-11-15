@@ -16,6 +16,7 @@ Kendi sunucunda çalışan, Google Drive’a para ödemeden dosya bulutu. Go + P
 - Sunucu işlemciniz düşükde olsa sunucunuzu dar boğaz yapmayacak şekilde yavaş ve tek tek yapmaktadır.
 - **Rehber + SMS yedeği (0.11.0):** Android istemci kişileri ve mesajları yalnız Wi‑Fi üzerinden, artımlı olarak yükler; sunucuda AES‑256‑GCM ile şifreli saklanır, geri yükleme listesi ve tek tıkla silme vardır. Kurulum: [`docs/PERSONAL_BACKUP.md`](docs/PERSONAL_BACKUP.md)
 - **LocalTel IP sesli arama (0.13.0):** TR Driver alan adındaki WSS geçidinde sıfır yapılandırmalı çağrı hesabı, rehber eşleştirme ve kilit ekranında sabit **Aç / Reddet** düğmeleri. Türkçe izin sihirbazı ve geçici `ROLE_SMS` ile SMS yedeği geri yükleme. Ayrıntılar: [`docs/LOCALTEL_CALLING.md`](docs/LOCALTEL_CALLING.md)
+- **Ortak Paylaşım + torrent (0.14.0):** sunucudaki bir klasör (`/data/paylasim`) yöneticinin klasör bazında izin verdiği kullanıcı ve gruplarla paylaşılır; parolalı, süreli ve indirme sınırlı herkese açık bağlantılar, alan kotası ve doluluk uyarısı, yöneticiye özel magnet/`.torrent` indirme. Web ve Android. Kurulum ve yükseltme notları: [`docs/SHARED_SPACE.md`](docs/SHARED_SPACE.md)
 - **Sunucu yedekleri (3-2-1):** her gece şifreli + artımlı `restic` snapshot (veritabanı + dosyalar), S3 offsite replikasyonu, her çalışta geri-yükleme provası, admin paneli + webhook izleme. Kurulum: [`docs/BACKUP.md`](docs/BACKUP.md)
 
 ## Kota
@@ -59,6 +60,9 @@ Compose dosyaları **secret hardcode etmez**. Şunları ortam değişkeni olarak
 - `DEVICE_TOKEN_TTL=0` (cihaz/Android oturumu süresiz; iptal veya şifre sıfırlama ile biter)
 - `PERSONAL_BACKUP_KEY` (rehber/SMS yedeğinin sunucudaki şifreleme anahtarı; boşsa `SESSION_SECRET` kullanılır)
 - `LOCAL_TEL_KEY` (LocalTel SIP/gateway ayarlarının sunucudaki şifreleme anahtarı; boşsa `PERSONAL_BACKUP_KEY` / `SESSION_SECRET` kullanılır)
+- `SHARED_QUOTA_BYTES`, `SHARED_LINK_MAX_TTL`, `TORRENT_ENABLED`, `TORRENT_LISTEN_PORT`, `TORRENT_*_LIMIT_KBPS` (Ortak Paylaşım ve torrent; tam liste [`docs/SHARED_SPACE.md`](docs/SHARED_SPACE.md))
+
+**0.14.0'a yükseltme:** Compose dosyaları artık `/data/paylasim` volume'unu ve torrent portunu (42069 TCP+UDP) içerir. Stack'i güncellemeden önce sunucuda klasörü oluşturun (`mkdir -p /mnt/1tb_disk/necipdrive/paylasim && chown 1000:1000 /mnt/1tb_disk/necipdrive/paylasim`). Bu klasör yerleşik sunucu yedeğine dahil değildir.
 
 Örnek merkezi güncelleme manifest’i: [`docs/update-manifest.example.json`](docs/update-manifest.example.json)
 

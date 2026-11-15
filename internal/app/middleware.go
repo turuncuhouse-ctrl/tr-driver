@@ -13,13 +13,31 @@ import (
 	"strings"
 
 	"necipdrive/internal/httpx"
+	"necipdrive/internal/sharedspace"
 )
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
+		log.Printf("%s %s", r.Method, loggablePath(r.URL.Path))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loggablePath is the request path with bearer secrets removed. A public share
+// link is its token: whoever reads it in a log can open the share. Query
+// strings are never logged at all.
+func loggablePath(path string) string {
+	for _, prefix := range []string{"/s/", sharedspace.PublicPrefix} {
+		rest, ok := strings.CutPrefix(path, prefix)
+		if !ok || rest == "" {
+			continue
+		}
+		if _, tail, found := strings.Cut(rest, "/"); found {
+			return prefix + "[redacted]/" + tail
+		}
+		return prefix + "[redacted]"
+	}
+	return path
 }
 
 func csrfMiddleware(next http.Handler, secret string, trusted ...netip.Prefix) http.Handler {
@@ -40,7 +58,9 @@ func csrfMiddleware(next http.Handler, secret string, trusted ...netip.Prefix) h
 			next.ServeHTTP(cw, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/dav") {
+		// Public share pages have no session to protect; their only POST is the
+		// password form, which is rate limited by the handler.
+		if strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, sharedspace.PublicPrefix) || strings.HasPrefix(r.URL.Path, "/dav") {
 			next.ServeHTTP(cw, r)
 			return
 		}

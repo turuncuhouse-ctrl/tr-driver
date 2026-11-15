@@ -22,11 +22,14 @@ export function CollabSidebar(props: {
   setView: (v: string) => void;
   drives: Drive[];
   unread: number;
+  // Shown only to people who were granted something in the server-wide folder.
+  showSharedSpace?: boolean;
 }) {
   const items = [
     { id: "files", label: "Dosyalarım" },
     { id: "shared", label: "Benimle paylaşılan" },
     { id: "drives", label: "Ortak alanlar" },
+    ...(props.showSharedSpace ? [{ id: "paylasim", label: "Ortak Paylaşım" }] : []),
     { id: "starred", label: "Yıldızlı" },
     { id: "recent", label: "Son görüntülenen" },
     { id: "trash", label: "Çöp kutusu" },

@@ -1,5 +1,6 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AdminPanel } from "./AdminPanel";
+import { SharedSpacePanel, SharedStatus } from "./SharedSpace";
 import {
   ActivityPanel,
   CollabSidebar,
@@ -159,6 +160,7 @@ export function App() {
   const [form, setForm] = useState({ email: "", password: "", displayName: "" });
   const [drives, setDrives] = useState<{ id: string; kind: string; name: string; rootEntryId: string; myRole?: string }[]>([]);
   const [unread, setUnread] = useState(0);
+  const [sharedSpaceVisible, setSharedSpaceVisible] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [shareTarget, setShareTarget] = useState<FileEntry | null>(null);
   const [detailEntry, setDetailEntry] = useState<FileEntry | null>(null);
@@ -240,6 +242,21 @@ export function App() {
     void bootstrap();
     applyTheme(readStoredTheme());
   }, []);
+
+  // "Ortak Paylaşım" appears in the menu only for people who were granted
+  // something in it (administrators always are).
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) {
+      setSharedSpaceVisible(false);
+      return;
+    }
+    let cancelled = false;
+    request<SharedStatus>("/api/shared/status")
+      .then((status) => { if (!cancelled) setSharedSpaceVisible(!!status.access?.available && !status.unavailable); })
+      .catch(() => { if (!cancelled) setSharedSpaceVisible(false); });
+    return () => { cancelled = true; };
+  }, [userId]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -987,6 +1004,7 @@ export function App() {
           }}
           drives={drives}
           unread={unread}
+          showSharedSpace={sharedSpaceVisible}
         />
         <nav>
           {user.role === "admin" && (
@@ -1043,6 +1061,8 @@ export function App() {
             onMessage={setMessage}
             onCurrentUserChanged={refreshUser}
           />
+        ) : view === "paylasim" ? (
+          <SharedSpacePanel request={request} />
         ) : view === "drives" ? (
           <DrivesPanel request={request} onOpenFolder={openDriveRoot} />
         ) : view === "trash" ? (

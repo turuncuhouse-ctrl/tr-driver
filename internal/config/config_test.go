@@ -54,3 +54,88 @@ func TestLocalTelKeyDefaultsAndRejectsShortExplicitValue(t *testing.T) {
 		t.Fatal("expected short LOCAL_TEL_KEY to be rejected")
 	}
 }
+
+func setRequired(t *testing.T) {
+	t.Helper()
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db?sslmode=disable")
+	t.Setenv("SESSION_SECRET", "session-secret-for-shared-space-tests")
+	for _, key := range []string{"SHARED_DIR", "SHARED_QUOTA_BYTES", "SHARED_QUOTA_WARN_PERCENT", "SHARED_LINK_MAX_TTL",
+		"TORRENT_ENABLED", "TORRENT_LISTEN_PORT", "TORRENT_DOWNLOAD_LIMIT_KBPS", "TORRENT_UPLOAD_LIMIT_KBPS",
+		"TORRENT_SEED_AFTER_COMPLETE", "TORRENT_DISABLE_DHT"} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestSharedSpaceDefaults(t *testing.T) {
+	setRequired(t)
+	t.Setenv("DATA_DIR", "/data/files")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SharedDir != "/data/paylasim" {
+		t.Fatalf("SharedDir = %q, want /data/paylasim (a sibling of DATA_DIR)", cfg.SharedDir)
+	}
+	if cfg.SharedQuotaBytes != 0 || cfg.SharedQuotaWarnPercent != 90 || cfg.SharedLinkMaxTTL.Hours() != 720 {
+		t.Fatalf("shared defaults = %d / %d / %v", cfg.SharedQuotaBytes, cfg.SharedQuotaWarnPercent, cfg.SharedLinkMaxTTL)
+	}
+	if !cfg.TorrentEnabled || cfg.TorrentListenPort != 42069 || cfg.TorrentDownloadLimitKBps != 0 || cfg.TorrentUploadLimitKBps != 0 ||
+		cfg.TorrentSeedAfterComplete || cfg.TorrentDisableDHT {
+		t.Fatalf("torrent defaults = %+v", cfg)
+	}
+}
+
+func TestSharedDirMustNotOverlapDataDir(t *testing.T) {
+	for _, tc := range []struct{ data, shared string }{
+		{"/data/files", "/data/files"},
+		{"/data/files", "/data/files/paylasim"},
+		{"/data/files", "/data/files/../files/x"},
+		{"/data/files/blobs", "/data/files"},
+		{"/data/files", "/data"},
+		{"/data/files", "/"},
+	} {
+		setRequired(t)
+		t.Setenv("DATA_DIR", tc.data)
+		t.Setenv("SHARED_DIR", tc.shared)
+		if _, err := Load(); err == nil {
+			t.Errorf("DATA_DIR=%s SHARED_DIR=%s was accepted", tc.data, tc.shared)
+		}
+	}
+	// A name that merely starts the same is a different directory.
+	setRequired(t)
+	t.Setenv("DATA_DIR", "/data/files")
+	t.Setenv("SHARED_DIR", "/data/files-ortak")
+	if cfg, err := Load(); err != nil || cfg.SharedDir != "/data/files-ortak" {
+		t.Fatalf("sibling with a common prefix: %v", err)
+	}
+}
+
+func TestSharedSpaceSettingsAreValidated(t *testing.T) {
+	for key, value := range map[string]string{
+		"SHARED_QUOTA_WARN_PERCENT":   "100",
+		"SHARED_LINK_MAX_TTL":         "-1h",
+		"TORRENT_LISTEN_PORT":         "70000",
+		"TORRENT_DOWNLOAD_LIMIT_KBPS": "-5",
+		"TORRENT_UPLOAD_LIMIT_KBPS":   "-5",
+	} {
+		setRequired(t)
+		t.Setenv("DATA_DIR", "/data/files")
+		t.Setenv(key, value)
+		if _, err := Load(); err == nil {
+			t.Errorf("%s=%s was accepted", key, value)
+		}
+	}
+	setRequired(t)
+	t.Setenv("DATA_DIR", "/data/files")
+	t.Setenv("SHARED_QUOTA_BYTES", "53687091200")
+	t.Setenv("TORRENT_ENABLED", "false")
+	t.Setenv("TORRENT_DOWNLOAD_LIMIT_KBPS", "2048")
+	t.Setenv("TORRENT_SEED_AFTER_COMPLETE", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SharedQuotaBytes != 53687091200 || cfg.TorrentEnabled || cfg.TorrentDownloadLimitKBps != 2048 || !cfg.TorrentSeedAfterComplete {
+		t.Fatalf("explicit settings not applied: %+v", cfg)
+	}
+}

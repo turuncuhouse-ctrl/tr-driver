@@ -734,6 +734,7 @@ class MainActivity : AppCompatActivity() {
                 menu.add(0, 11, 7, "Fotoğraf ekle · $plate")
             }
             menu.add(0, 10, 8, "Araç kabul")
+            menu.add(0, 17, 9, "Ortak Paylaşım")
             menu.add(0, 12, 9, "TR Photos")
             menu.add(0, 15, 10, "LocalTel Aramalar")
             menu.add(0, 7, 11, "Yedekleme ayarları")
@@ -773,6 +774,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     10 -> openVehicleIntake()
+                    17 -> startActivity(Intent(this@MainActivity, SharedSpaceActivity::class.java))
                     12 -> startActivity(Intent(this@MainActivity, PhotosLibraryActivity::class.java))
                     15 -> startActivity(Intent(this@MainActivity, CallsActivity::class.java))
                     7 -> startActivity(Intent(this@MainActivity, BackupSettingsActivity::class.java))
