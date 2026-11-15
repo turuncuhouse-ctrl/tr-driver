@@ -14,3 +14,25 @@ func TestParseTrustedProxies(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestPersonalBackupKeyDefaultsToSessionSecret(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db?sslmode=disable")
+	t.Setenv("SESSION_SECRET", "session-secret-for-personal-backup-tests")
+	t.Setenv("PERSONAL_BACKUP_KEY", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.PersonalBackupKey != cfg.SessionSecret {
+		t.Fatalf("personal backup key should fall back to the session secret, got %q", cfg.PersonalBackupKey)
+	}
+}
+
+func TestPersonalBackupKeyRejectsShortExplicitValue(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db?sslmode=disable")
+	t.Setenv("SESSION_SECRET", "session-secret-for-personal-backup-tests")
+	t.Setenv("PERSONAL_BACKUP_KEY", "short")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected a short PERSONAL_BACKUP_KEY to be rejected")
+	}
+}

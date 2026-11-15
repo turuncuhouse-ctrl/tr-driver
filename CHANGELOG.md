@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.11.0 — Rehber ve SMS yedeği (şifreli, Wi‑Fi, artımlı)
+
+### Added
+- Android rehber yedeği (`READ_CONTACTS`): ad, telefon, e‑posta, adres, kurum, not, takma ad, doğum günü, web sitesi ve yıldız bilgisi
+- Android SMS yedeği (`READ_SMS`): numara, mesaj metni, tarih, tür, okundu bilgisi ve thread kimliği
+- İzinler her zaman açıklama diyaloğuyla istenir (ne okunuyor, neden, nerede saklanıyor, nasıl kapatılır); ayarlardan rehber ve SMS anahtarları ayrı ayrı açılıp kapatılabilir
+- Sunucu API'si: `GET /api/personal-backup/status`, `GET|POST|DELETE /api/personal-backup/{contacts,sms}` (artımlı senkron, geri yükleme listesi, tek tıkla silme)
+- Kişisel veriler sunucuda AES‑256‑GCM ile şifreli saklanır; satır anahtarı HMAC tabanlı kör indekstir, şifre çözme kullanıcı + tür bağlıdır
+- Android ayarlarına "Sunucudaki rehber/SMS yedeğini sil" düğmesi ve tür başına son eşitleme durumu
+
+### Changed
+- Yedek türleri artık rehber ve SMS'i de kapsar; arka plan servisi ve WorkManager yedeği aynı Wi‑Fi penceresinde medya → rehber → SMS sırasıyla çalışır
+- Rehber/SMS gönderimi küçük partiler hâlinde ve aralarda bekleme ile yapılır; mevcut yükleme hız sınırı ve Wi‑Fi zorunluluğu aynen korunur
+- Artımlı çalışma: değişmeyen kayıtlar içerik hash'i ile atlanır, silinenler yalnızca tam tarama sonrası bildirilir
+- Sunucu kopyası eksikse (başka cihazdan silinmiş ya da geri yüklenmiş veritabanı) uygulama bunu altı saatte bir fark eder ve kayıtları kendiliğinden yeniden yükler
+
+### Security
+- Kişisel veri (PII) günlüklere yazılmaz; API hataları istek gövdesini yansıtmaz
+- Tüm uç noktalar oturum/cihaz token'ı ister ve yalnızca çağıranın kendi kayıtlarını döndürür; yazma uçlarında kullanıcı başına hız sınırı vardır
+- Gövde boyutu ve kayıt boyutu sunucu tarafında sınırlandırılır (4 MiB istek, 16 KiB kişi, 64 KiB SMS)
+- `PERSONAL_BACKUP_KEY` ile şifreleme anahtarı `SESSION_SECRET`'ten ayrılabilir; boşsa oturum sırrı türetilir
+
 ## 0.10.0 — Tüm dosya türü yedeği, artımlı yükleme ve güçlü güncelleme
 
 ### Added

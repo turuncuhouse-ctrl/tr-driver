@@ -90,7 +90,31 @@ jobs:
           ./gradlew assembleDebug --no-daemon
       - name: Run Android unit tests
         working-directory: android
-        run: ./gradlew testDebugUnitTest --no-daemon
+        shell: bash
+        run: |
+          set +e
+          ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee /tmp/android-test.log
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "$code" -ne 0 ]; then
+            # Surface the failing lines as annotations: the raw log is often
+            # unreadable in the web UI and a compile error hides the test name.
+            grep -E -- '^e: |error: |FAILED|AssertionError|expected:|Caused by|Execution failed' /tmp/android-test.log \
+              | head -40 | while IFS= read -r line; do
+                echo "::error title=Android unit test failure::$line"
+              done
+            if compgen -G "app/build/test-results/testDebugUnitTest/*.xml" > /dev/null; then
+              grep -h -o '<failure message="[^"]\{0,300\}" type="[^"]*"' app/build/test-results/testDebugUnitTest/*.xml \
+                | head -20 | while IFS= read -r line; do
+                  echo "::error title=Android test assertion::$line"
+                done
+              grep -h -o 'testsuite name="[^"]*" tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' \
+                app/build/test-results/testDebugUnitTest/*.xml | head -20 | while IFS= read -r line; do
+                  echo "::notice title=Android test suite::$line"
+                done
+            fi
+            exit "$code"
+          fi
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v7
         with:

@@ -50,7 +50,7 @@ class GalleryBackupWorker(
             }
         }
 
-        safeSetForeground("TR Driver yedekleme…")
+        safeSetForeground("TR Driver yedekleme (medya · rehber · SMS)…")
         return try {
             if (session.galleryBackupEnabled) {
                 val result = GalleryBackupEngine.runBatch(
@@ -60,6 +60,16 @@ class GalleryBackupWorker(
                 session.lastBackupHeartbeatAt = System.currentTimeMillis()
                 if (result.scheduleContinue && session.galleryBackupEnabled) {
                     BackupController.scheduleContinue(app, result.continueDelaySec)
+                }
+            }
+            if (session.anyCommsBackupEnabled()) {
+                // Same Wi-Fi window, same bounded budget: the fallback worker
+                // must also push contacts / SMS or those switches would only
+                // work while the foreground service happens to be alive.
+                val comms = PersonalBackupEngine.runBatch(app, isStopped = { isStopped })
+                session.lastBackupHeartbeatAt = System.currentTimeMillis()
+                if (comms.morePending) {
+                    BackupController.scheduleContinue(app, 5L)
                 }
             }
             Result.success()

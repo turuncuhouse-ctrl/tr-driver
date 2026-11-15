@@ -579,6 +579,13 @@ func UserFromContext(ctx context.Context) *domain.User {
 	return user
 }
 
+// WithUser injects an authenticated user into the context. It exists for tests
+// that exercise handlers below RequireAuth without a live session lookup; the
+// auth middleware remains the only production caller of the private key.
+func WithUser(ctx context.Context, user *domain.User) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
+}
+
 func WithDevice(ctx context.Context, deviceID string) context.Context {
 	return context.WithValue(ctx, deviceContextKey, deviceID)
 }

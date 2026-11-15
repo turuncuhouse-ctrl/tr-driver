@@ -9,9 +9,9 @@ class TrDriverApp : Application() {
     override fun onCreate() {
         super.onCreate()
         val session = SessionStore(this)
-        // Automatic backup stays Wi-Fi-only; mobile data never used silently.
+        // Automatic backup (media, contacts, SMS) stays Wi-Fi-only; mobile data
+        // is never used silently.
         session.wifiOnlyBackup = true
-        session.disableCommsBackup()
 
         WifiBackupWatcher.start(this)
 

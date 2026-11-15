@@ -34,7 +34,11 @@ type Config struct {
 	UpdateManifestURL    string
 	UpdateChannel        string
 	LicenseVendorMode    bool
-	TrustedProxies       []netip.Prefix
+	// PII at-rest encryption key for contacts/SMS backup. Falls back to
+	// SessionSecret; set it explicitly so rotating the session secret does not
+	// make already stored personal records unreadable.
+	PersonalBackupKey string
+	TrustedProxies    []netip.Prefix
 	// Backup subsystem (see internal/backup + docs/BACKUP.md).
 	BackupEnabled       bool
 	BackupDir           string
@@ -86,6 +90,7 @@ func Load() (Config, error) {
 		UpdateManifestURL:    getEnv("UPDATE_MANIFEST_URL", ""),
 		UpdateChannel:        getEnv("UPDATE_CHANNEL", "stable"),
 		LicenseVendorMode:    getEnvBool("LICENSE_VENDOR_MODE", false),
+		PersonalBackupKey:    getEnv("PERSONAL_BACKUP_KEY", ""),
 		// Defaults mirror internal/backup Default* constants.
 		BackupEnabled:       getEnvBool("BACKUP_ENABLED", true),
 		BackupDir:           getEnv("BACKUP_DIR", "./backups/restic"),
@@ -120,6 +125,12 @@ func Load() (Config, error) {
 	}
 	if len(cfg.SessionSecret) < 16 {
 		return Config{}, fmt.Errorf("SESSION_SECRET must be at least 16 characters")
+	}
+	if cfg.PersonalBackupKey == "" {
+		cfg.PersonalBackupKey = cfg.SessionSecret
+	}
+	if len(cfg.PersonalBackupKey) < 16 {
+		return Config{}, fmt.Errorf("PERSONAL_BACKUP_KEY must be at least 16 characters")
 	}
 	if cfg.AppEnv == "production" {
 		if cfg.SessionSecret == "change-me" || strings.Contains(strings.ToLower(cfg.SessionSecret), "degistir") {

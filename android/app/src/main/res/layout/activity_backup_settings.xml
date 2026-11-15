@@ -77,6 +77,50 @@
                 android:text="Belgeler ve dosyalar (pdf, doc, xls, zip, apk…)"
                 android:textColor="@color/tr_ink" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Rehber ve SMS yedeği"
+                android:textColor="@color/tr_ink"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/commsHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Kişiler ve SMS’ler yalnızca Wi‑Fi bağlıyken, şifreli olarak kendi sunucunuza yedeklenir. İzinler açıklama diyaloğuyla istenir; istediğiniz an kapatabilirsiniz. Artımlı çalışır: değişmeyen kayıtlar tekrar yüklenmez."
+                android:textColor="@color/tr_ink"
+                android:textSize="12sp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchContactsBackup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Rehber (kişiler)"
+                android:textColor="@color/tr_ink" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchSmsBackup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="SMS mesajları"
+                android:textColor="@color/tr_ink" />
+
+            <TextView
+                android:id="@+id/commsStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/tr_ink"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnPurgeComms"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Sunucudaki rehber/SMS yedeğini sil" />
+
             <com.google.android.material.switchmaterial.SwitchMaterial
                 android:id="@+id/switchAllFilesAccess"
                 android:layout_width="match_parent"

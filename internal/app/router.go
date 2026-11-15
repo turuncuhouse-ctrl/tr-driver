@@ -17,6 +17,7 @@ import (
 	"necipdrive/internal/license"
 	"necipdrive/internal/loadpace"
 	"necipdrive/internal/mailer"
+	"necipdrive/internal/personalbackup"
 	"necipdrive/internal/plans"
 	"necipdrive/internal/shares"
 	"necipdrive/internal/syncapi"
@@ -41,6 +42,7 @@ func NewRouter(
 	mailService *mailer.Service,
 	pace *loadpace.Controller,
 	backupService *backup.Service,
+	personalService *personalbackup.Service,
 ) (http.Handler, error) {
 	mux := http.NewServeMux()
 
@@ -57,6 +59,7 @@ func NewRouter(
 	licenseHandler := license.NewHandler(licenseService)
 	updateHandler := updates.NewHandler(updates.Config{ManifestURL: cfg.UpdateManifestURL, Channel: cfg.UpdateChannel})
 	backupHandler := backup.NewHandler(backupService)
+	personalHandler := personalbackup.NewHandler(personalService)
 	davHandler := webdavx.New(authService, fileService, cfg.TrustedProxies)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +125,9 @@ func NewRouter(
 	mux.Handle("/api/notifications", authHandler.RequireAuth(http.HandlerFunc(collabHandler.Notifications)))
 	mux.Handle("/api/drives", authHandler.RequireAuth(http.HandlerFunc(driveHandler.ListOrCreate)))
 	mux.Handle("/api/drives/", authHandler.RequireAuth(http.HandlerFunc(driveHandler.Drive)))
+	// Personal insurance backup (contacts / SMS). Encrypted at rest, scoped to
+	// the authenticated user; the handler validates kind and payload.
+	mux.Handle(personalbackup.BasePath, authHandler.RequireAuth(personalHandler))
 	mux.Handle("/api/sync/snapshot", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Snapshot)))
 	mux.Handle("/api/sync/changes", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Changes)))
 	mux.Handle("/api/sync/folders", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Folder)))
