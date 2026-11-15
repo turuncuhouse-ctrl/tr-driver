@@ -515,7 +515,10 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             LocalTelConfigApi(session).fetchGatewayConfig().onSuccess { config ->
                 session.saveLocalTelConfig(config)
-                CallController.ensureProviderStarted(this@MainActivity, forceRestart = true)
+                // Do not tear down a healthy socket every time the app opens.
+                val registered = CallController.providerStatus.value.state ==
+                    net.neciparmagan.trdriver.calls.ProviderRegistrationState.REGISTERED
+                CallController.ensureProviderStarted(this@MainActivity, forceRestart = !registered)
                 LocalTelListenerService.syncState(this@MainActivity)
             }
         }

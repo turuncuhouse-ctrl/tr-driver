@@ -447,6 +447,13 @@ object CallController {
             address,
             party.displayName,
         )
+        // Post the full-screen incoming notification directly as well, so the
+        // call still shows on a locked/idle phone even if starting the call
+        // foreground service from the background is refused by the system.
+        runCatching {
+            val nm = context.getSystemService(android.app.NotificationManager::class.java)
+            nm?.notify(CallNotifications.CALL_NOTIFICATION_ID, CallNotifications.buildCallNotification(context, res.state))
+        }
         TrCallService.sync(context)
         // Always attempt to present lock-screen UI immediately; fullScreenIntent
         // on TrCallService handles locked devices on Android 10+.

@@ -239,6 +239,33 @@ class CallsActivity : AppCompatActivity() {
             layoutAdvancedLocalTel.visibility = if (show) View.VISIBLE else View.GONE
             btnAdvancedLocalTel.text = if (show) "Gelişmiş ayarları gizle" else "Gelişmiş ayarları göster"
         }
+        val etMyPhone = findViewById<EditText>(R.id.etMyPhone)
+        val tvMyExtension = findViewById<TextView>(R.id.tvMyExtension)
+        fun showMyPhone(result: Result<Pair<String, String>>) {
+            result.onSuccess { (phone, ext) ->
+                tvMyExtension.text = if (ext.isBlank()) "Dahili numaram: -" else "Dahili numaram: $ext"
+                if (phone.isNotBlank() && etMyPhone.text.isNullOrBlank()) etMyPhone.setText("+$phone")
+            }
+        }
+        if (configApi.hasSession()) {
+            lifecycleScope.launch { showMyPhone(configApi.getMyPhone()) }
+        }
+        findViewById<Button>(R.id.btnSaveMyPhone).setOnClickListener {
+            val typed = etMyPhone.text?.toString().orEmpty()
+            lifecycleScope.launch {
+                configApi.setMyPhone(typed).onSuccess { (phone, ext) ->
+                    showMyPhone(Result.success(phone to ext))
+                    etMyPhone.setText(if (phone.isBlank()) "" else "+$phone")
+                    Toast.makeText(
+                        this@CallsActivity,
+                        if (phone.isBlank()) "Numara silindi" else "Numaran kaydedildi; artık seni numaranla arayabilirler",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }.onFailure {
+                    Toast.makeText(this@CallsActivity, it.message ?: "Numara kaydedilemedi", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         findViewById<Button>(R.id.btnReconnectLocalTel).setOnClickListener {
             reconnectLocalTel()
         }

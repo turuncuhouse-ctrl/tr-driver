@@ -47,7 +47,7 @@ class LocalTelListenerService : Service() {
                     this,
                     CallNotifications.LISTENER_NOTIFICATION_ID,
                     notif,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
                 )
             }.onFailure {
                 startForeground(CallNotifications.LISTENER_NOTIFICATION_ID, notif)
@@ -56,6 +56,7 @@ class LocalTelListenerService : Service() {
             startForeground(CallNotifications.LISTENER_NOTIFICATION_ID, notif)
         }
 
+        acquireLocks()
         registerNetworkObserver()
         statusJob = scope.launch {
             CallController.providerStatus.collectLatest { snap ->
@@ -67,7 +68,7 @@ class LocalTelListenerService : Service() {
                     gatewayRetryJob = null
                 } else if (snap.state == ProviderRegistrationState.ERROR && gatewayRetryJob?.isActive != true) {
                     gatewayRetryJob = launch {
-                        var delayMs = 15_000L
+                        var delayMs = 3_000L
                         while (true) {
                             kotlinx.coroutines.delay(delayMs)
                             val store = SessionStore(applicationContext)
@@ -77,7 +78,7 @@ class LocalTelListenerService : Service() {
                                 refreshed.getOrThrow().also(store::saveLocalTelConfig)
                             }
                             CallController.ensureProviderStarted(applicationContext, forceRestart = true)
-                            delayMs = (delayMs * 2).coerceAtMost(5 * 60_000L)
+                            delayMs = (delayMs * 2).coerceAtMost(60_000L)
                             if (CallController.providerStatus.value.state == ProviderRegistrationState.REGISTERED) break
                         }
                         gatewayRetryJob = null
@@ -93,10 +94,13 @@ class LocalTelListenerService : Service() {
                     store.localTelProviderType != LocalTelProviderType.GATEWAY.wireValue
                 ) continue
                 LocalTelConfigApi(store).fetchGatewayConfig().onSuccess { refreshed ->
+                    // Only keep the fresh short-lived token for the next
+                    // reconnect. Restarting a healthy socket here made the line
+                    // drop out and miss incoming calls.
                     store.saveLocalTelConfig(refreshed)
-                    // Keep live calls uninterrupted; the next network/call
-                    // reconnect uses the freshly issued short-lived token.
-                    if (!CallController.currentState().isLive) {
+                    if (CallController.providerStatus.value.state != ProviderRegistrationState.REGISTERED &&
+                        !CallController.currentState().isLive
+                    ) {
                         CallController.ensureProviderStarted(applicationContext, forceRestart = true)
                     }
                 }
@@ -124,12 +128,39 @@ class LocalTelListenerService : Service() {
     }
 
     override fun onDestroy() {
+        releaseLocks()
         unregisterNetworkObserver()
         statusJob?.cancel()
         tokenRefreshJob?.cancel()
         gatewayRetryJob?.cancel()
         scope.cancel()
         super.onDestroy()
+    }
+
+    private var cpuLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
+    /** Keeps the signaling socket alive with the screen off (idle Wi-Fi/CPU). */
+    @android.annotation.SuppressLint("WakelockTimeout")
+    private fun acquireLocks() {
+        runCatching {
+            val pm = getSystemService(android.os.PowerManager::class.java)
+            cpuLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "trdriver:localtel")
+                ?.apply { setReferenceCounted(false); acquire() }
+        }
+        runCatching {
+            val wm = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+            @Suppress("DEPRECATION")
+            wifiLock = wm?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "trdriver:localtel")
+                ?.apply { setReferenceCounted(false); acquire() }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching { cpuLock?.takeIf { it.isHeld }?.release() }
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        cpuLock = null
+        wifiLock = null
     }
 
     private fun registerNetworkObserver() {

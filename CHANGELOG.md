@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.1 — Arka planda ve kilit ekranında güvenilir gelen arama
+
+### Fixed
+- WSS çağrı geçidi yaklaşık 50 saniyede bir kopuyordu (sunucu, protokol ping'ine pong yazarken süresi dolmuş yazma zaman aşımı yüzünden bağlantıyı kapatıyordu); bu aralarda gelen arama kayboluyordu. Zaman aşımı kaldırıldı, regresyon testi eklendi.
+- Ulaşılamayan hedefte veya çevrimdışı karşı tarafta davet sessizce düşmüyor; arayana `reject` dönüyor. Davet sonucu anonim günlüğe yazılıyor.
+- Dinleyici servisi `specialUse` ön plan servis türüne taşındı (Android 15'te `dataSync` 6 saat sonra sonlandırılıyordu); CPU ve Wi‑Fi kilidi ile ekran kapalıyken bağlantı korunuyor.
+- Beklenmedik bağlantı kapanışı artık hızlı yeniden bağlanmayı (3 sn → 60 sn) tetikliyor; sağlıklı bağlantı uygulama açılışında/token yenilemede yeniden başlatılmıyor.
+- Gelen arama tam ekran bildirimi doğrudan da yayımlanıyor; ön plan servisi arka planda başlatılamasa bile kilit ekranında görünür.
+
+### Added
+- Arama ayarlarında "Kendi numaram" (`GET|PUT /api/localtel/phone`): numaranı kaydedince rehberindeki numarayla aranabilirsin, karşı taraf seni rehber adınla görür. Numara ile hedef çözümleme son 10 haneye bakar.
+
 ## 0.13.0 — Sıfır yapılandırmalı LocalTel ve yönlendirmeli izinler
 
 ### Added
