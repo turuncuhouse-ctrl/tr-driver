@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,7 +36,8 @@ func TestLocalTelAutoProvisionConfigAndUserIsolation(t *testing.T) {
 		t.Fatalf("service: %v", err)
 	}
 	service.Configure("drive.example.test", time.Minute, true)
-	if _, err := db.Exec(ctx, `update users set phone = $1 where id = $2::uuid`, "905551112233", userA); err != nil {
+	testPhone := fmt.Sprintf("90555%09d", time.Now().UnixNano()%1_000_000_000)
+	if _, err := db.Exec(ctx, `update users set phone = $1 where id = $2::uuid`, testPhone, userA); err != nil {
 		t.Fatalf("set test phone: %v", err)
 	}
 	handler := localtel.NewHandler(service, localtel.NewHub())
@@ -70,7 +72,7 @@ func TestLocalTelAutoProvisionConfigAndUserIsolation(t *testing.T) {
 	if view.Gateway.Username == "" || view.Gateway.Secret == "" || view.Gateway.Extension == "" || view.Gateway.Token == "" {
 		t.Fatal("zero-config response missing account credentials or token")
 	}
-	if view.Gateway.Extension != "905551112233" {
+	if view.Gateway.Extension != testPhone {
 		t.Fatalf("extension did not use the user's canonical phone: %q", view.Gateway.Extension)
 	}
 	owner, _, err := service.ValidateToken(ctx, view.Gateway.Token)
@@ -118,7 +120,7 @@ func TestLocalTelAutoProvisionConfigAndUserIsolation(t *testing.T) {
 		}
 		t.Fatalf("user B account mismatch: status=%d extension=%q", responseB.StatusCode, gotExtension)
 	}
-	other, ok := service.ResolveCallTarget(ctx, "+90 555 111 2233")
+	other, ok := service.ResolveCallTarget(ctx, "+"+testPhone)
 	if !ok || other != userA {
 		t.Fatalf("phone contact resolved to %q, want %q", other, userA)
 	}

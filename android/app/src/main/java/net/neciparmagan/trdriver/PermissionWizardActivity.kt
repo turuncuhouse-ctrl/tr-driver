@@ -11,7 +11,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Process
+import android.os.PowerManager
 import android.provider.Settings
 import android.provider.Telephony
 import android.view.Gravity
@@ -300,14 +300,11 @@ class PermissionWizardActivity : AppCompatActivity() {
 
     private fun isRestrictedSmsPermission(): Boolean {
         if (Build.VERSION.SDK_INT < 33 || has(Manifest.permission.READ_SMS)) return false
-        val appliedRestriction = runCatching {
-            val flags = packageManager.getPermissionFlags(Manifest.permission.READ_SMS, packageName, Process.myUserHandle())
-            (flags and PackageManager.FLAG_PERMISSION_APPLY_RESTRICTION) != 0
-        }.getOrDefault(false)
-        return appliedRestriction || (
-            askedPrefs.getBoolean(KEY_SMS_ASKED, false) &&
-                !shouldShowRequestPermissionRationale(Manifest.permission.READ_SMS)
-            )
+        // Android does not expose a public SDK API for the restricted-settings
+        // flag. After a sideloaded SMS request is denied without rationale,
+        // guide the user through App info → ⋮ → Allow restricted settings.
+        return askedPrefs.getBoolean(KEY_SMS_ASKED, false) &&
+            !shouldShowRequestPermissionRationale(Manifest.permission.READ_SMS)
     }
 
     private fun openAppDetails() {
