@@ -222,13 +222,20 @@ func TestLocalTelEncryptedConfigLifecycleAndIsolation(t *testing.T) {
 		t.Fatalf("ws send invite: %v", err)
 	}
 
-	_ = wsA2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	// The dialed number maps to no account: the calling client itself gets a
+	// reject (so the app can end the call) and no other device rings.
+	_ = wsA1.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var received string
-	if err := websocket.Message.Receive(wsA2, &received); err != nil {
-		t.Fatalf("wsA2 did not receive relayed invite: %v", err)
+	if err := websocket.Message.Receive(wsA1, &received); err != nil {
+		t.Fatalf("caller did not receive unreachable-target reject: %v", err)
 	}
-	if !strings.Contains(received, "ws-call-1") {
+	if !strings.Contains(received, "ws-call-1") || !strings.Contains(received, `"reject"`) {
 		t.Fatalf("unexpected ws payload: %s", received)
+	}
+	_ = wsA2.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+	var extra string
+	if err := websocket.Message.Receive(wsA2, &extra); err == nil {
+		t.Fatalf("caller's other device must not ring for an unresolved target, got: %s", extra)
 	}
 
 	_ = wsB.SetReadDeadline(time.Now().Add(150 * time.Millisecond))

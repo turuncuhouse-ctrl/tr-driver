@@ -249,3 +249,34 @@ func TestValidateSignal(t *testing.T) {
 		}
 	}
 }
+
+func TestUnresolvableInviteFromWSGetsRejectBack(t *testing.T) {
+	h, hub := testHandler(t)
+	caller := hub.Register("user-a", "dev-1")
+	other := hub.Register("user-a", "dev-2")
+	defer hub.Unregister(caller)
+	defer hub.Unregister(other)
+
+	msg := SignalMessage{Type: "invite", CallID: "call-nf", Number: "05551112233"}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	if got := h.routeSignal(req, "user-a", caller.id, &msg); got != 0 {
+		t.Fatalf("delivered = %d, want 0", got)
+	}
+	select {
+	case raw := <-caller.SendChannel():
+		var back SignalMessage
+		if err := json.Unmarshal(raw, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back.Type != "reject" || back.CallID != "call-nf" || back.Payload != "unknown_target" {
+			t.Fatalf("unexpected reply: %+v", back)
+		}
+	default:
+		t.Fatal("caller got no feedback for an unreachable target")
+	}
+	select {
+	case <-other.SendChannel():
+		t.Fatal("caller's other device must not ring for an unresolved target")
+	default:
+	}
+}
