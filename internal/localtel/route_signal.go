@@ -1,6 +1,41 @@
 package localtel
 
-import "net/http"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"log"
+	"net/http"
+)
+
+// refuseInvite answers an undeliverable invite straight to the calling client
+// (not to the caller's other devices) with a reject, which every released
+// client already understands as "call ended".
+func (h *Handler) refuseInvite(senderUserID, senderClientID string, msg *SignalMessage, reason string) {
+	if msg == nil || senderClientID == "" {
+		return
+	}
+	h.hub.SendToClient(senderUserID, senderClientID, SignalMessage{
+		Type:        "reject",
+		CallID:      msg.CallID,
+		Payload:     reason,
+		TimestampMs: nowMs(),
+	})
+}
+
+func anon(id string) string {
+	if id == "" {
+		return "-"
+	}
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:4])
+}
+
+// logInvite records the outcome of one invite without any number, name or
+// credential: only short hashes of the participants.
+func logInvite(callerID, calleeID string, resolved bool, connected, delivered int) {
+	log.Printf("localtel invite caller=%s callee=%s resolved=%t callee_connected=%d delivered=%d",
+		anon(callerID), anon(calleeID), resolved, connected, delivered)
+}
 
 func (h *Handler) routeSignal(r *http.Request, senderUserID, senderClientID string, msg *SignalMessage) int {
 	if msg == nil {
@@ -8,19 +43,28 @@ func (h *Handler) routeSignal(r *http.Request, senderUserID, senderClientID stri
 	}
 	if msg.Type == "invite" {
 		if !h.limiter.allow("invite:" + senderUserID) {
+			h.refuseInvite(senderUserID, senderClientID, msg, "rate_limited")
 			return 0
 		}
 		targetUserID, ok := h.service.ResolveCallTarget(r.Context(), msg.Number)
 		if !ok {
-			// Preserve same-account device fan-out for legacy external/SIP
-			// destinations that are not provisioned TR Driver users.
-			return h.hub.Dispatch(senderUserID, senderClientID, *msg)
+			// The dialed address maps to no TR Driver account. Tell the caller
+			// instead of silently dropping the call.
+			logInvite(senderUserID, "", false, 0, 0)
+			if senderClientID == "" {
+				// Legacy HTTP /signal path keeps same-account device fan-out.
+				return h.hub.Dispatch(senderUserID, senderClientID, *msg)
+			}
+			h.refuseInvite(senderUserID, senderClientID, msg, "unknown_target")
+			return 0
 		}
 		callerAddress, displayName, ok := h.service.CallerIdentity(r.Context(), senderUserID)
 		if !ok {
+			h.refuseInvite(senderUserID, senderClientID, msg, "caller_unprovisioned")
 			return 0
 		}
 		if !h.hub.BeginCall(msg.CallID, senderUserID, targetUserID) {
+			h.refuseInvite(senderUserID, senderClientID, msg, "call_conflict")
 			return 0
 		}
 		// The recipient sees the caller, not the dialed destination. Identity
@@ -28,7 +72,17 @@ func (h *Handler) routeSignal(r *http.Request, senderUserID, senderClientID stri
 		msg.Number = callerAddress
 		msg.From = callerAddress
 		msg.DisplayName = displayName
-		return h.hub.DispatchCall(senderUserID, senderClientID, *msg)
+		callID := msg.CallID
+		connected := h.hub.ConnectedCount(targetUserID)
+		delivered := h.hub.DispatchCall(senderUserID, senderClientID, *msg)
+		logInvite(senderUserID, targetUserID, true, connected, delivered)
+		if delivered == 0 {
+			// Callee has no live gateway connection: end the call for the
+			// caller right away rather than ringing into the void.
+			h.hub.EndCall(callID)
+			h.refuseInvite(senderUserID, senderClientID, msg, "callee_offline")
+		}
+		return delivered
 	}
 	if msg.Type == "ping" || msg.Type == "pong" {
 		return h.hub.Dispatch(senderUserID, senderClientID, *msg)

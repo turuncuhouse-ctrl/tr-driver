@@ -69,6 +69,35 @@ func (h *Hub) DispatchCall(senderUserID, senderClientID string, msg SignalMessag
 	return delivered
 }
 
+// EndCall drops a call route (e.g. when the invite could not be delivered).
+func (h *Hub) EndCall(callID string) {
+	h.mu.Lock()
+	delete(h.calls, callID)
+	h.mu.Unlock()
+}
+
+// SendToClient delivers msg to one specific connected client of userID.
+func (h *Hub) SendToClient(userID, clientID string, msg SignalMessage) bool {
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	c, ok := h.users[userID][clientID]
+	if !ok {
+		return false
+	}
+	select {
+	case c.send <- raw:
+		return true
+	default:
+		return false
+	}
+}
+
+func nowMs() int64 { return time.Now().UTC().UnixMilli() }
+
 func dispatchLocked(byUser map[string]*Client, senderClientID string, raw []byte) int {
 	delivered := 0
 	for id, client := range byUser {

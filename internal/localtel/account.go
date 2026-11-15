@@ -227,10 +227,25 @@ func (s *Service) ResolveCallTarget(ctx context.Context, dial string) (string, b
 		select user_id::text from localtel_accounts
 		where extension = $1 or lower(sip_username) = lower($2)
 		limit 1`, key.digits, key.raw).Scan(&userID)
-	if err != nil {
-		return "", false
+	if err == nil && userID != "" {
+		return userID, true
 	}
-	return userID, userID != ""
+	// Fall back to the member's registered phone (digits-only international
+	// form), compared on the last 10 digits so 0532..., +90532... and 532...
+	// all reach the same account.
+	if len(key.digits) >= 10 {
+		tail := key.digits[len(key.digits)-10:]
+		err = s.db.QueryRow(ctx, `
+			select a.user_id::text from localtel_accounts a
+			join users u on u.id = a.user_id
+			where length(u.phone) >= 10 and right(u.phone, 10) = $1
+			order by a.created_at
+			limit 1`, tail).Scan(&userID)
+		if err == nil && userID != "" {
+			return userID, true
+		}
+	}
+	return "", false
 }
 
 // CallerIdentity returns the caller's stable address and display name so the

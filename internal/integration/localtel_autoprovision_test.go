@@ -127,4 +127,17 @@ func TestLocalTelAutoProvisionConfigAndUserIsolation(t *testing.T) {
 	if got, ok := service.ResolveCallTarget(ctx, "99999"); ok && got == userA {
 		t.Fatal("unowned extension resolved to another user's account")
 	}
+
+	// A phone set after the account was provisioned (random extension) must
+	// still be dialable by any national/international spelling.
+	latePhone := fmt.Sprintf("90544%09d", time.Now().UnixNano()%1_000_000_000)
+	if _, err := db.Exec(ctx, `update users set phone = $1 where id = $2::uuid`, latePhone, userB); err != nil {
+		t.Fatalf("set late phone: %v", err)
+	}
+	for _, dial := range []string{"+" + latePhone, "0" + latePhone[2:], latePhone[2:], "0 (544) " + latePhone[5:8] + " " + latePhone[8:]} {
+		got, ok := service.ResolveCallTarget(ctx, dial)
+		if !ok || got != userB {
+			t.Fatalf("dial %q resolved to %q (ok=%v), want %q", dial, got, ok, userB)
+		}
+	}
 }
