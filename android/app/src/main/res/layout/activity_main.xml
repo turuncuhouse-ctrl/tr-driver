@@ -50,6 +50,14 @@
                 android:visibility="gone" />
 
             <EditText
+                android:id="@+id/inputPhone"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Telefon (rehberde eşleşme için, isteğe bağlı)"
+                android:inputType="phone"
+                android:visibility="gone" />
+
+            <EditText
                 android:id="@+id/inputEmail"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -162,6 +170,31 @@
                 android:textColor="@color/tr_blue"
                 android:textStyle="bold"
                 android:contentDescription="Hesap" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/permissionWarningCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="8dp"
+            android:background="#FFFFE7C2"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:visibility="gone">
+            <TextView
+                android:id="@+id/permissionWarningText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Bazı izinler eksik. İlgili özellikler duraklatıldı."
+                android:textColor="@color/tr_ink" />
+            <Button
+                android:id="@+id/permissionWarningButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Düzelt"
+                android:textAllCaps="false" />
         </LinearLayout>
 
         <TextView

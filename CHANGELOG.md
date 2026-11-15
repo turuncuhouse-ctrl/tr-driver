@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.0 — Sıfır yapılandırmalı LocalTel ve yönlendirmeli izinler
+
+### Added
+- TR Driver alan adındaki WSS çağrı geçidi, kullanıcı başına otomatik LocalTel hesabı, kısa ömürlü token ve kullanıcılar arası izole sinyal/PCMU ses aktarımı.
+- Telefon numarasıyla opsiyonel hesap/dahili eşleştirmesi; parola `LOCAL_TEL_KEY` ile AES‑256‑GCM şifreli saklanır.
+- İlk açılışta ve Ayarlar → İzinler altında Türkçe durum/açıklamalı izin sihirbazı; Android 13+ kısıtlı SMS ayarları rehberi ve ana ekranda eksik izin kartı.
+- Android `ROLE_SMS` ile geçici varsayılan SMS rolü isteyen SMS yedeği geri yükleme akışı ve rol uygunluğu için gereken minimum alıcı/servis/aktivite.
+- LocalTel ayarları normal akıştan kaldırılıp Arama Durumu → Gelişmiş altında gizlendi; durum ve yeniden bağlanma görünür.
+
+### Changed
+- Android sürüm adı `0.13.0`, `versionCode` `47`; çağrı ayarları sunucudan giriş sonrası otomatik alınır.
+- Mevcut yedekleme akışı (Wi‑Fi-only, hız sınırlaması ve arka plan davranışı) korunmuştur.
+
+### Security
+- Gateway token'ları kısa ömürlü, HMAC imzalı ve kullanıcıya bağlıdır; çağrı rotaları yalnız katılımcılar arasında çalışır.
+- Kimlik bilgileri/token'lar loglanmaz; authenticated config endpoint no-store ve rate-limited.
+
 ## 0.12.0 — LocalTel IP sesli arama, rehber eşleştirme ve kilit ekranı deneyimi
 
 ### Added

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -18,19 +19,25 @@ import (
 const BasePath = "/api/localtel/"
 
 type Handler struct {
-	service *Service
-	hub     *Hub
-	limiter *rateLimiter
+	service        *Service
+	hub            *Hub
+	limiter        *rateLimiter
+	trustedProxies []netip.Prefix
 }
 
-func NewHandler(service *Service, hub *Hub) *Handler {
+func NewHandler(service *Service, hub *Hub, trustedProxies ...[]netip.Prefix) *Handler {
 	if hub == nil {
 		hub = NewHub()
 	}
+	var trusted []netip.Prefix
+	if len(trustedProxies) > 0 {
+		trusted = trustedProxies[0]
+	}
 	return &Handler{
-		service: service,
-		hub:     hub,
-		limiter: newRateLimiter(120, 20),
+		service:        service,
+		hub:            hub,
+		limiter:        newRateLimiter(120, 20),
+		trustedProxies: trusted,
 	}
 }
 
@@ -70,7 +77,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request, userID string) {
 	switch r.Method {
 	case http.MethodGet:
-		view, err := h.service.GetConfig(r.Context(), userID)
+		if !h.limiter.allow("cfg:" + userID) {
+			w.Header().Set("Retry-After", "60")
+			httpx.Error(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store, private")
+		w.Header().Set("Pragma", "no-cache")
+		view, err := h.service.GetGatewayConfig(r.Context(), userID, r.Host)
 		if err != nil {
 			h.fail(w, err)
 			return
@@ -152,7 +166,7 @@ func (h *Handler) handleSignal(w http.ResponseWriter, r *http.Request, userID, d
 		httpx.Error(w, http.StatusBadRequest, "invalid signal")
 		return
 	}
-	delivered := h.hub.Dispatch(userID, "", msg)
+	delivered := h.routeSignal(r, userID, "", &msg)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":    "dispatched",
 		"delivered": delivered,
@@ -215,7 +229,7 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request, userID, devic
 					}
 					continue
 				}
-				h.hub.Dispatch(userID, client.id, msg)
+				h.routeSignal(r, userID, client.id, &msg)
 			}
 			_ = ws.Close()
 			h.hub.Unregister(client)

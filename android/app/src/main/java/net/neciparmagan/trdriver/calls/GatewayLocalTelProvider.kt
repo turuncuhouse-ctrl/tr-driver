@@ -32,6 +32,10 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -99,10 +103,10 @@ class GatewayLocalTelProvider(
 
         val reqBuilder = Request.Builder().url(wsUrl)
         val usingTrDriverRelay = config.serverUrl.isBlank() ||
-            wsUrl.contains("/api/localtel/ws", ignoreCase = true)
+            wsUrl.contains("/localtel/ws", ignoreCase = true)
         if (usingTrDriverRelay) {
-            val token = session.token
-            if (token.isNullOrBlank()) {
+            val token = config.gatewayToken.ifBlank { session.token.orEmpty() }
+            if (token.isBlank()) {
                 _status.value = ProviderStatusSnapshot(
                     state = ProviderRegistrationState.ERROR,
                     statusText = "TR Driver oturumu açık değil",
@@ -142,10 +146,17 @@ class GatewayLocalTelProvider(
                 Log.w(TAG, "Gateway WebSocket connection failed")
                 if (this@GatewayLocalTelProvider.webSocket === webSocket) {
                     this@GatewayLocalTelProvider.webSocket = null
+                    val turkishReason = when (t) {
+                        is UnknownHostException -> "Sunucu adresi bulunamadı; internet bağlantınızı kontrol edin."
+                        is SocketTimeoutException -> "Sunucu yanıt vermedi; bağlantı yeniden denenecek."
+                        is SSLException -> "Güvenli bağlantı kurulamadı; sunucu sertifikasını kontrol edin."
+                        is IOException -> "Ağ bağlantısı kesildi; otomatik yeniden denenecek."
+                        else -> "Ağ geçidine bağlanılamadı; otomatik yeniden denenecek."
+                    }
                     _status.value = ProviderStatusSnapshot(
                         state = ProviderRegistrationState.ERROR,
                         statusText = "Ağ geçidi bağlantı hatası",
-                        lastError = t.message ?: "Bağlantı hatası",
+                        lastError = turkishReason,
                     )
                     activeCallId?.let { cid ->
                         stopAudioBridge()
@@ -351,6 +362,15 @@ class GatewayLocalTelProvider(
 
     @SuppressLint("MissingPermission")
     private fun startAudioBridge(callId: String) {
+        if (!CallPermissions.hasMicrophone(context)) {
+            audioActive.set(false)
+            _status.value = ProviderStatusSnapshot(
+                state = ProviderRegistrationState.ERROR,
+                statusText = "Hata: mikrofon izni verilmedi",
+                lastError = "Arama sesi için mikrofon izni gerekli",
+            )
+            return
+        }
         if (audioActive.getAndSet(true)) return
         val minOut = AudioTrack.getMinBufferSize(
             G711Codec.SAMPLE_RATE_HZ,
@@ -379,7 +399,10 @@ class GatewayLocalTelProvider(
             audioTrack = track
         }
 
-        if (!CallPermissions.hasMicrophone(context)) return
+        if (!CallPermissions.hasMicrophone(context)) {
+            audioActive.set(false)
+            return
+        }
         val minIn = AudioRecord.getMinBufferSize(
             G711Codec.SAMPLE_RATE_HZ,
             AudioFormat.CHANNEL_IN_MONO,
@@ -468,7 +491,7 @@ class GatewayLocalTelProvider(
                 base.startsWith("http://", true) -> "ws://" + base.substring(7)
                 else -> "wss://$base"
             }
-            return "$wsBase/api/localtel/ws"
+            return "$wsBase/localtel/ws"
         }
         return when {
             raw.startsWith("wss://", true) || raw.startsWith("ws://", true) -> raw

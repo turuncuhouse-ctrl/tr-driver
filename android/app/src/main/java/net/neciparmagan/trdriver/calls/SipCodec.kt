@@ -317,7 +317,7 @@ object SipMessageBuilder {
             if (!authHeaderName.isNullOrBlank() && !authHeaderValue.isNullOrBlank()) {
                 append(authHeaderName).append(": ").append(authHeaderValue).append("\r\n")
             }
-            append("User-Agent: TRDriver-LocalTel/0.12.0\r\n")
+            append("User-Agent: TRDriver-LocalTel/0.13.0\r\n")
             if (!contentType.isNullOrBlank() && bodyBytes.isNotEmpty()) {
                 append("Content-Type: ").append(contentType).append("\r\n")
             }
@@ -353,7 +353,7 @@ object SipMessageBuilder {
             if (!contactUri.isNullOrBlank()) {
                 append("Contact: <").append(contactUri).append(">\r\n")
             }
-            append("User-Agent: TRDriver-LocalTel/0.12.0\r\n")
+            append("User-Agent: TRDriver-LocalTel/0.13.0\r\n")
             if (!contentType.isNullOrBlank() && bodyBytes.isNotEmpty()) {
                 append("Content-Type: ").append(contentType).append("\r\n")
             }

@@ -45,6 +45,9 @@ import kotlinx.coroutines.launch
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
 import net.neciparmagan.trdriver.calls.CallsActivity
 import net.neciparmagan.trdriver.calls.LocalTelListenerService
+import net.neciparmagan.trdriver.calls.LocalTelConfigApi
+import net.neciparmagan.trdriver.calls.LocalTelProviderType
+import net.neciparmagan.trdriver.calls.CallController
 import net.neciparmagan.trdriver.data.FileEntry
 import net.neciparmagan.trdriver.data.MimeHelper
 import net.neciparmagan.trdriver.data.SessionStore
@@ -57,6 +60,7 @@ import java.io.File
 class MainActivity : AppCompatActivity() {
     private val vm: DriveViewModel by viewModels()
     private lateinit var session: SessionStore
+    private var lastLocalTelConfigFetchAt = 0L
 
     private lateinit var loginPanel: View
     private lateinit var filesPanel: View
@@ -69,10 +73,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var backupInline: LinearLayout
     private lateinit var backupInlineBar: ProgressBar
     private lateinit var backupInlineText: TextView
+    private lateinit var permissionWarningCard: View
+    private lateinit var permissionWarningText: TextView
     private lateinit var swipeRefresh: SwipeRefreshLayout
+    private var permissionWizardLaunched = false
     private lateinit var miniPlayer: View
     private lateinit var miniPlayerTitle: TextView
     private lateinit var inputDisplayName: EditText
+    private lateinit var inputPhone: EditText
     private lateinit var btnRegister: Button
     private lateinit var inputServer: EditText
     private lateinit var inputEmail: EditText
@@ -207,10 +215,14 @@ class MainActivity : AppCompatActivity() {
         backupInline = findViewById(R.id.backupInline)
         backupInlineBar = findViewById(R.id.backupInlineBar)
         backupInlineText = findViewById(R.id.backupInlineText)
+        permissionWarningCard = findViewById(R.id.permissionWarningCard)
+        permissionWarningText = findViewById(R.id.permissionWarningText)
+        findViewById<Button>(R.id.permissionWarningButton).setOnClickListener { openPermissionWizard() }
         swipeRefresh = findViewById(R.id.swipeRefresh)
         miniPlayer = findViewById(R.id.miniPlayer)
         miniPlayerTitle = findViewById(R.id.miniPlayerTitle)
         inputDisplayName = findViewById(R.id.inputDisplayName)
+        inputPhone = findViewById(R.id.inputPhone)
         btnRegister = findViewById(R.id.btnRegister)
         inputServer = findViewById(R.id.inputServer)
         inputEmail = findViewById(R.id.inputEmail)
@@ -236,6 +248,7 @@ class MainActivity : AppCompatActivity() {
             if (!registerNameVisible) {
                 registerNameVisible = true
                 inputDisplayName.visibility = View.VISIBLE
+                inputPhone.visibility = View.VISIBLE
                 btnRegister.text = "Hesabı oluştur"
                 inputDisplayName.requestFocus()
                 return@setOnClickListener
@@ -251,7 +264,7 @@ class MainActivity : AppCompatActivity() {
             vm.updateEmail(mail)
             vm.updatePassword(pass)
             vm.updateDisplayName(name)
-            vm.register()
+            vm.register(inputPhone.text?.toString().orEmpty())
         }
 
         findViewById<Button>(R.id.btnQrLogin).setOnClickListener {
@@ -370,6 +383,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     loginPanel.visibility = View.GONE
                     filesPanel.visibility = View.VISIBLE
+                    ensureLocalTelConfig()
                     val mail = state.user?.email ?: state.email
                     titleEmail.text = mail
                     avatarBadge.text = mail.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
@@ -483,22 +497,29 @@ class MainActivity : AppCompatActivity() {
             silentIfCurrent = !cameFromUpdateNotification,
         )
         runAppBootstrapIfNeeded()
+        refreshPermissionWarning()
+        if (session.isLoggedIn) {
+            ensureLocalTelConfig()
+        }
         if (session.localTelEnabled && session.localTelAutoRegister) {
             LocalTelListenerService.syncState(this)
         }
     }
 
-    private val bootstrapPermLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            AppBootstrap.maybePinGalleryShortcut(this)
-            if (!AppBootstrap.requestGalleryRole(this)) {
-                AppBootstrap.maybeOfferDefaultGallery(this)
-            }
-            AppBootstrap.markBootstrapped(this)
-            if (session.anyBackupEnabled()) {
-                net.neciparmagan.trdriver.backup.TrKeepAliveService.startIfNeeded(this)
+    private fun ensureLocalTelConfig() {
+        val existing = session.loadLocalTelConfig()
+        if (existing.providerType == LocalTelProviderType.SIP && existing.enabled) return
+        val now = System.currentTimeMillis()
+        if (now - lastLocalTelConfigFetchAt < 2 * 60_000L) return
+        lastLocalTelConfigFetchAt = now
+        lifecycleScope.launch {
+            LocalTelConfigApi(session).fetchGatewayConfig().onSuccess { config ->
+                session.saveLocalTelConfig(config)
+                CallController.ensureProviderStarted(this@MainActivity, forceRestart = true)
+                LocalTelListenerService.syncState(this@MainActivity)
             }
         }
+    }
 
     private fun runAppBootstrapIfNeeded() {
         if (AppBootstrap.isBootstrapped(this)) {
@@ -507,15 +528,22 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        val needed = AppBootstrap.neededPermissions(this)
-        if (needed.isNotEmpty()) {
-            bootstrapPermLauncher.launch(needed)
-        } else {
-            AppBootstrap.maybePinGalleryShortcut(this)
-            if (!AppBootstrap.requestGalleryRole(this)) {
-                AppBootstrap.maybeOfferDefaultGallery(this)
-            }
-            AppBootstrap.markBootstrapped(this)
+        if (!permissionWizardLaunched) {
+            permissionWizardLaunched = true
+            openPermissionWizard()
+        }
+    }
+
+    private fun openPermissionWizard() {
+        startActivity(Intent(this, PermissionWizardActivity::class.java))
+    }
+
+    private fun refreshPermissionWarning() {
+        if (!::permissionWarningCard.isInitialized) return
+        val missing = PermissionWizardActivity.missingImportantPermissions(this)
+        permissionWarningCard.visibility = if (missing.isEmpty()) View.GONE else View.VISIBLE
+        if (missing.isNotEmpty()) {
+            permissionWarningText.text = "Eksik izin: ${missing.take(3).joinToString(", ")}${if (missing.size > 3) " ve ${missing.size - 3} izin" else ""}. İlgili özellikler duraklatıldı."
         }
     }
 
@@ -677,6 +705,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 registerNameVisible = false
                 inputDisplayName.visibility = View.GONE
+                inputPhone.visibility = View.GONE
+                inputPhone.setText("")
                 btnRegister.text = "Üye ol"
                 vm.logout()
             }
@@ -703,7 +733,8 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, 12, 9, "TR Photos")
             menu.add(0, 15, 10, "LocalTel Aramalar")
             menu.add(0, 7, 11, "Yedekleme ayarları")
-            menu.add(0, 13, 12, "Yer aç")
+            menu.add(0, 16, 12, "İzinler")
+            menu.add(0, 13, 13, "Yer aç")
             menu.add(0, 8, 13, "Müzik")
             menu.add(0, 9, 14, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
@@ -741,6 +772,7 @@ class MainActivity : AppCompatActivity() {
                     12 -> startActivity(Intent(this@MainActivity, PhotosLibraryActivity::class.java))
                     15 -> startActivity(Intent(this@MainActivity, CallsActivity::class.java))
                     7 -> startActivity(Intent(this@MainActivity, BackupSettingsActivity::class.java))
+                    16 -> openPermissionWizard()
                     13 -> startActivity(Intent(this@MainActivity, FreeUpSpaceActivity::class.java))
                     8 -> {
                         if (MusicService.isSessionActive) {

@@ -35,12 +35,13 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		Email       string `json:"email"`
 		Password    string `json:"password"`
 		DisplayName string `json:"displayName"`
+		Phone       string `json:"phone"`
 	}
 	if err := httpx.ReadJSON(r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	user, token, err := h.service.Register(r.Context(), req.Email, req.Password, req.DisplayName)
+	user, token, err := h.service.Register(r.Context(), req.Email, req.Password, req.DisplayName, req.Phone)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return

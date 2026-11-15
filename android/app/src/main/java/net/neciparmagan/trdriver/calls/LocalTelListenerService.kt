@@ -29,6 +29,8 @@ import net.neciparmagan.trdriver.data.SessionStore
 class LocalTelListenerService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var statusJob: Job? = null
+    private var tokenRefreshJob: Job? = null
+    private var gatewayRetryJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -59,7 +61,45 @@ class LocalTelListenerService : Service() {
             CallController.providerStatus.collectLatest { snap ->
                 val updated = CallNotifications.buildListenerNotification(this@LocalTelListenerService, snap)
                 val nm = getSystemService(android.app.NotificationManager::class.java)
-                nm?.notify(CallNotifications.LISTENER_NOTIFICATION_ID, updated)
+                runCatching { nm?.notify(CallNotifications.LISTENER_NOTIFICATION_ID, updated) }
+                if (snap.state == ProviderRegistrationState.REGISTERED) {
+                    gatewayRetryJob?.cancel()
+                    gatewayRetryJob = null
+                } else if (snap.state == ProviderRegistrationState.ERROR && gatewayRetryJob?.isActive != true) {
+                    gatewayRetryJob = launch {
+                        var delayMs = 15_000L
+                        while (true) {
+                            kotlinx.coroutines.delay(delayMs)
+                            val store = SessionStore(applicationContext)
+                            if (!store.isLoggedIn || !store.localTelEnabled) break
+                            val refreshed = LocalTelConfigApi(store).fetchGatewayConfig()
+                            if (refreshed.isSuccess) {
+                                refreshed.getOrThrow().also(store::saveLocalTelConfig)
+                            }
+                            CallController.ensureProviderStarted(applicationContext, forceRestart = true)
+                            delayMs = (delayMs * 2).coerceAtMost(5 * 60_000L)
+                            if (CallController.providerStatus.value.state == ProviderRegistrationState.REGISTERED) break
+                        }
+                        gatewayRetryJob = null
+                    }
+                }
+            }
+        }
+        tokenRefreshJob = scope.launch {
+            val store = SessionStore(applicationContext)
+            while (true) {
+                kotlinx.coroutines.delay(5 * 60_000L)
+                if (!store.isLoggedIn || !store.localTelEnabled ||
+                    store.localTelProviderType != LocalTelProviderType.GATEWAY.wireValue
+                ) continue
+                LocalTelConfigApi(store).fetchGatewayConfig().onSuccess { refreshed ->
+                    store.saveLocalTelConfig(refreshed)
+                    // Keep live calls uninterrupted; the next network/call
+                    // reconnect uses the freshly issued short-lived token.
+                    if (!CallController.currentState().isLive) {
+                        CallController.ensureProviderStarted(applicationContext, forceRestart = true)
+                    }
+                }
             }
         }
     }
@@ -86,6 +126,8 @@ class LocalTelListenerService : Service() {
     override fun onDestroy() {
         unregisterNetworkObserver()
         statusJob?.cancel()
+        tokenRefreshJob?.cancel()
+        gatewayRetryJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }

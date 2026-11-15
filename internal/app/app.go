@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -83,6 +84,13 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		db.Close()
 		return nil, nil, err
 	}
+	localTelDomain := cfg.LocalTelDomain
+	if localTelDomain == "" {
+		if publicURL, parseErr := url.Parse(cfg.PublicBaseURL); parseErr == nil {
+			localTelDomain = publicURL.Host
+		}
+	}
+	localtelService.Configure(localTelDomain, cfg.LocalTelTokenTTL, cfg.LocalTelAutoProvision)
 	localtelHub := localtel.NewHub()
 
 	_ = uploadService.CleanupExpired(ctx)

@@ -27,6 +27,9 @@ type SignalMessage struct {
 	CallID      string `json:"callId"`
 	Number      string `json:"number,omitempty"`
 	DisplayName string `json:"displayName,omitempty"`
+	// From is the caller's stable TR Driver address (extension/username). It is
+	// filled by the server when a call crosses from one user to another.
+	From        string `json:"from,omitempty"`
 	Payload     string `json:"payload,omitempty"`
 	DeviceID    string `json:"deviceId,omitempty"`
 	TimestampMs int64  `json:"timestampMs,omitempty"`
@@ -64,6 +67,9 @@ func ValidateSignal(msg *SignalMessage) error {
 	if hasControlOrNewline(msg.DisplayName) || len(msg.DisplayName) > maxSignalNameLen {
 		return fmt.Errorf("%w: invalid displayName", ErrInvalidSignal)
 	}
+	if hasControlOrNewline(msg.From) || len(msg.From) > maxSignalNumberLen {
+		return fmt.Errorf("%w: invalid from", ErrInvalidSignal)
+	}
 	if len(msg.Payload) > maxSignalPayloadBytes {
 		return fmt.Errorf("%w: payload too large", ErrInvalidSignal)
 	}
@@ -93,14 +99,22 @@ func (c *Client) close() {
 
 // Hub fans out gateway-mode call signaling within one authenticated user's
 // connected devices. No cross-user delivery is permitted.
+type callRoute struct {
+	callerUserID string
+	calleeUserID string
+	expiresAt    time.Time
+}
+
 type Hub struct {
 	mu    sync.RWMutex
 	users map[string]map[string]*Client
+	calls map[string]callRoute
 }
 
 func NewHub() *Hub {
 	return &Hub{
 		users: make(map[string]map[string]*Client),
+		calls: make(map[string]callRoute),
 	}
 }
 

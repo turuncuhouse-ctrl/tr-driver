@@ -48,6 +48,8 @@ data class LocalTelConfig(
     val defaultCountryCode: String = "90",
     val autoRegister: Boolean = true,
     val syncToServer: Boolean = false,
+    val gatewayToken: String = "",
+    val gatewayTokenExpiresAt: Long = 0L,
 ) {
     fun effectiveHost(): String {
         val raw = serverUrl.trim().ifEmpty { sipDomain.trim() }
@@ -173,7 +175,26 @@ data class LocalTelConfigViewDto(
     val autoRegister: Boolean = true,
     val hasSecret: Boolean = false,
     val updatedAt: String? = null,
+    val mode: String = "",
+    val autoProvisioned: Boolean = false,
+    val gateway: LocalTelGatewayDto? = null,
 )
+
+@Serializable
+data class LocalTelGatewayDto(
+    val wssUrl: String = "",
+    val host: String = "",
+    val domain: String = "",
+    val username: String = "",
+    val extension: String = "",
+    val secret: String = "",
+    val token: String = "",
+    val tokenExpiresAt: String? = null,
+    val stunUrls: List<String> = emptyList(),
+) {
+    override fun toString(): String =
+        "LocalTelGatewayDto(host=$host, extension=$extension, hasSecret=${secret.isNotEmpty()}, hasToken=${token.isNotEmpty()})"
+}
 
 @Serializable
 data class LocalTelProvisionDto(

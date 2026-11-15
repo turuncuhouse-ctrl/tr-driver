@@ -17,9 +17,11 @@ var (
 )
 
 // Vault encrypts per-user LocalTel SIP/gateway configuration and credentials at
-// rest using AES-256-GCM bound to the owning user ID.
+// rest using AES-256-GCM bound to the owning user ID. It also derives an HMAC
+// key for short-lived gateway tokens.
 type Vault struct {
-	aead cipher.AEAD
+	aead   cipher.AEAD
+	macKey []byte
 }
 
 func NewVault(secret string) (*Vault, error) {
@@ -37,7 +39,29 @@ func NewVault(secret string) (*Vault, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Vault{aead: aead}, nil
+	macKey := hmac.New(sha256.New, []byte(secret))
+	_, _ = macKey.Write([]byte(vaultKeyInfo + "/token-mac"))
+	return &Vault{aead: aead, macKey: macKey.Sum(nil)}, nil
+}
+
+// MAC returns a keyed HMAC-SHA-256 over data. Used to sign short-lived gateway
+// tokens; the signature never leaves the server in logs.
+func (v *Vault) MAC(data []byte) []byte {
+	if v == nil {
+		return nil
+	}
+	m := hmac.New(sha256.New, v.macKey)
+	_, _ = m.Write(data)
+	return m.Sum(nil)
+}
+
+// VerifyMAC reports whether mac is a valid MAC for data.
+func (v *Vault) VerifyMAC(data, mac []byte) bool {
+	if v == nil {
+		return false
+	}
+	expected := v.MAC(data)
+	return hmac.Equal(expected, mac)
 }
 
 func (v *Vault) Seal(plaintext, aad []byte) ([]byte, error) {

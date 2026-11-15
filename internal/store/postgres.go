@@ -57,6 +57,8 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 			last_login_at timestamptz not null default now()
 		)`,
 		`alter table users add column if not exists reserved_bytes bigint not null default 0`,
+		`alter table users add column if not exists phone text not null default ''`,
+		`create index if not exists users_phone_idx on users(phone) where phone <> ''`,
 		`create table if not exists sessions (
 			id uuid primary key default gen_random_uuid(),
 			user_id uuid not null references users(id) on delete cascade,
@@ -337,6 +339,20 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 			payload bytea not null,
 			updated_at timestamptz not null default now()
 		)`,
+		// Auto-provisioned LocalTel calling account (0.13.0 zero-config).
+		// Password is sealed with LOCAL_TEL_KEY by internal/localtel; the
+		// extension is the stable, unique address other TR Driver users dial.
+		`create table if not exists localtel_accounts (
+			user_id uuid primary key references users(id) on delete cascade,
+			extension text not null unique,
+			sip_username text not null unique,
+			sip_domain text not null,
+			password_enc bytea not null,
+			display_name text not null default '',
+			created_at timestamptz not null default now(),
+			updated_at timestamptz not null default now()
+		)`,
+		`create index if not exists localtel_accounts_extension_idx on localtel_accounts(extension)`,
 	}
 
 	for _, stmt := range ddl {
