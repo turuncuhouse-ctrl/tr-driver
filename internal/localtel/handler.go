@@ -57,6 +57,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleProvision(w, r, user.ID)
+	case "phone":
+		h.handlePhone(w, r, user.ID)
 	case "signal":
 		if r.Method != http.MethodPost {
 			httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -133,6 +135,45 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request, userID st
 	}
 }
 
+func (h *Handler) handlePhone(w http.ResponseWriter, r *http.Request, userID string) {
+	if !h.limiter.allow("phone:" + userID) {
+		w.Header().Set("Retry-After", "60")
+		httpx.Error(w, http.StatusTooManyRequests, "too many requests")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store, private")
+	switch r.Method {
+	case http.MethodGet:
+		view, err := h.service.GetPhone(r.Context(), userID)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, view)
+	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		var in struct {
+			Phone string `json:"phone"`
+		}
+		if err := httpx.ReadJSON(r, &in); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid request")
+			return
+		}
+		view, err := h.service.SetPhone(r.Context(), userID, in.Phone)
+		if err != nil {
+			if errors.Is(err, ErrInvalidPhone) {
+				httpx.Error(w, http.StatusBadRequest, "geçersiz telefon numarası")
+				return
+			}
+			h.fail(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, view)
+	default:
+		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
 func (h *Handler) handleProvision(w http.ResponseWriter, r *http.Request, userID string) {
 	w.Header().Set("Pragma", "no-cache")
 	prov, err := h.service.GetProvision(r.Context(), userID)
@@ -188,6 +229,10 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request, userID, devic
 		},
 		Handler: func(ws *websocket.Conn) {
 			ws.MaxPayloadBytes = maxSignalPayloadBytes + 4096
+			// No per-write deadline: x/net/websocket answers protocol pings with a
+			// pong write on this same connection, and an already-expired deadline
+			// would kill the socket (~50s) and force constant reconnects. A stuck
+			// peer is dropped by closing the conn when the read loop ends.
 			client := h.hub.Register(userID, deviceID)
 			defer h.hub.Unregister(client)
 
@@ -195,7 +240,6 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request, userID, devic
 			go func() {
 				defer close(done)
 				for raw := range client.SendChannel() {
-					_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 					if err := websocket.Message.Send(ws, string(raw)); err != nil {
 						return
 					}
@@ -223,7 +267,6 @@ func (h *Handler) handleWS(w http.ResponseWriter, r *http.Request, userID, devic
 						CallID:      msg.CallID,
 						TimestampMs: time.Now().UTC().UnixMilli(),
 					})
-					_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
 					if err := websocket.Message.Send(ws, string(pong)); err != nil {
 						break
 					}

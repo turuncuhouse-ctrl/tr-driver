@@ -135,9 +135,14 @@ class GatewayLocalTelProvider(
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (this@GatewayLocalTelProvider.webSocket === webSocket) {
                     this@GatewayLocalTelProvider.webSocket = null
+                    pingJob?.cancel()
+                    pingJob = null
+                    // A close we did not ask for must trigger the listener's
+                    // reconnect loop (ERROR), not stay silently DISABLED.
                     _status.value = ProviderStatusSnapshot(
-                        state = ProviderRegistrationState.DISABLED,
-                        statusText = "Bağlantı kapandı",
+                        state = ProviderRegistrationState.ERROR,
+                        statusText = "Bağlantı kapandı; yeniden bağlanılıyor",
+                        lastError = "Ağ geçidi bağlantısı kapandı",
                     )
                 }
             }

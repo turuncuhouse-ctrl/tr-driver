@@ -258,6 +258,11 @@ func (s *Service) CallerIdentity(ctx context.Context, userID string) (string, st
 	if err != nil {
 		return "", "", false
 	}
+	// Prefer the member's real phone so the callee's contact matcher can show
+	// the saved contact name; the extension remains the fallback identity.
+	if phone := normalizeDial(s.userPhone(ctx, userID)).digits; phone != "" {
+		return "+" + phone, acct.DisplayName, true
+	}
 	return acct.Extension, acct.DisplayName, acct.Extension != ""
 }
 
@@ -281,4 +286,56 @@ func normalizeDial(dial string) dialKey {
 		}
 	}
 	return dialKey{raw: raw, digits: builder.String()}
+}
+
+// ErrInvalidPhone is returned when a phone number cannot be normalized.
+var ErrInvalidPhone = fmt.Errorf("%w: invalid phone number", ErrInvalidInput)
+
+// NormalizePhone returns the digits-only international form (Turkish national
+// numbers become 90...). The empty string clears the number.
+func NormalizePhone(raw string) (string, error) {
+	value := normalizeDial(raw).digits
+	if value == "" {
+		return "", nil
+	}
+	value = strings.TrimPrefix(value, "00")
+	if len(value) == 11 && strings.HasPrefix(value, "0") {
+		value = "90" + value[1:]
+	} else if len(value) == 10 && strings.HasPrefix(value, "5") {
+		value = "90" + value
+	}
+	if len(value) < 10 || len(value) > 15 {
+		return "", ErrInvalidPhone
+	}
+	return value, nil
+}
+
+// PhoneView is what the app shows in "Kendi numaram".
+type PhoneView struct {
+	Phone     string `json:"phone"`
+	Extension string `json:"extension"`
+}
+
+func (s *Service) GetPhone(ctx context.Context, userID string) (*PhoneView, error) {
+	acct, err := s.EnsureAccount(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &PhoneView{Phone: normalizeDial(s.userPhone(ctx, userID)).digits, Extension: acct.Extension}, nil
+}
+
+// SetPhone stores the member's own number so other members can call it (from
+// their contacts) and so the callee sees the right contact name.
+func (s *Service) SetPhone(ctx context.Context, userID, raw string) (*PhoneView, error) {
+	if s.db == nil {
+		return nil, errors.New("localtel database is unavailable")
+	}
+	phone, err := NormalizePhone(raw)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(ctx, `update users set phone = $2 where id = $1::uuid`, userID, phone); err != nil {
+		return nil, err
+	}
+	return s.GetPhone(ctx, userID)
 }

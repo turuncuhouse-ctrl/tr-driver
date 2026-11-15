@@ -140,4 +140,23 @@ func TestLocalTelAutoProvisionConfigAndUserIsolation(t *testing.T) {
 			t.Fatalf("dial %q resolved to %q (ok=%v), want %q", dial, got, ok, userB)
 		}
 	}
+
+	// "Kendi numaram": SetPhone normalizes national spellings, makes the member
+	// dialable and changes the caller identity shown to the callee.
+	view2, err := service.SetPhone(ctx, userB, "0532 111 22 33")
+	if err != nil || view2.Phone != "905321112233" {
+		t.Fatalf("SetPhone = %+v, %v", view2, err)
+	}
+	if got, ok := service.ResolveCallTarget(ctx, "05321112233"); !ok || got != userB {
+		t.Fatalf("new phone resolved to %q (ok=%v)", got, ok)
+	}
+	if addr, _, ok := service.CallerIdentity(ctx, userB); !ok || addr != "+905321112233" {
+		t.Fatalf("caller identity = %q ok=%v", addr, ok)
+	}
+	if _, err := service.SetPhone(ctx, userB, "12"); err == nil {
+		t.Fatal("too-short phone accepted")
+	}
+	if _, err := service.SetPhone(ctx, userB, ""); err != nil {
+		t.Fatalf("clearing phone failed: %v", err)
+	}
 }

@@ -97,6 +97,44 @@ class LocalTelConfigApi(private val session: SessionStore) {
         }
     }
 
+    /** Own phone number + extension ("Kendi numaram"). */
+    suspend fun getMyPhone(): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!hasSession()) error("TR Driver oturumu açık değil")
+            val req = authed("${baseUrl()}/api/localtel/phone").get().build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) error(parseError(text))
+                parsePhone(text)
+            }
+        }
+    }
+
+    suspend fun setMyPhone(phone: String): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!hasSession()) error("TR Driver oturumu açık değil")
+            val body = json.encodeToString(
+                kotlinx.serialization.json.JsonObject.serializer(),
+                kotlinx.serialization.json.buildJsonObject {
+                    put("phone", kotlinx.serialization.json.JsonPrimitive(phone.trim()))
+                },
+            ).toRequestBody("application/json; charset=utf-8".toMediaType())
+            val req = authed("${baseUrl()}/api/localtel/phone").put(body).build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) error(parseError(text))
+                parsePhone(text)
+            }
+        }
+    }
+
+    private fun parsePhone(text: String): Pair<String, String> {
+        val obj = json.parseToJsonElement(text) as kotlinx.serialization.json.JsonObject
+        val phone = (obj["phone"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+        val ext = (obj["extension"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+        return phone to ext
+    }
+
     suspend fun provisionConfig(): Result<LocalTelConfig> = withContext(Dispatchers.IO) {
         runCatching {
             if (!hasSession()) error("TR Driver oturumu açık değil")
