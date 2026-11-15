@@ -31,7 +31,7 @@ data class ContactMatchResult(
     val confidence: MatchConfidence,
 )
 
-private data class IndexedCandidate(
+internal data class IndexedCandidate(
     val entry: ContactDirectoryEntry,
     val rawNumber: String,
     val label: String,

@@ -12,7 +12,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
- * Authenticated client for `/api/localtel/*`.
+ * Authenticated client for `/api/localtel` endpoints.
  * Never logs payloads, SIP credentials, or numbers.
  */
 class LocalTelConfigApi(private val session: SessionStore) {
