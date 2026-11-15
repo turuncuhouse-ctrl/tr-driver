@@ -15,7 +15,9 @@ Sideloading’de “Play Protect / doğrulanmadı” uyarısı Play Store dış�
 
 ## Özellikler
 - Üye ol / giriş / QR ile giriş
-- Galeri + ek klasör yedek
+- Galeri + ek klasör yedek (foto, video, ses, tüm dosyalar)
+- Rehber ve SMS yedeği (yalnız Wi‑Fi, açıklama diyaloğuyla izin, artımlı; sunucuda şifreli) — `docs/PERSONAL_BACKUP.md`
 - Video/müzik/resim önizleme
 - Arka plan müzik + mini player
 - Uygulama içi APK güncelleme
+- Rehber/SMS için ayrı açma‑kapama anahtarları ve "sunucudaki kopyayı sil" düğmesi

@@ -303,6 +303,34 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 			error text not null default ''
 		)`,
 		`create index if not exists backup_runs_started_idx on backup_runs(started_at desc)`,
+
+		// Personal insurance backup (contacts + SMS) for the Android client.
+		// Payloads are encrypted by internal/personalbackup before insertion;
+		// blind_key is an HMAC index so no client identifier is stored raw.
+		`create table if not exists personal_backup_items (
+			user_id uuid not null references users(id) on delete cascade,
+			kind text not null check (kind in ('contacts', 'sms')),
+			blind_key text not null,
+			revision bigint not null default 0,
+			content_hash text not null default '',
+			payload bytea not null,
+			payload_bytes int not null default 0,
+			created_at timestamptz not null default now(),
+			updated_at timestamptz not null default now(),
+			primary key (user_id, kind, blind_key)
+		)`,
+		`create index if not exists personal_backup_items_user_updated_idx
+			on personal_backup_items(user_id, kind, updated_at)`,
+		`create table if not exists personal_backup_syncs (
+			user_id uuid not null references users(id) on delete cascade,
+			kind text not null check (kind in ('contacts', 'sms')),
+			device_id text not null default '',
+			last_sync_at timestamptz not null default now(),
+			last_items int not null default 0,
+			last_deleted int not null default 0,
+			total_items int not null default 0,
+			primary key (user_id, kind, device_id)
+		)`,
 	}
 
 	for _, stmt := range ddl {

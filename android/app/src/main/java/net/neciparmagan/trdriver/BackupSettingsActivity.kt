@@ -14,13 +14,21 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.switchmaterial.SwitchMaterial
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.neciparmagan.trdriver.backup.GalleryBackupEngine
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
 import net.neciparmagan.trdriver.backup.OemPowerHelper
 import net.neciparmagan.trdriver.backup.TrKeepAliveService
 import net.neciparmagan.trdriver.data.BackupPolicy
+import net.neciparmagan.trdriver.data.CommsAccess
 import net.neciparmagan.trdriver.data.MediaAccess
+import net.neciparmagan.trdriver.data.PersonalBackupApi
+import net.neciparmagan.trdriver.data.PersonalBackupDb
+import net.neciparmagan.trdriver.data.PersonalBackupPolicy
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadNetworkGate
 import net.neciparmagan.trdriver.data.UploadedMediaDb
@@ -32,6 +40,9 @@ class BackupSettingsActivity : AppCompatActivity() {
     private lateinit var switchVideo: SwitchMaterial
     private lateinit var switchAudio: SwitchMaterial
     private lateinit var switchDoc: SwitchMaterial
+    private lateinit var switchContacts: SwitchMaterial
+    private lateinit var switchSms: SwitchMaterial
+    private lateinit var commsStatus: TextView
     private lateinit var switchAllFiles: SwitchMaterial
     private lateinit var backupStatus: TextView
     private lateinit var networkHint: TextView
@@ -91,6 +102,44 @@ class BackupSettingsActivity : AppCompatActivity() {
             refreshStatus()
         }
 
+    /**
+     * Contact permission result: the switch mirrors the real grant, never the
+     * requested state, so a denied prompt cannot leave backup half-enabled.
+     */
+    private val contactsPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+            val granted = CommsAccess.hasContactsAccess(this)
+            session.contactsBackupEnabled = granted
+            uiUpdating = true
+            switchContacts.isChecked = granted
+            uiUpdating = false
+            if (granted) {
+                onCommsBackupEnabled("Rehber yedeği açıldı (yalnız Wi‑Fi)")
+            } else {
+                Toast.makeText(this, "Rehber izni verilmedi", Toast.LENGTH_LONG).show()
+            }
+            refreshStatus()
+        }
+
+    private val smsPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+            val granted = CommsAccess.canReadSms(this)
+            session.smsBackupEnabled = granted
+            uiUpdating = true
+            switchSms.isChecked = granted
+            uiUpdating = false
+            if (granted) {
+                onCommsBackupEnabled("SMS yedeği açıldı (yalnız Wi‑Fi)")
+            } else {
+                Toast.makeText(
+                    this,
+                    "SMS izni verilmedi (bazı cihazlarda mesaj erişimi kapalı olabilir)",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            refreshStatus()
+        }
+
     private val notificationLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* optional */ }
 
@@ -127,13 +176,15 @@ class BackupSettingsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_backup_settings)
         session = SessionStore(this)
         session.wifiOnlyBackup = true
-        session.disableCommsBackup()
 
         switchGallery = findViewById(R.id.switchGalleryBackup)
         switchPhoto = findViewById(R.id.switchPhotoBackup)
         switchVideo = findViewById(R.id.switchVideoBackup)
         switchAudio = findViewById(R.id.switchAudioBackup)
         switchDoc = findViewById(R.id.switchDocBackup)
+        switchContacts = findViewById(R.id.switchContactsBackup)
+        switchSms = findViewById(R.id.switchSmsBackup)
+        commsStatus = findViewById(R.id.commsStatus)
         switchAllFiles = findViewById(R.id.switchAllFilesAccess)
         backupStatus = findViewById(R.id.backupStatus)
         networkHint = findViewById(R.id.networkHint)
@@ -146,6 +197,8 @@ class BackupSettingsActivity : AppCompatActivity() {
         switchVideo.isChecked = session.backupVideosOn
         switchAudio.isChecked = session.backupAudioOn
         switchDoc.isChecked = session.backupDocsOn
+        switchContacts.isChecked = session.contactsBackupEnabled
+        switchSms.isChecked = session.smsBackupEnabled
 
         switchGallery.setOnCheckedChangeListener { _, checked ->
             if (uiUpdating) return@setOnCheckedChangeListener
@@ -197,6 +250,42 @@ class BackupSettingsActivity : AppCompatActivity() {
             rescanAfterTypeChange(needsMediaPerms = false)
         }
 
+        switchContacts.setOnCheckedChangeListener { _, checked ->
+            if (uiUpdating) return@setOnCheckedChangeListener
+            if (checked) {
+                if (CommsAccess.hasContactsAccess(this)) {
+                    session.contactsBackupEnabled = true
+                    onCommsBackupEnabled("Rehber yedeği açıldı (yalnız Wi‑Fi)")
+                } else {
+                    // Never flip the switch before the user sees why.
+                    uiUpdating = true
+                    switchContacts.isChecked = false
+                    uiUpdating = false
+                    explainContactsBackup()
+                }
+            } else {
+                session.contactsBackupEnabled = false
+                onCommsBackupDisabled()
+            }
+        }
+        switchSms.setOnCheckedChangeListener { _, checked ->
+            if (uiUpdating) return@setOnCheckedChangeListener
+            if (checked) {
+                if (CommsAccess.canReadSms(this)) {
+                    session.smsBackupEnabled = true
+                    onCommsBackupEnabled("SMS yedeği açıldı (yalnız Wi‑Fi)")
+                } else {
+                    uiUpdating = true
+                    switchSms.isChecked = false
+                    uiUpdating = false
+                    explainSmsBackup()
+                }
+            } else {
+                session.smsBackupEnabled = false
+                onCommsBackupDisabled()
+            }
+        }
+
         switchAllFiles.setOnCheckedChangeListener { _, checked ->
             if (uiUpdating) return@setOnCheckedChangeListener
             if (checked) {
@@ -246,17 +335,30 @@ class BackupSettingsActivity : AppCompatActivity() {
                 ).show()
                 return@setOnClickListener
             }
-            val toggles = session.backupTypeToggles()
-            if (!toggles.photo && !toggles.video && !toggles.audio && !toggles.doc) {
-                Toast.makeText(this, "En az bir dosya türü seçin", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
+            if (session.galleryBackupEnabled) {
+                val toggles = session.backupTypeToggles()
+                if (!toggles.photo && !toggles.video && !toggles.audio && !toggles.doc) {
+                    Toast.makeText(this, "En az bir dosya türü seçin", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                val nothingToScan = !MediaAccess.hasMediaAccess(this) &&
+                    !MediaAccess.hasAudioAccess(this) &&
+                    session.backupFolderUris.isEmpty() &&
+                    session.backupPresetPaths.isEmpty()
+                if (nothingToScan) {
+                    requestMediaPermission()
+                    return@setOnClickListener
+                }
             }
-            val nothingToScan = !MediaAccess.hasMediaAccess(this) &&
-                !MediaAccess.hasAudioAccess(this) &&
-                session.backupFolderUris.isEmpty() &&
-                session.backupPresetPaths.isEmpty()
-            if (nothingToScan) {
-                requestMediaPermission()
+            if (!session.galleryBackupEnabled &&
+                !CommsAccess.hasContactsAccess(this) &&
+                !CommsAccess.canReadSms(this)
+            ) {
+                Toast.makeText(
+                    this,
+                    "Önce bir yedek türü açın (medya, rehber veya SMS)",
+                    Toast.LENGTH_LONG,
+                ).show()
                 return@setOnClickListener
             }
             try {
@@ -267,6 +369,7 @@ class BackupSettingsActivity : AppCompatActivity() {
             }
             refreshStatus()
         }
+        findViewById<Button>(R.id.btnPurgeComms).setOnClickListener { confirmPurgeComms() }
         findViewById<Button>(R.id.btnOpenPhotos).setOnClickListener {
             startActivity(Intent(this, PhotosLibraryActivity::class.java))
         }
@@ -288,6 +391,7 @@ class BackupSettingsActivity : AppCompatActivity() {
         super.onResume()
         warnPartialAccessIfNeeded()
         syncAllFilesSwitch()
+        syncCommsSwitches()
         refreshStatus()
         renderPresets()
         renderFolders()
@@ -343,6 +447,28 @@ class BackupSettingsActivity : AppCompatActivity() {
         }
         Toast.makeText(this, "Tüm dosyalara erişim açık — hızlı klasörler aktif", Toast.LENGTH_SHORT).show()
         refreshStatus()
+    }
+
+    /** Permissions can be revoked in system settings while the app is away. */
+    private fun syncCommsSwitches() {
+        val contacts = CommsAccess.hasContactsAccess(this)
+        if (!contacts && session.contactsBackupEnabled) {
+            session.contactsBackupEnabled = false
+        }
+        val sms = CommsAccess.canReadSms(this)
+        if (!sms && session.smsBackupEnabled) {
+            session.smsBackupEnabled = false
+        }
+        if (switchContacts.isChecked != session.contactsBackupEnabled) {
+            uiUpdating = true
+            switchContacts.isChecked = session.contactsBackupEnabled
+            uiUpdating = false
+        }
+        if (switchSms.isChecked != session.smsBackupEnabled) {
+            uiUpdating = true
+            switchSms.isChecked = session.smsBackupEnabled
+            uiUpdating = false
+        }
     }
 
     private fun syncAllFilesSwitch() {
@@ -500,6 +626,119 @@ class BackupSettingsActivity : AppCompatActivity() {
         }
     }
 
+    // --- rehber / SMS yedeği ------------------------------------------------
+
+    private fun onCommsBackupEnabled(toast: String) {
+        if (session.isLoggedIn) {
+            GalleryBackupWorker.schedule(this)
+            TrKeepAliveService.startIfNeeded(this)
+        }
+        Toast.makeText(this, toast, Toast.LENGTH_SHORT).show()
+        refreshStatus()
+    }
+
+    private fun onCommsBackupDisabled() {
+        if (!session.anyBackupEnabled()) TrKeepAliveService.stop(this)
+        refreshStatus()
+    }
+
+    private fun explainContactsBackup() {
+        AlertDialog.Builder(this)
+            .setTitle("Rehber yedeği izni")
+            .setMessage(CommsAccess.contactsExplanation())
+            .setPositiveButton("İzin ver") { _, _ ->
+                contactsPermLauncher.launch(CommsAccess.contactsPermissionsForRequest())
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun explainSmsBackup() {
+        AlertDialog.Builder(this)
+            .setTitle("SMS yedeği izni")
+            .setMessage(CommsAccess.smsExplanation())
+            .setPositiveButton("İzin ver") { _, _ ->
+                smsPermLauncher.launch(CommsAccess.smsPermissionsForRequest())
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    /** Erase the server copy only; the phone data is never touched. */
+    private fun confirmPurgeComms() {
+        if (!session.isLoggedIn) {
+            Toast.makeText(this, "Önce giriş yapın", Toast.LENGTH_LONG).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Sunucudaki rehber/SMS yedeğini sil")
+            .setMessage(
+                "Sunucuda şifreli saklanan rehber ve SMS kayıtları kalıcı olarak silinir. " +
+                    "Telefonunuzdaki kişiler ve mesajlar silinmez. Yedek anahtarları açık kalırsa " +
+                    "bir sonraki Wi‑Fi yedeğinde yeniden yüklenir.",
+            )
+            .setPositiveButton("Sunucudan sil") { _, _ -> purgeCommsBackup() }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun purgeCommsBackup() {
+        val api = PersonalBackupApi(session)
+        val db = PersonalBackupDb(this)
+        lifecycleScope.launch {
+            var deletedKinds = 0
+            var failed = 0
+            for (kind in listOf(PersonalBackupPolicy.KIND_CONTACTS, PersonalBackupPolicy.KIND_SMS)) {
+                val ok = try {
+                    withContext(Dispatchers.IO) { api.purge(kind) }
+                    db.clearKind(kind)
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+                if (ok) deletedKinds++ else failed++
+            }
+            db.release()
+            val message = when {
+                failed == 0 -> "Sunucudaki kopya silindi"
+                deletedKinds == 0 -> "Silinemedi; ağ bağlantısını kontrol edin"
+                else -> "Kısmen silindi ($deletedKinds/2)"
+            }
+            Toast.makeText(this@BackupSettingsActivity, message, Toast.LENGTH_LONG).show()
+            refreshStatus()
+        }
+    }
+
+    /** One-line summary per comms kind for the status block. */
+    private fun commsStatusLines(): String {
+        val db = PersonalBackupDb(this)
+        fun line(kind: String, label: String, enabled: Boolean, permission: Boolean): String {
+            if (!enabled) return "$label: kapalı"
+            if (!permission) return "$label: izin yok"
+            val meta = db.meta(kind)
+            val local = db.countStored(kind)
+            val whenText = if (meta.lastSyncAt > 0) formatAgo(meta.lastSyncAt) else "henüz çalışmadı"
+            val state = if (meta.lastOk) "güncel" else (meta.lastMessage.ifBlank { "bekliyor" })
+            return "$label: açık · $whenText · cihazda $local · sunucuda ${meta.lastTotal} · $state"
+        }
+        val text = listOf(
+            line(
+                PersonalBackupPolicy.KIND_CONTACTS,
+                "Rehber",
+                session.contactsBackupEnabled,
+                CommsAccess.hasContactsAccess(this),
+            ),
+            line(
+                PersonalBackupPolicy.KIND_SMS,
+                "SMS",
+                session.smsBackupEnabled,
+                CommsAccess.canReadSms(this),
+            ),
+        ).joinToString("\n")
+        db.release()
+        return text
+    }
+
     private fun refreshStatus() {
         val count = UploadedMediaDb(this).countUploaded()
         val net = UploadNetworkGate.networkPolicyLabel(session)
@@ -558,13 +797,15 @@ class BackupSettingsActivity : AppCompatActivity() {
         } else {
             " · SAF klasörler"
         }
+        val comms = commsStatusLines()
         backupStatus.text =
             "Durum: $on · $net$wifiNow · Türler: $types$allFiles · İşlenen medya: $count · Yer açılabilir: $freeable · Ek klasör: $folders$oem$partial\n$last\n" +
                 "Galeri/ses → TR Photos · klasörler → TR Backup / ${session.deviceName}\n" +
-                "$fgs · $heartbeatLine · $battery\n$pendingLine · $successLine"
+                "$fgs · $heartbeatLine · $battery\n$pendingLine · $successLine\n$comms"
+        commsStatus.text = comms
         networkHint.text =
-            "Yedekleme yalnız Wi‑Fi ile yapılır (fotoğraf, video, ses ve tüm dosya türleri). " +
-                "Artımlı çalışır: değişmeyen dosyalar tekrar yüklenmez."
+            "Yedekleme yalnız Wi‑Fi ile yapılır (fotoğraf, video, ses, dosyalar, rehber ve SMS). " +
+                "Artımlı çalışır: değişmeyen kayıtlar tekrar yüklenmez; Wi‑Fi gelince arka planda devam eder."
     }
 
     private fun formatAgo(atMs: Long): String {

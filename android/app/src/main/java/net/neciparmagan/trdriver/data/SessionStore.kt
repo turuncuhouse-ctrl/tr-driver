@@ -72,28 +72,29 @@ class SessionStore(context: Context) {
             doc = backupDocsOn,
         )
 
-    /** SMS/arama yedeği kaldırıldı — her zaman kapalı. */
-    var smsBackupEnabled: Boolean
-        get() = false
-        set(_) {
-            prefs.edit().putBoolean(KEY_SMS_BACKUP, false).apply()
-        }
+    // --- rehber / SMS yedeği (0.11.0) -------------------------------------
+    // Both default to off: the user must read the explanation dialog and grant
+    // READ_CONTACTS / READ_SMS before anything is read.
 
-    /** SMS/arama yedeği kaldırıldı — her zaman kapalı. */
+    var contactsBackupEnabled: Boolean
+        get() = prefs.getBoolean(KEY_CONTACTS_BACKUP, false)
+        set(value) = prefs.edit().putBoolean(KEY_CONTACTS_BACKUP, value).apply()
+
+    var smsBackupEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SMS_BACKUP, false)
+        set(value) = prefs.edit().putBoolean(KEY_SMS_BACKUP, value).apply()
+
+    /** Arama kaydı yedeği bu sürümün kapsamı dışında — her zaman kapalı. */
     var callLogBackupEnabled: Boolean
         get() = false
         set(_) {
             prefs.edit().putBoolean(KEY_CALL_BACKUP, false).apply()
         }
 
-    fun disableCommsBackup() {
-        prefs.edit()
-            .putBoolean(KEY_SMS_BACKUP, false)
-            .putBoolean(KEY_CALL_BACKUP, false)
-            .apply()
-    }
+    fun anyCommsBackupEnabled(): Boolean = contactsBackupEnabled || smsBackupEnabled
 
-    fun anyBackupEnabled(): Boolean = galleryBackupEnabled
+    fun anyBackupEnabled(): Boolean =
+        galleryBackupEnabled || contactsBackupEnabled || smsBackupEnabled
 
     /**
      * Galeri yedekleme yalnızca Wi‑Fi / Ethernet üzerinden yapılır.
@@ -425,7 +426,14 @@ class SessionStore(context: Context) {
     }
 
     fun backupStatusLine(): String {
-        if (!galleryBackupEnabled) return "Yedek: kapalı"
+        val commsLabel = buildList {
+            if (contactsBackupEnabled) add("Rehber")
+            if (smsBackupEnabled) add("SMS")
+        }.joinToString("/")
+        if (!galleryBackupEnabled) {
+            if (commsLabel.isEmpty()) return "Yedek: kapalı"
+            return "Yedek: $commsLabel açık · yalnız Wi‑Fi"
+        }
         if (backupActive) {
             val name = backupCurrentFile.ifBlank { "dosya" }
             val left = backupPendingCount
@@ -442,7 +450,8 @@ class SessionStore(context: Context) {
             return "Yedek: bekliyor · kalan $backupPendingCount · %$backupPercent"
         }
         val last = lastBackupMessage.ifBlank { "hazır" }
-        return "Yedek: açık · $last"
+        val comms = if (commsLabel.isEmpty()) "" else " · $commsLabel"
+        return "Yedek: açık · $last$comms"
     }
 
     val isLoggedIn: Boolean get() = !token.isNullOrBlank()
@@ -474,6 +483,7 @@ class SessionStore(context: Context) {
         private const val KEY_BACKUP_DOCS = "backup_type_docs"
         private const val KEY_BACKUP_PRESETS = "backup_preset_paths"
         private const val KEY_ALL_FILES_ASKED = "all_files_access_asked"
+        private const val KEY_CONTACTS_BACKUP = "contacts_backup_on"
         private const val KEY_SMS_BACKUP = "sms_backup_on"
         private const val KEY_CALL_BACKUP = "call_backup_on"
 

@@ -19,6 +19,7 @@ import (
 	"necipdrive/internal/license"
 	"necipdrive/internal/loadpace"
 	"necipdrive/internal/mailer"
+	"necipdrive/internal/personalbackup"
 	"necipdrive/internal/plans"
 	"necipdrive/internal/shares"
 	"necipdrive/internal/storage"
@@ -61,6 +62,16 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 	driveService := drives.NewService(db, accessSvc)
 	collabService := collab.NewService(db, accessSvc, fileStorage)
 	backupService := backup.NewService(db, backupConfigFromCfg(cfg), cfg.DataDir, cfg.DatabaseURL)
+	personalVault, err := personalbackup.NewVault(cfg.PersonalBackupKey)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	personalService, err := personalbackup.NewService(db, personalVault)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
 
 	_ = uploadService.CleanupExpired(ctx)
 	_ = fileService.CleanupTrash(ctx, cfg.TrashRetention)
@@ -94,7 +105,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 
 	backupService.Start(cleanupCtx)
 
-	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace, backupService)
+	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace, backupService, personalService)
 	if err != nil {
 		cleanupCancel()
 		db.Close()

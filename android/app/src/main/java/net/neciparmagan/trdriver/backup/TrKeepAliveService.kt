@@ -14,7 +14,9 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.ContactsContract
 import android.provider.MediaStore
+import android.provider.Telephony
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +27,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import net.neciparmagan.trdriver.data.CommsAccess
 import net.neciparmagan.trdriver.data.SessionStore
 import net.neciparmagan.trdriver.data.UploadNetworkGate
 import net.neciparmagan.trdriver.widget.BackupStatusWidget
@@ -49,6 +52,8 @@ class TrKeepAliveService : Service() {
     private var loop: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var mediaObserver: ContentObserver? = null
+    private var commsObserver: ContentObserver? = null
+    private val commsObservedUris = mutableSetOf<android.net.Uri>()
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -92,6 +97,7 @@ class TrKeepAliveService : Service() {
         running = true
         registerNetworkCallback()
         registerMediaObserver()
+        registerCommsObserver()
         if (loop?.isActive != true) {
             loop = scope.launch {
                 supervise(isStopped = { !isActive })
@@ -114,6 +120,7 @@ class TrKeepAliveService : Service() {
             }
 
             checkStalled(app, session)
+            registerCommsObserver()
 
             if (!UploadNetworkGate.isWifi(app)) {
                 notify("Wi‑Fi bekleniyor · yedek hazır")
@@ -148,12 +155,39 @@ class TrKeepAliveService : Service() {
                 )
             }
 
+            // Contacts / SMS ride the same Wi-Fi window and the same service,
+            // right after the media batches, so one foreground session covers
+            // every kind of backup the user enabled.
+            var commsPending = false
+            if (session.anyCommsBackupEnabled()) {
+                val comms = try {
+                    PersonalBackupEngine.runBatch(app, isStopped)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "comms backup failed: ${e.message}")
+                    null
+                }
+                if (comms != null) {
+                    session.lastBackupHeartbeatAt = System.currentTimeMillis()
+                    commsPending = comms.morePending
+                    if (comms.sentItems > 0 || comms.deletedItems > 0) {
+                        notify(comms.message.ifBlank { "Rehber/SMS yedeği güncel" })
+                    }
+                }
+            }
+
             cycles++
             if (cycles % VERIFY_EVERY_CYCLES == 0) {
                 BackupVerifier.verifyIfDue(app)
             }
             BackupStatusWidget.refreshAll(app)
             notify("Yedek güncel · Wi‑Fi izleniyor")
+            if (commsPending) {
+                // A large address book or a slow link: come back shortly
+                // instead of holding the CPU for one huge run.
+                BackupController.awaitWake(CONTINUE_SOON_MS)
+            }
             // Idle: new media, Wi-Fi change, manual kick, or watchdog. No busy polling.
             BackupController.awaitWake(WATCHDOG_MS)
             BackupController.ensure(app) // re-arm WorkManager after every cycle
@@ -220,6 +254,48 @@ class TrKeepAliveService : Service() {
         }
     }
 
+    /**
+     * New / edited contact or new SMS => wake the loop. Registering an observer
+     * on a provider we cannot read throws SecurityException, so each is guarded
+     * by the matching runtime permission.
+     */
+    private fun registerCommsObserver() {
+        val targets = buildList {
+            if (CommsAccess.hasContactsAccess(this@TrKeepAliveService)) {
+                add(ContactsContract.Contacts.CONTENT_URI)
+            }
+            if (CommsAccess.hasSmsAccess(this@TrKeepAliveService)) {
+                add(Telephony.Sms.CONTENT_URI)
+            }
+        }
+        if (targets.isEmpty()) return
+        synchronized(commsObservedUris) {
+            val missing = targets.filterNot { it in commsObservedUris }
+            if (missing.isEmpty()) return
+            val observer = commsObserver ?: object : ContentObserver(mainHandler) {
+                override fun onChange(selfChange: Boolean) {
+                    BackupController.requestKick()
+                }
+            }.also { commsObserver = it }
+            try {
+                missing.forEach { uri ->
+                    contentResolver.registerContentObserver(uri, true, observer)
+                    commsObservedUris.add(uri)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "registerCommsObserver failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun unregisterCommsObserver() {
+        val obs = commsObserver
+        commsObserver = null
+        synchronized(commsObservedUris) { commsObservedUris.clear() }
+        if (obs == null) return
+        runCatching { contentResolver.unregisterContentObserver(obs) }
+    }
+
     /** New photo / screenshot / video => back up immediately, like Google Photos. */
     private fun registerMediaObserver() {
         if (mediaObserver != null) return
@@ -270,6 +346,7 @@ class TrKeepAliveService : Service() {
         scope.cancel()
         unregisterNetworkCallback()
         unregisterMediaObserver()
+        unregisterCommsObserver()
         releaseWakeLock()
         running = false
         super.onDestroy()
@@ -281,6 +358,7 @@ class TrKeepAliveService : Service() {
         private const val WAKE_LOCK_TAG = "trdriver:gallery-backup"
         private const val WAKE_LOCK_TIMEOUT_MS = 10L * 60L * 1000L
         private const val WATCHDOG_MS = 15L * 60L * 1000L
+        private const val CONTINUE_SOON_MS = 5L * 1000L
         private const val STALL_AFTER_MS = 24L * 60L * 60L * 1000L
         private const val MAX_BATCHES_PER_CYCLE = 250
         private const val VERIFY_EVERY_CYCLES = 4

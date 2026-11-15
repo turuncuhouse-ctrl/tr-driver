@@ -25,6 +25,13 @@
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- Personal insurance backup (contacts + SMS). Requested only after the
+         explanation dialog in Backup settings; every read is gated by the
+         matching switch. Upload is Wi-Fi only and encrypted at rest. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission
+        android:name="android.permission.READ_SMS"
+        tools:ignore="RestrictedPermission" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
