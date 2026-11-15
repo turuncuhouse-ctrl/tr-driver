@@ -57,6 +57,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleProvision(w, r, user.ID)
+	case "directory":
+		if r.Method != http.MethodGet {
+			httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !h.limiter.allow("dir:" + user.ID) {
+			httpx.Error(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		list, err := h.service.Directory(r.Context(), user.ID)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		for i := range list {
+			list[i].Online = h.hub.ConnectedCount(list[i].userID) > 0
+		}
+		w.Header().Set("Cache-Control", "no-store, private")
+		httpx.WriteJSON(w, http.StatusOK, list)
 	case "phone":
 		h.handlePhone(w, r, user.ID)
 	case "signal":

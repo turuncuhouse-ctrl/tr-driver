@@ -339,3 +339,37 @@ func (s *Service) SetPhone(ctx context.Context, userID, raw string) (*PhoneView,
 	}
 	return s.GetPhone(ctx, userID)
 }
+
+// DirectoryEntry is one callable member shown in the app's "TR Driver
+// kullanıcıları" list.
+type DirectoryEntry struct {
+	Name      string `json:"name"`
+	Extension string `json:"extension"`
+	Online    bool   `json:"online"`
+	userID    string
+}
+
+// Directory lists the other members that have a calling account.
+func (s *Service) Directory(ctx context.Context, userID string) ([]DirectoryEntry, error) {
+	if s.db == nil {
+		return nil, errors.New("localtel database is unavailable")
+	}
+	rows, err := s.db.Query(ctx, `
+		select coalesce(nullif(a.display_name, ''), nullif(u.display_name, ''), split_part(u.email, '@', 1)), a.extension, a.user_id::text
+		from localtel_accounts a join users u on u.id = a.user_id
+		where a.user_id <> $1::uuid
+		order by 1 limit 200`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DirectoryEntry{}
+	for rows.Next() {
+		var e DirectoryEntry
+		if err := rows.Scan(&e.Name, &e.Extension, &e.userID); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

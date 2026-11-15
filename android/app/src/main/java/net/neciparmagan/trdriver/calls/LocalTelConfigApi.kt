@@ -135,6 +135,30 @@ class LocalTelConfigApi(private val session: SessionStore) {
         return phone to ext
     }
 
+    data class DirectoryMember(val name: String, val extension: String, val online: Boolean)
+
+    suspend fun getDirectory(): Result<List<DirectoryMember>> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!hasSession()) error("TR Driver oturumu açık değil")
+            val req = authed("${baseUrl()}/api/localtel/directory").get().build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) error(parseError(text))
+                val arr = json.parseToJsonElement(text) as kotlinx.serialization.json.JsonArray
+                arr.mapNotNull { el ->
+                    val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                    fun str(k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+                    val ext = str("extension")
+                    if (ext.isBlank()) null else DirectoryMember(
+                        name = str("name").ifBlank { ext },
+                        extension = ext,
+                        online = str("online") == "true",
+                    )
+                }
+            }
+        }
+    }
+
     suspend fun provisionConfig(): Result<LocalTelConfig> = withContext(Dispatchers.IO) {
         runCatching {
             if (!hasSession()) error("TR Driver oturumu açık değil")

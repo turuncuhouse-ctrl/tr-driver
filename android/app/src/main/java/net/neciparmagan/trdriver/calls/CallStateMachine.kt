@@ -23,6 +23,8 @@ enum class CallEndReason {
     REJECTED,
     CANCELLED,
     BUSY,
+    NOT_FOUND,
+    OFFLINE,
     NO_ANSWER,
     NETWORK_ERROR,
     CONFIG_ERROR,

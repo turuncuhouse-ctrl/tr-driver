@@ -239,6 +239,29 @@ class CallsActivity : AppCompatActivity() {
             layoutAdvancedLocalTel.visibility = if (show) View.VISIBLE else View.GONE
             btnAdvancedLocalTel.text = if (show) "Gelişmiş ayarları gizle" else "Gelişmiş ayarları göster"
         }
+        findViewById<Button>(R.id.btnTrDirectory).setOnClickListener {
+            lifecycleScope.launch {
+                configApi.getDirectory().onSuccess { members ->
+                    if (members.isEmpty()) {
+                        Toast.makeText(this@CallsActivity, "Henüz başka TR Driver kullanıcısı yok", Toast.LENGTH_LONG).show()
+                        return@onSuccess
+                    }
+                    val labels = members.map {
+                        "${it.name} · ${it.extension} · " + if (it.online) "çevrimiçi" else "çevrimdışı"
+                    }.toTypedArray()
+                    androidx.appcompat.app.AlertDialog.Builder(this@CallsActivity)
+                        .setTitle("TR Driver kullanıcıları")
+                        .setItems(labels) { _, which ->
+                            etDialTarget.setText(members[which].extension)
+                            findViewById<Button>(R.id.btnCallNow).performClick()
+                        }
+                        .setNegativeButton("Kapat", null)
+                        .show()
+                }.onFailure {
+                    Toast.makeText(this@CallsActivity, it.message ?: "Liste alınamadı", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         val etMyPhone = findViewById<EditText>(R.id.etMyPhone)
         val tvMyExtension = findViewById<TextView>(R.id.tvMyExtension)
         fun showMyPhone(result: Result<Pair<String, String>>) {

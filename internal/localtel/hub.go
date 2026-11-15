@@ -103,6 +103,10 @@ type callRoute struct {
 	callerUserID string
 	calleeUserID string
 	expiresAt    time.Time
+	// ringingUntil bounds how long an unanswered invite counts as "busy", so a
+	// caller that vanished can never leave the callee permanently busy.
+	ringingUntil time.Time
+	accepted     bool
 }
 
 type Hub struct {
@@ -153,6 +157,7 @@ func (h *Hub) Unregister(client *Client) {
 			delete(byUser, client.id)
 			if len(byUser) == 0 {
 				delete(h.users, client.userID)
+				h.dropRoutesOfLocked(client.userID)
 			}
 			client.close()
 		}
