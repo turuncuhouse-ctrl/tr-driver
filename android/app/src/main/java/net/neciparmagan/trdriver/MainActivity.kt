@@ -467,14 +467,13 @@ class MainActivity : AppCompatActivity() {
         if (cameFromUpdateNotification) {
             intent.removeExtra("tr_install_update")
         }
-        if (session.isLoggedIn) {
-            // A background update notification should open the dialog immediately.
-            AppUpdateHelper.check(
-                this,
-                force = cameFromUpdateNotification,
-                silentIfCurrent = !cameFromUpdateNotification,
-            )
-        }
+        // Version check runs at every launch (public endpoint, no session
+        // needed); a background update notification opens the dialog at once.
+        AppUpdateHelper.check(
+            this,
+            force = cameFromUpdateNotification,
+            silentIfCurrent = !cameFromUpdateNotification,
+        )
         runAppBootstrapIfNeeded()
     }
 

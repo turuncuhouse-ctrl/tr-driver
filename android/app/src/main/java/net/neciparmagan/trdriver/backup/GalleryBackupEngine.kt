@@ -4,7 +4,10 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import net.neciparmagan.trdriver.data.BackupPolicy
+import net.neciparmagan.trdriver.data.ContentHasher
 import net.neciparmagan.trdriver.data.DriveApi
+import net.neciparmagan.trdriver.data.IncrementalPolicy
 import net.neciparmagan.trdriver.data.LocalMedia
 import net.neciparmagan.trdriver.data.MediaAccess
 import net.neciparmagan.trdriver.data.MediaCatalog
@@ -34,7 +37,7 @@ object GalleryBackupEngine {
 
     // A full SAF tree walk is slow (one ContentProvider round-trip per entry),
     // and a cycle runs many batches. Cache the eligible list briefly; the
-    // uploaded-keys filter below is always read fresh, so this can never
+    // incremental catalogue read below is always fresh, so this can never
     // re-upload an item or skip a newly taken photo for more than a minute.
     private var cachedEligible: List<LocalMedia>? = null
     private var cachedEligibleAt = 0L
@@ -82,14 +85,16 @@ object GalleryBackupEngine {
             return GalleryBackupBatchResult(morePending = false, scheduleContinue = false)
         }
         val hasMedia = MediaAccess.hasMediaAccess(app)
-        val hasFolders = session.backupFolderUris.isNotEmpty()
+        val hasFolders = session.backupFolderUris.isNotEmpty() ||
+            session.backupPresetPaths.isNotEmpty() ||
+            MediaAccess.hasAudioAccess(app)
         if (!hasMedia && !hasFolders) {
             session.updateBackupProgress(
                 active = false,
                 currentFile = "",
                 doneCount = 0,
                 pendingCount = 0,
-                message = "Yedek: galeri izni yok — Ayarlar → Yedek’ten izin verin",
+                message = "Yedek: izin yok — Ayarlar → Yedek’ten izin veya klasör verin",
                 clearFileBytes = true,
             )
             BackupStatusWidget.refreshAll(app)
@@ -118,12 +123,44 @@ object GalleryBackupEngine {
 
         // Full library scan. The old 4000-item / 800-per-tree caps meant older
         // photos were NEVER backed up on large libraries.
-        val eligible = scanEligible(app, session, hasMedia)
+        val toggles = session.backupTypeToggles()
+        val eligible = scanEligible(app, session, hasMedia, toggles)
 
-        // One read instead of one SQLite query per media item (was O(n) queries).
-        val uploadedKeys = db.allUploadedKeys()
-        val pendingList = eligible.filter { it.mediaKey !in uploadedKeys }
-        var alreadyDone = (eligible.size - pendingList.size).coerceAtLeast(0)
+        // Incremental pass: one SQLite read + cheap size/mtime comparison.
+        // Content hashes are only read when size/mtime are inconclusive, and
+        // unchanged files are never uploaded again (see IncrementalPolicy).
+        val catalog = db.allCatalogRows()
+        val pendingList = ArrayList<LocalMedia>()
+        var alreadyDone = 0
+        for (item in eligible) {
+            val changeMs = changeKeyMs(item)
+            val stored = catalog[item.mediaKey]?.let {
+                IncrementalPolicy.Stored(it.sizeBytes, it.mtimeMs, it.contentHash)
+            }
+            var decision = IncrementalPolicy.decide(stored, item.sizeBytes, changeMs)
+            if (decision == IncrementalPolicy.Decision.SKIP &&
+                IncrementalPolicy.needsContentHash(stored, item.sizeBytes, changeMs)
+            ) {
+                val hash = hashOf(app, item)
+                decision = IncrementalPolicy.decide(stored, item.sizeBytes, changeMs, hash)
+                if (decision == IncrementalPolicy.Decision.SKIP && hash != null) {
+                    db.recordMeta(item.mediaKey, changeMs, hash)
+                }
+            } else if (decision == IncrementalPolicy.Decision.ADOPT_META) {
+                // Pre-0.10 row: remember the mtime, keep skipping (no re-upload).
+                db.recordMeta(item.mediaKey, changeMs)
+                alreadyDone++
+                continue
+            }
+            if (decision == IncrementalPolicy.Decision.SKIP) {
+                if (stored != null && stored.mtimeMs != changeMs) {
+                    db.recordMeta(item.mediaKey, changeMs, stored.contentHash)
+                }
+                alreadyDone++
+            } else {
+                pendingList += item
+            }
+        }
 
         if (pendingList.isEmpty()) {
             val partialHint = if (MediaAccess.hasPartialMediaAccess(app)) " · sınırlı galeri izni" else ""
@@ -218,7 +255,11 @@ object GalleryBackupEngine {
                 )
                 if (entry.id.isNotBlank() && item.mediaKey.isNotBlank()) {
                     val size = item.sizeBytes.coerceAtLeast(1L)
-                    db.markUploaded(item.mediaKey, entry.id, size, item.uri)
+                    // Record size + mtime + content hash so the next scan can
+                    // prove the file unchanged without re-uploading it.
+                    val changeMs = changeKeyMs(item)
+                    val hash = hashOf(app, item) ?: ""
+                    db.markUploaded(item.mediaKey, entry.id, size, item.uri, changeMs, hash)
                 }
                 uploadedCount++
                 alreadyDone += 1
@@ -305,16 +346,71 @@ object GalleryBackupEngine {
         )
     }
 
-    private fun scanEligible(app: Context, session: SessionStore, hasMedia: Boolean): List<LocalMedia> {
+    private fun scanEligible(
+        app: Context,
+        session: SessionStore,
+        hasMedia: Boolean,
+        toggles: BackupPolicy.TypeToggles,
+    ): List<LocalMedia> {
         val now = System.currentTimeMillis()
         cachedEligible?.let { if (now - cachedEligibleAt < SCAN_CACHE_MS) return it }
-        val gallery = if (hasMedia) MediaCatalog.scanAll(app) else emptyList()
-        val folders = MediaCatalog.scanAllDocumentTrees(app, session.backupFolderUris)
-        // Only skip genuinely empty/placeholder items; small text/config files matter too.
-        val eligible = (gallery + folders).filter { it.sizeBytes > 0L }
+
+        val sources = ArrayList<LocalMedia>()
+        // MediaStore gallery (photos + videos) — unchanged behaviour, filtered
+        // by the per-type toggles below.
+        if (hasMedia && (toggles.photo || toggles.video)) {
+            sources += MediaCatalog.scanAll(app)
+        }
+        if (toggles.audio && MediaAccess.hasAudioAccess(app)) {
+            sources += MediaCatalog.scanAllAudio(app)
+        }
+        if (toggles.doc) {
+            sources += MediaCatalog.scanDownloads(app)
+        }
+        // Standard preset folders (Download/DCIM/…/WhatsApp) walked directly —
+        // requires all-files access.
+        val directAccess = MediaAccess.hasDirectStorageAccess(app)
+        val presetPaths = session.backupPresetPaths
+        if (directAccess && presetPaths.isNotEmpty()) {
+            sources += MediaCatalog.scanDirectPaths(app, presetPaths)
+        }
+        // User-picked SAF trees: any file type, any extension (pdf/doc/zip/apk…).
+        // Trees already covered by a directly-walked preset are skipped so the
+        // same file is never uploaded from two sources.
+        val safTrees = if (directAccess && presetPaths.isNotEmpty()) {
+            session.backupFolderUris.filter { raw ->
+                !BackupPolicy.pathCoveredByPreset(BackupPolicy.treeUriToPath(raw), presetPaths)
+            }
+        } else {
+            session.backupFolderUris
+        }
+        sources += MediaCatalog.scanAllDocumentTrees(app, safTrees)
+
+        // Only skip genuinely empty/placeholder items and oversized files;
+        // small text/config files matter too.
+        val eligible = sources
+            .filter { BackupPolicy.allowsSize(it.sizeBytes) }
+            .filter { toggles.allows(BackupPolicy.kindOf(it.mimeType, it.displayName)) }
+            // The same file can be reachable twice (SAF tree + direct preset
+            // path): upload it once, keyed by folder + name + size + mtime.
+            .distinctBy { item ->
+                val ms = if (item.modifiedMs > 0L) item.modifiedMs else item.dateTakenMs
+                "${item.backupFolderLabel.orEmpty()}|${item.displayName}|${item.sizeBytes}|$ms"
+            }
         cachedEligible = eligible
         cachedEligibleAt = now
         return eligible
+    }
+
+    /** Stable change-detection timestamp: modified time, taken time as fallback. */
+    private fun changeKeyMs(item: LocalMedia): Long =
+        if (item.modifiedMs > 0L) item.modifiedMs else item.dateTakenMs
+
+    /** SHA-256 of the local file; null when the stream cannot be read. */
+    private fun hashOf(app: Context, item: LocalMedia): String? = try {
+        app.contentResolver.openInputStream(item.uri)?.use { ContentHasher.sha256Hex(it) }
+    } catch (e: Exception) {
+        null
     }
 
     private fun parentCacheKey(item: LocalMedia): String {

@@ -7,28 +7,44 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.neciparmagan.trdriver.data.AndroidVersionInfo
+import net.neciparmagan.trdriver.data.ContentHasher
 import net.neciparmagan.trdriver.data.DriveApi
 import net.neciparmagan.trdriver.data.SessionStore
+import net.neciparmagan.trdriver.data.UploadNetworkGate
 import java.io.File
 import java.security.MessageDigest
 
 /**
  * Auto-update: checks server, downloads APK in background, notifies for one-tap install.
  * Fully silent install (no user tap) requires device-owner / enterprise — not available for normal installs.
+ *
+ * Network rules: automatic downloads wait for Wi-Fi (a one-shot callback
+ * resumes them when it appears); a manual "Güncelle" tap may use mobile data
+ * after an explicit confirmation dialog. Downloaded bytes are verified with
+ * SHA-256 (manifest apkSha256) and the pinned release certificate before the
+ * system package installer is opened.
  */
 object AppUpdateHelper {
+    private const val TAG = "AppUpdateHelper"
     private const val THROTTLE_MS = 12_000L
     private const val CHANNEL_ID = "trdriver_updates"
     private const val NOTIFY_ID = 4201
@@ -48,7 +64,13 @@ object AppUpdateHelper {
     private var dialogShowing = false
     private var downloading = false
     private var pendingDownloadInfo: AndroidVersionInfo? = null
+    private var pendingDownloadSilent = true
     private var pendingInstallFile: File? = null
+    private var wifiWaitCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiWaitCm: ConnectivityManager? = null
+
+    /** Downloads deferred until Wi-Fi survives even if the activity is gone. */
+    private val autoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun check(
         activity: MainActivity,
@@ -176,7 +198,7 @@ object AppUpdateHelper {
             }
             pendingDownloadInfo = null
             val api = DriveApi(SessionStore(activity), activity.applicationContext)
-            startDownload(activity, api, info, silent = true)
+            startDownload(activity, api, info, silent = pendingDownloadSilent)
             return
         }
         val file = pendingInstallFile
@@ -222,7 +244,41 @@ object AppUpdateHelper {
         silent: Boolean,
     ) {
         if (downloading) return
+        pendingDownloadSilent = silent
         if (!ensureInstallPermission(activity, info)) return
+        // This call is handling the download now — drop any older deferral.
+        cancelWifiWait()
+        pendingDownloadInfo = null
+        if (silent) {
+            if (!UploadNetworkGate.isWifi(activity)) {
+                // Wi-Fi-only rule for automatic downloads.
+                deferDownloadForWifi(activity.applicationContext, info)
+                return
+            }
+            beginDownload(activity, api, info, silent = true)
+            return
+        }
+        if (!UploadNetworkGate.isWifi(activity)) {
+            // Manual "Güncelle": ask before spending mobile data.
+            confirmCellularDownload(activity) { confirmed ->
+                if (confirmed) {
+                    beginDownload(activity, api, info, silent = false)
+                } else {
+                    deferDownloadForWifi(activity.applicationContext, info)
+                }
+            }
+            return
+        }
+        beginDownload(activity, api, info, silent = false)
+    }
+
+    private fun beginDownload(
+        activity: MainActivity,
+        api: DriveApi,
+        info: AndroidVersionInfo,
+        silent: Boolean,
+    ) {
+        if (downloading) return
         downloading = true
         if (!silent) toast(activity, "Güncelleme indiriliyor…")
         activity.lifecycleScope.launch {
@@ -230,10 +286,10 @@ object AppUpdateHelper {
                 val file = withContext(Dispatchers.IO) {
                     api.downloadApkUpdate(info.downloadURL.ifBlank { info.apkPath })
                 }
-                if (!verifyReleaseSignature(activity.applicationContext, file)) {
+                if (!verifyDownloadedApk(activity.applicationContext, file, info)) {
                     runCatching { file.delete() }
                     if (!silent) {
-                        toast(activity, "Güncelleme imzası doğrulanamadı; kurulum iptal edildi")
+                        toast(activity, "Güncelleme doğrulaması başarısız; kurulum iptal edildi")
                     }
                     return@launch
                 }
@@ -244,6 +300,108 @@ object AppUpdateHelper {
             } finally {
                 downloading = false
             }
+        }
+    }
+
+    /**
+     * SHA-256 (manifest) + pinned signing certificate. Either failure deletes
+     * the file before it can reach the package installer.
+     */
+    private fun verifyDownloadedApk(context: Context, file: File, info: AndroidVersionInfo): Boolean {
+        val expected = info.apkSha256
+        if (expected.isNotBlank()) {
+            val actual = try {
+                ContentHasher.sha256Hex(file)
+            } catch (e: Exception) {
+                Log.w(TAG, "apk hash read failed: ${e.message}")
+                return false
+            }
+            if (!ContentHasher.matches(actual, expected)) {
+                Log.w(TAG, "apk sha256 mismatch — update rejected")
+                return false
+            }
+        }
+        return verifyReleaseSignature(context, file)
+    }
+
+    private fun confirmCellularDownload(activity: Activity, onResult: (Boolean) -> Unit) {
+        if (activity.isFinishing) {
+            onResult(false)
+            return
+        }
+        AlertDialog.Builder(activity)
+            .setTitle("Mobil veri ile indirilsin mi?")
+            .setMessage(
+                "Wi‑Fi bağlı değil. Güncelleme APK'si mobil veri üzerinden indirilebilir; " +
+                    "kota kullanımı doğabilir.",
+            )
+            .setPositiveButton("İndir") { _, _ -> onResult(true) }
+            .setNegativeButton("Wi‑Fi'de beklesin") { _, _ -> onResult(false) }
+            .setOnCancelListener { onResult(false) }
+            .show()
+    }
+
+    /** Parks an automatic download until Wi-Fi/Ethernet becomes available. */
+    private fun deferDownloadForWifi(app: Context, info: AndroidVersionInfo) {
+        pendingDownloadInfo = info
+        if (wifiWaitCallback != null) return
+        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                runCatching { cm.unregisterNetworkCallback(this) }
+                if (wifiWaitCallback === this) wifiWaitCallback = null
+                if (wifiWaitCm === cm) wifiWaitCm = null
+                val pending = pendingDownloadInfo ?: return
+                pendingDownloadInfo = null
+                autoScope.launch { autoDownloadWhenWifi(app, pending) }
+            }
+        }
+        try {
+            cm.registerNetworkCallback(request, callback)
+            wifiWaitCallback = callback
+            wifiWaitCm = cm
+        } catch (e: Exception) {
+            Log.w(TAG, "wifi callback registration failed: ${e.message}")
+        }
+    }
+
+    private fun cancelWifiWait() {
+        val cb = wifiWaitCallback ?: return
+        wifiWaitCallback = null
+        val cm = wifiWaitCm
+        wifiWaitCm = null
+        if (cm != null) {
+            runCatching { cm.unregisterNetworkCallback(cb) }
+        }
+    }
+
+    /** Wi-Fi-only background download path (no Activity required). */
+    private suspend fun autoDownloadWhenWifi(app: Context, info: AndroidVersionInfo) {
+        if (downloading) return
+        downloading = true
+        try {
+            val session = SessionStore(app)
+            if (session.serverUrl.isBlank()) return
+            val api = DriveApi(session, app)
+            val file = withContext(Dispatchers.IO) {
+                api.downloadApkUpdate(info.downloadURL.ifBlank { info.apkPath })
+            }
+            if (!verifyDownloadedApk(app, file, info)) {
+                runCatching { file.delete() }
+                return
+            }
+            // Notification tap opens MainActivity → install flow runs there.
+            notifyReadyToInstall(app, file, info)
+        } catch (e: Exception) {
+            // Never log the download URL or session material.
+            Log.w(TAG, "deferred update download failed: ${e.message}")
+        } finally {
+            downloading = false
         }
     }
 

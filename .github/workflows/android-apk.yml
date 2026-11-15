@@ -79,16 +79,19 @@ jobs:
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk web/public/apps/TRDriver.apk
           python - <<'PY'
-          import json, os
+          import json, os, hashlib
           from pathlib import Path
           version = Path('VERSION').read_text().strip()
           code = int(os.environ['VERSION_CODE'])
+          apk = Path('web/public/apps/TRDriver.apk')
+          sha = hashlib.sha256(apk.read_bytes()).hexdigest()
           data = {
               "minSupportedCode": 1,
               "versionCode": code,
               "versionName": version,
               "apkPath": "/download/TRDriver.apk",
-              "releaseNotes": "Kalıcı cihaz oturumu, güvenlik düzeltmeleri ve Android güncellemesi",
+              "apkSha256": sha,
+              "releaseNotes": "Tüm dosya türü yedeği (ses, belge, WhatsApp), artımlı yükleme ve uygulama içi güncelleme",
           }
           Path('web/public/apps/android-version.json').write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
           PY

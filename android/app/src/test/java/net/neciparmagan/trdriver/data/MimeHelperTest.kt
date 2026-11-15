@@ -17,9 +17,43 @@ class MimeHelperTest {
     }
 
     @Test
+    fun audioExtensions() {
+        assertEquals("audio/mpeg", MimeHelper.guessFromExtension("mp3"))
+        assertEquals("audio/mp4", MimeHelper.guessFromExtension("m4a"))
+        assertEquals("audio/wav", MimeHelper.guessFromExtension("wav"))
+        assertEquals("audio/flac", MimeHelper.guessFromExtension("flac"))
+        assertEquals("audio/ogg", MimeHelper.guessFromExtension("ogg"))
+        assertEquals("audio/ogg", MimeHelper.guessFromExtension("opus"))
+        assertEquals("audio/aac", MimeHelper.guessFromExtension("aac"))
+    }
+
+    @Test
+    fun documentAndArchiveExtensions() {
+        assertEquals("application/msword", MimeHelper.guessFromExtension("doc"))
+        assertEquals(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            MimeHelper.guessFromExtension("docx"),
+        )
+        assertEquals("application/vnd.ms-excel", MimeHelper.guessFromExtension("xls"))
+        assertEquals(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            MimeHelper.guessFromExtension("xlsx"),
+        )
+        assertEquals("text/plain", MimeHelper.guessFromExtension("txt"))
+        assertEquals("text/csv", MimeHelper.guessFromExtension("csv"))
+        assertEquals("application/zip", MimeHelper.guessFromExtension("zip"))
+        assertEquals("application/vnd.rar", MimeHelper.guessFromExtension("rar"))
+        assertEquals("application/x-7z-compressed", MimeHelper.guessFromExtension("7z"))
+        assertEquals("application/vnd.android.package-archive", MimeHelper.guessFromExtension("apk"))
+        assertEquals("video/x-matroska", MimeHelper.guessFromExtension("mkv"))
+        assertEquals("video/webm", MimeHelper.guessFromExtension("webm"))
+    }
+
+    @Test
     fun unknownExtensionsReturnNull() {
-        assertNull(MimeHelper.guessFromExtension("mp3"))
-        assertNull(MimeHelper.guessFromExtension("txt"))
+        assertNull(MimeHelper.guessFromExtension("xyz"))
+        assertNull(MimeHelper.guessFromExtension("db"))
         assertNull(MimeHelper.guessFromExtension(""))
+        assertNull(MimeHelper.guessFromExtension("noext"))
     }
 }
