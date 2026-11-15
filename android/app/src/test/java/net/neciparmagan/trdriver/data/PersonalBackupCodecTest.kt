@@ -1,6 +1,7 @@
 package net.neciparmagan.trdriver.data
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -92,7 +93,7 @@ class PersonalBackupCodecTest {
         assertTrue(obj.containsKey("deleted"))
         // The server rejects unknown fields.
         assertEquals(setOf("deviceId", "items", "deleted"), obj.keys)
-        val item = obj["items"]!!.let { Json.parseToJsonElement(it.toString()).jsonObject }
+        val item = obj["items"]!!.jsonArray.single().jsonObject
         assertEquals(setOf("key", "revision", "hash", "data"), item.keys)
     }
 
