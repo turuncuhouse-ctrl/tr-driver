@@ -43,6 +43,8 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import net.neciparmagan.trdriver.backup.GalleryBackupWorker
+import net.neciparmagan.trdriver.calls.CallsActivity
+import net.neciparmagan.trdriver.calls.LocalTelListenerService
 import net.neciparmagan.trdriver.data.FileEntry
 import net.neciparmagan.trdriver.data.MimeHelper
 import net.neciparmagan.trdriver.data.SessionStore
@@ -261,11 +263,17 @@ class MainActivity : AppCompatActivity() {
             }
             qrLauncher.launch(options)
         }
+        findViewById<Button>(R.id.btnLoginCalls).setOnClickListener {
+            startActivity(Intent(this, CallsActivity::class.java))
+        }
 
         findViewById<View>(R.id.avatarBadge).setOnClickListener { showAccountSheet() }
         findViewById<Button>(R.id.btnActions).setOnClickListener { showActionsMenu(it) }
         findViewById<Button>(R.id.btnPhotos).setOnClickListener {
             startActivity(Intent(this, PhotosLibraryActivity::class.java))
+        }
+        findViewById<Button>(R.id.btnCalls).setOnClickListener {
+            startActivity(Intent(this, CallsActivity::class.java))
         }
         findViewById<Button>(R.id.btnLayout).setOnClickListener {
             gridLayout = !gridLayout
@@ -475,6 +483,9 @@ class MainActivity : AppCompatActivity() {
             silentIfCurrent = !cameFromUpdateNotification,
         )
         runAppBootstrapIfNeeded()
+        if (session.localTelEnabled && session.localTelAutoRegister) {
+            LocalTelListenerService.syncState(this)
+        }
     }
 
     private val bootstrapPermLauncher =
@@ -661,6 +672,9 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Çıkış") { _, _ ->
                 session.galleryBackupEnabled = false
                 GalleryBackupWorker.schedule(this)
+                if (session.localTelSyncToServer) {
+                    LocalTelListenerService.stop(this)
+                }
                 registerNameVisible = false
                 inputDisplayName.visibility = View.GONE
                 btnRegister.text = "Üye ol"
@@ -687,10 +701,11 @@ class MainActivity : AppCompatActivity() {
             }
             menu.add(0, 10, 8, "Araç kabul")
             menu.add(0, 12, 9, "TR Photos")
-            menu.add(0, 7, 10, "Yedekleme ayarları")
-            menu.add(0, 13, 11, "Yer aç")
-            menu.add(0, 8, 12, "Müzik")
-            menu.add(0, 9, 13, "Güncellemeyi kontrol et")
+            menu.add(0, 15, 10, "LocalTel Aramalar")
+            menu.add(0, 7, 11, "Yedekleme ayarları")
+            menu.add(0, 13, 12, "Yer aç")
+            menu.add(0, 8, 13, "Müzik")
+            menu.add(0, 9, 14, "Güncellemeyi kontrol et")
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> {
@@ -724,6 +739,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     10 -> openVehicleIntake()
                     12 -> startActivity(Intent(this@MainActivity, PhotosLibraryActivity::class.java))
+                    15 -> startActivity(Intent(this@MainActivity, CallsActivity::class.java))
                     7 -> startActivity(Intent(this@MainActivity, BackupSettingsActivity::class.java))
                     13 -> startActivity(Intent(this@MainActivity, FreeUpSpaceActivity::class.java))
                     8 -> {

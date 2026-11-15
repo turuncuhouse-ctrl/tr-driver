@@ -454,14 +454,135 @@ class SessionStore(context: Context) {
         return "Yedek: açık · $last$comms"
     }
 
+    // --- LocalTel IP arama (0.12.0) -----------------------------------------
+    // Secret stays inside EncryptedSharedPreferences (SecurePrefs) locally
+    // and is never written to logs.
+
+    var localTelEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LT_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_LT_ENABLED, value).apply()
+
+    var localTelProviderType: String
+        get() = prefs.getString(KEY_LT_PROVIDER, "sip") ?: "sip"
+        set(value) = prefs.edit().putString(KEY_LT_PROVIDER, value.trim().lowercase()).apply()
+
+    var localTelServerUrl: String
+        get() = prefs.getString(KEY_LT_SERVER, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LT_SERVER, value.trim()).apply()
+
+    var localTelSipDomain: String
+        get() = prefs.getString(KEY_LT_DOMAIN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LT_DOMAIN, value.trim()).apply()
+
+    var localTelSipPort: Int
+        get() = prefs.getInt(KEY_LT_PORT, 5060)
+        set(value) = prefs.edit().putInt(KEY_LT_PORT, value.coerceIn(1, 65535)).apply()
+
+    var localTelTransport: String
+        get() = prefs.getString(KEY_LT_TRANSPORT, "udp") ?: "udp"
+        set(value) = prefs.edit().putString(KEY_LT_TRANSPORT, value.trim().lowercase()).apply()
+
+    var localTelUsername: String
+        get() = prefs.getString(KEY_LT_USERNAME, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LT_USERNAME, value.trim()).apply()
+
+    var localTelExtension: String
+        get() = prefs.getString(KEY_LT_EXTENSION, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LT_EXTENSION, value.trim()).apply()
+
+    var localTelDisplayName: String
+        get() = prefs.getString(KEY_LT_DISPLAY_NAME, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LT_DISPLAY_NAME, value.trim()).apply()
+
+    var localTelSecret: String
+        get() = prefs.getString(KEY_LT_SECRET, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LT_SECRET, value).apply()
+
+    var localTelOutboundPrefix: String
+        get() = prefs.getString(KEY_LT_PREFIX, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LT_PREFIX, value.trim()).apply()
+
+    var localTelCountryCode: String
+        get() = prefs.getString(KEY_LT_COUNTRY, "90") ?: "90"
+        set(value) = prefs.edit().putString(KEY_LT_COUNTRY, value.filter { it in '0'..'9' }.ifEmpty { "90" }).apply()
+
+    var localTelAutoRegister: Boolean
+        get() = prefs.getBoolean(KEY_LT_AUTO_REG, true)
+        set(value) = prefs.edit().putBoolean(KEY_LT_AUTO_REG, value).apply()
+
+    var localTelSyncToServer: Boolean
+        get() = prefs.getBoolean(KEY_LT_SYNC_SERVER, false)
+        set(value) = prefs.edit().putBoolean(KEY_LT_SYNC_SERVER, value).apply()
+
+    fun loadLocalTelConfig(): net.neciparmagan.trdriver.calls.LocalTelConfig {
+        val provider = net.neciparmagan.trdriver.calls.LocalTelProviderType.fromWire(localTelProviderType)
+        return net.neciparmagan.trdriver.calls.LocalTelConfig(
+            enabled = localTelEnabled,
+            providerType = provider,
+            serverUrl = localTelServerUrl,
+            sipDomain = localTelSipDomain,
+            sipPort = localTelSipPort,
+            transport = net.neciparmagan.trdriver.calls.LocalTelTransport.fromWire(localTelTransport, provider),
+            username = localTelUsername,
+            extension = localTelExtension,
+            displayName = localTelDisplayName,
+            secret = localTelSecret,
+            outboundPrefix = localTelOutboundPrefix,
+            defaultCountryCode = localTelCountryCode,
+            autoRegister = localTelAutoRegister,
+            syncToServer = localTelSyncToServer,
+        )
+    }
+
+    fun saveLocalTelConfig(config: net.neciparmagan.trdriver.calls.LocalTelConfig) {
+        prefs.edit()
+            .putBoolean(KEY_LT_ENABLED, config.enabled)
+            .putString(KEY_LT_PROVIDER, config.providerType.wireValue)
+            .putString(KEY_LT_SERVER, config.serverUrl.trim())
+            .putString(KEY_LT_DOMAIN, config.sipDomain.trim())
+            .putInt(KEY_LT_PORT, config.sipPort.coerceIn(1, 65535))
+            .putString(KEY_LT_TRANSPORT, config.transport.wireValue)
+            .putString(KEY_LT_USERNAME, config.username.trim())
+            .putString(KEY_LT_EXTENSION, config.extension.trim())
+            .putString(KEY_LT_DISPLAY_NAME, config.displayName.trim())
+            .putString(KEY_LT_SECRET, config.secret)
+            .putString(KEY_LT_PREFIX, config.outboundPrefix.trim())
+            .putString(KEY_LT_COUNTRY, config.defaultCountryCode.filter { it in '0'..'9' }.ifEmpty { "90" })
+            .putBoolean(KEY_LT_AUTO_REG, config.autoRegister)
+            .putBoolean(KEY_LT_SYNC_SERVER, config.syncToServer)
+            .apply()
+    }
+
+    fun clearLocalTelConfig() {
+        prefs.edit()
+            .remove(KEY_LT_ENABLED)
+            .remove(KEY_LT_PROVIDER)
+            .remove(KEY_LT_SERVER)
+            .remove(KEY_LT_DOMAIN)
+            .remove(KEY_LT_PORT)
+            .remove(KEY_LT_TRANSPORT)
+            .remove(KEY_LT_USERNAME)
+            .remove(KEY_LT_EXTENSION)
+            .remove(KEY_LT_DISPLAY_NAME)
+            .remove(KEY_LT_SECRET)
+            .remove(KEY_LT_PREFIX)
+            .remove(KEY_LT_COUNTRY)
+            .remove(KEY_LT_AUTO_REG)
+            .remove(KEY_LT_SYNC_SERVER)
+            .apply()
+    }
+
     val isLoggedIn: Boolean get() = !token.isNullOrBlank()
 
     fun clearAuth() {
-        prefs.edit()
+        val editor = prefs.edit()
             .remove(KEY_TOKEN)
             .remove(KEY_ROOT)
             .remove(KEY_PHOTOS_ROOT)
-            .apply()
+        if (localTelSyncToServer) {
+            editor.remove(KEY_LT_SECRET)
+        }
+        editor.apply()
     }
 
     companion object {
@@ -519,5 +640,19 @@ class SessionStore(context: Context) {
         private const val KEY_UPLOAD_Q_MSG = "upload_q_msg"
         private const val KEY_UPLOAD_Q_BYTES_SENT = "upload_q_bytes_sent"
         private const val KEY_UPLOAD_Q_BYTES_TOTAL = "upload_q_bytes_total"
+        private const val KEY_LT_ENABLED = "lt_enabled"
+        private const val KEY_LT_PROVIDER = "lt_provider"
+        private const val KEY_LT_SERVER = "lt_server"
+        private const val KEY_LT_DOMAIN = "lt_domain"
+        private const val KEY_LT_PORT = "lt_port"
+        private const val KEY_LT_TRANSPORT = "lt_transport"
+        private const val KEY_LT_USERNAME = "lt_username"
+        private const val KEY_LT_EXTENSION = "lt_extension"
+        private const val KEY_LT_DISPLAY_NAME = "lt_display_name"
+        private const val KEY_LT_SECRET = "lt_secret"
+        private const val KEY_LT_PREFIX = "lt_prefix"
+        private const val KEY_LT_COUNTRY = "lt_country"
+        private const val KEY_LT_AUTO_REG = "lt_auto_reg"
+        private const val KEY_LT_SYNC_SERVER = "lt_sync_server"
     }
 }

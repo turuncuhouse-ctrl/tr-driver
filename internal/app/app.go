@@ -18,6 +18,7 @@ import (
 	"necipdrive/internal/files"
 	"necipdrive/internal/license"
 	"necipdrive/internal/loadpace"
+	"necipdrive/internal/localtel"
 	"necipdrive/internal/mailer"
 	"necipdrive/internal/personalbackup"
 	"necipdrive/internal/plans"
@@ -72,6 +73,17 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		db.Close()
 		return nil, nil, err
 	}
+	localtelVault, err := localtel.NewVault(cfg.LocalTelKey)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	localtelService, err := localtel.NewService(db, localtelVault)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	localtelHub := localtel.NewHub()
 
 	_ = uploadService.CleanupExpired(ctx)
 	_ = fileService.CleanupTrash(ctx, cfg.TrashRetention)
@@ -105,7 +117,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 
 	backupService.Start(cleanupCtx)
 
-	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace, backupService, personalService)
+	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace, backupService, personalService, localtelService, localtelHub)
 	if err != nil {
 		cleanupCancel()
 		db.Close()

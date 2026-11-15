@@ -38,7 +38,10 @@ type Config struct {
 	// SessionSecret; set it explicitly so rotating the session secret does not
 	// make already stored personal records unreadable.
 	PersonalBackupKey string
-	TrustedProxies    []netip.Prefix
+	// Encryption key for saved LocalTel SIP/gateway credentials. Falls back to
+	// PersonalBackupKey (then SessionSecret) when empty.
+	LocalTelKey    string
+	TrustedProxies []netip.Prefix
 	// Backup subsystem (see internal/backup + docs/BACKUP.md).
 	BackupEnabled       bool
 	BackupDir           string
@@ -91,6 +94,7 @@ func Load() (Config, error) {
 		UpdateChannel:        getEnv("UPDATE_CHANNEL", "stable"),
 		LicenseVendorMode:    getEnvBool("LICENSE_VENDOR_MODE", false),
 		PersonalBackupKey:    getEnv("PERSONAL_BACKUP_KEY", ""),
+		LocalTelKey:          getEnv("LOCAL_TEL_KEY", ""),
 		// Defaults mirror internal/backup Default* constants.
 		BackupEnabled:       getEnvBool("BACKUP_ENABLED", true),
 		BackupDir:           getEnv("BACKUP_DIR", "./backups/restic"),
@@ -131,6 +135,12 @@ func Load() (Config, error) {
 	}
 	if len(cfg.PersonalBackupKey) < 16 {
 		return Config{}, fmt.Errorf("PERSONAL_BACKUP_KEY must be at least 16 characters")
+	}
+	if cfg.LocalTelKey == "" {
+		cfg.LocalTelKey = cfg.PersonalBackupKey
+	}
+	if len(cfg.LocalTelKey) < 16 {
+		return Config{}, fmt.Errorf("LOCAL_TEL_KEY must be at least 16 characters")
 	}
 	if cfg.AppEnv == "production" {
 		if cfg.SessionSecret == "change-me" || strings.Contains(strings.ToLower(cfg.SessionSecret), "degistir") {

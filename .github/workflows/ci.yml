@@ -85,9 +85,20 @@ jobs:
       - uses: android-actions/setup-android@v4
       - name: Build debug APK
         working-directory: android
+        shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          set +e
+          ./gradlew assembleDebug --no-daemon 2>&1 | tee /tmp/android-build.log
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "$code" -ne 0 ]; then
+            grep -E -- '^e: |error: |ERROR:|FAILURE:|What went wrong:|Execution failed|Caused by|AAPT' /tmp/android-build.log \
+              | head -40 | while IFS= read -r line; do
+                echo "::error title=Android APK build failure::$line"
+              done
+            exit "$code"
+          fi
       - name: Run Android unit tests
         working-directory: android
         shell: bash

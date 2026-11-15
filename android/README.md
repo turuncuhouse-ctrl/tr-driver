@@ -17,6 +17,7 @@ Sideloading’de “Play Protect / doğrulanmadı” uyarısı Play Store dış�
 - Üye ol / giriş / QR ile giriş
 - Galeri + ek klasör yedek (foto, video, ses, tüm dosyalar)
 - Rehber ve SMS yedeği (yalnız Wi‑Fi, açıklama diyaloğuyla izin, artımlı; sunucuda şifreli) — `docs/PERSONAL_BACKUP.md`
+- LocalTel IP/SIP sesli arama (rehber eşleştirme, kilit ekranı tam ekran Aç/Reddet, Android Telecom) — `docs/LOCALTEL_CALLING.md`
 - Video/müzik/resim önizleme
 - Arka plan müzik + mini player
 - Uygulama içi APK güncelleme

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import net.neciparmagan.trdriver.calls.LocalTelListenerService
 import net.neciparmagan.trdriver.data.SessionStore
 
 /**
@@ -20,6 +21,9 @@ class BootReceiver : BroadcastReceiver() {
         if (action !in RESTART_ACTIONS) return
         val app = context.applicationContext
         val session = SessionStore(app)
+        if (session.localTelEnabled && session.localTelAutoRegister) {
+            runCatching { LocalTelListenerService.syncState(app) }
+        }
         if (!session.isLoggedIn || !session.anyBackupEnabled()) {
             BackupController.ensure(app)
             return

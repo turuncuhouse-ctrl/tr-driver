@@ -15,6 +15,7 @@ Kendi sunucunda çalışan, Google Drive’a para ödemeden dosya bulutu. Go + P
 - Yedekleme işlemi sunucunuzu çok yormayacak şekilde güvenli teker teker yapılmaktadır.
 - Sunucu işlemciniz düşükde olsa sunucunuzu dar boğaz yapmayacak şekilde yavaş ve tek tek yapmaktadır.
 - **Rehber + SMS yedeği (0.11.0):** Android istemci kişileri ve mesajları yalnız Wi‑Fi üzerinden, artımlı olarak yükler; sunucuda AES‑256‑GCM ile şifreli saklanır, geri yükleme listesi ve tek tıkla silme vardır. Kurulum: [`docs/PERSONAL_BACKUP.md`](docs/PERSONAL_BACKUP.md)
+- **LocalTel IP sesli arama (0.12.0):** Android içinde WhatsApp benzeri sesli arama (`SipLocalTelProvider` / `GatewayLocalTelProvider`), rehber eşleştirme, kilit ekranında sabit **Aç / Reddet** düğmeleri ve şifreli sunucu ayarı (`/api/localtel/*`). Ayrıntılar: [`docs/LOCALTEL_CALLING.md`](docs/LOCALTEL_CALLING.md)
 - **Sunucu yedekleri (3-2-1):** her gece şifreli + artımlı `restic` snapshot (veritabanı + dosyalar), S3 offsite replikasyonu, her çalışta geri-yükleme provası, admin paneli + webhook izleme. Kurulum: [`docs/BACKUP.md`](docs/BACKUP.md)
 
 ## Kota
@@ -57,6 +58,7 @@ Compose dosyaları **secret hardcode etmez**. Şunları ortam değişkeni olarak
 - `TRUSTED_PROXY_CIDRS=172.18.0.0/16` (yalnızca güvendiğiniz ters vekil ağları; boşsa forwarded header’lar yok sayılır)
 - `DEVICE_TOKEN_TTL=0` (cihaz/Android oturumu süresiz; iptal veya şifre sıfırlama ile biter)
 - `PERSONAL_BACKUP_KEY` (rehber/SMS yedeğinin sunucudaki şifreleme anahtarı; boşsa `SESSION_SECRET` kullanılır)
+- `LOCAL_TEL_KEY` (LocalTel SIP/gateway ayarlarının sunucudaki şifreleme anahtarı; boşsa `PERSONAL_BACKUP_KEY` / `SESSION_SECRET` kullanılır)
 
 Örnek merkezi güncelleme manifest’i: [`docs/update-manifest.example.json`](docs/update-manifest.example.json)
 

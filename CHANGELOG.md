@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.12.0 — LocalTel IP sesli arama, rehber eşleştirme ve kilit ekranı deneyimi
+
+### Added
+- **LocalTel IP/SIP sesli arama sağlayıcı arayüzü** (`LocalTelCallProvider`):
+  - Doğrudan **RFC 3261 SIP** (`SipLocalTelProvider`: UDP/TCP/TLS, Digest MD5/SHA-256 kimlik doğrulama, SDP + G.711 PCMU/PCMA RTP, RFC 2833 DTMF ve simetrik NAT)
+  - **WebSocket / HTTP Ağ Geçidi** (`GatewayLocalTelProvider`: `/api/localtel/ws` veya özel `wss://` LocalTel sunucusu üzerinden sinyalizasyon ve ses köprüsü)
+- **Numara normalizasyonu ve rehber eşleştirme** (`PhoneNumberNormalizer`, `ContactMatcher`, `AndroidContactDirectory`):
+  - Türkiye (`+90`, `0090`, `05xx`, `5xx`, sabit hat, `444`), uluslararası E.164, kısa dahili (`2–6` hane) ve SIP URI normalizasyonu; farklı ülke kodları arasında hatalı eşleşme koruması
+  - Mevcut Aşama 2 `READ_CONTACTS` izniyle gelen/giden çağrılarda ve çeviricide otomatik kişi adı + etiket gösterimi, Türkçe karakter katlamalı arama
+- **Kilit ekranı gelen arama deneyimi ve Android Telecom entegrasyonu**:
+  - `CallActivity` (`showWhenLocked`, `turnScreenOn`) ve `NotificationCompat.CallStyle` tam ekran bildirimiyle kilitliyken dahi kaymayan sabit büyük **Aç** / **Reddet** düğmeleri
+  - `TrConnectionService` (`PhoneAccount.CAPABILITY_SELF_MANAGED`), `TrCallService` (`phoneCall|microphone` — Android 14 uyumlu aşamalı izin kontrolü), `CallAudioController` (AudioFocus, zil sesi/geri çalma tonu, hoparlör/Bluetooth yönlendirme, yakınlık sensörü kilidi ve çağrı bitince eksiksiz temizlik)
+  - Android 14 `USE_FULL_SCREEN_INTENT`, `RECORD_AUDIO`, `POST_NOTIFICATIONS` ve `READ_CONTACTS` için Türkçe açıklama diyaloglu izin akışları
+- **Sunucu tarafı LocalTel yapılandırma kasası ve sinyal aktarıcısı** (`internal/localtel`):
+  - `GET|PUT|DELETE /api/localtel/config`, `GET /api/localtel/config/provision`, `POST /api/localtel/signal`, `GET /api/localtel/ws`
+  - Kimlik bilgileri veritabanında kullanıcıya bağlı AES‑256‑GCM (`LOCAL_TEL_KEY` veya `PERSONAL_BACKUP_KEY`) ile şifreli saklanır; UI uçları düz metin parolayı asla döndürmez
+- **Yeni ekranlar**: Ana ekranda **Aramalar** (`CallsActivity` — çevirici, rehber arama, yerel test çağrısı, LocalTel sağlayıcı ayarları) ve tam ekran **CallActivity**
+- **Birim ve entegrasyon testleri**: `PhoneNumberNormalizerTest`, `ContactMatcherTest`, `CallStateMachineTest`, `SipAndG711CodecTest`, `internal/localtel/localtel_test.go`, `internal/integration/localtel_test.go`
+
+### Changed
+- Mevcut yedekleme davranışı (yalnız Wi‑Fi, sürekli arka plan servisi, bant genişliği/hız sınırı) olduğu gibi korundu; LocalTel dinleyicisi (`LocalTelListenerService`) Wi‑Fi ve mobil veri üzerinde yedeklemeden bağımsız çalışır
+
+### Security
+- SIP/LocalTel parolaları yalnızca Keystore destekli `SessionStore` ve sunucu AES‑256‑GCM kasasında tutulur; günlüklere, `toString()` çıktılarına veya UI özet yanıtlarına yazılmaz
+- Çağrı sinyalleri ve yapılandırma kayıtları oturum açmış kullanıcı kapsamıyla sıkı biçimde izole edilir
+
 ## 0.11.0 — Rehber ve SMS yedeği (şifreli, Wi‑Fi, artımlı)
 
 ### Added

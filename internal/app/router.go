@@ -16,6 +16,7 @@ import (
 	"necipdrive/internal/httpx"
 	"necipdrive/internal/license"
 	"necipdrive/internal/loadpace"
+	"necipdrive/internal/localtel"
 	"necipdrive/internal/mailer"
 	"necipdrive/internal/personalbackup"
 	"necipdrive/internal/plans"
@@ -43,6 +44,8 @@ func NewRouter(
 	pace *loadpace.Controller,
 	backupService *backup.Service,
 	personalService *personalbackup.Service,
+	localtelService *localtel.Service,
+	localtelHub *localtel.Hub,
 ) (http.Handler, error) {
 	mux := http.NewServeMux()
 
@@ -60,6 +63,7 @@ func NewRouter(
 	updateHandler := updates.NewHandler(updates.Config{ManifestURL: cfg.UpdateManifestURL, Channel: cfg.UpdateChannel})
 	backupHandler := backup.NewHandler(backupService)
 	personalHandler := personalbackup.NewHandler(personalService)
+	localtelHandler := localtel.NewHandler(localtelService, localtelHub)
 	davHandler := webdavx.New(authService, fileService, cfg.TrustedProxies)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +132,8 @@ func NewRouter(
 	// Personal insurance backup (contacts / SMS). Encrypted at rest, scoped to
 	// the authenticated user; the handler validates kind and payload.
 	mux.Handle(personalbackup.BasePath, authHandler.RequireAuth(personalHandler))
+	// LocalTel IP-phone / SIP configuration and gateway signaling relay.
+	mux.Handle(localtel.BasePath, authHandler.RequireAuth(localtelHandler))
 	mux.Handle("/api/sync/snapshot", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Snapshot)))
 	mux.Handle("/api/sync/changes", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Changes)))
 	mux.Handle("/api/sync/folders", authHandler.RequireAuth(http.HandlerFunc(syncHandler.Folder)))
