@@ -83,9 +83,10 @@ class CallsActivity : AppCompatActivity() {
     private lateinit var swSyncToServer: SwitchCompat
 
     private var contactIndex: ContactIndex = ContactMatcher.buildIndex(emptyList())
-    private val contactsAdapter = ContactsCallAdapter { entry, rawTarget ->
-        initiateCallWithPermissions(rawTarget, entry.displayName)
-    }
+    private val contactsAdapter = ContactsCallAdapter(
+        isTrUser = { raw -> TrDriverContacts.isMember(raw) },
+        onCallClick = { entry, rawTarget -> initiateCallWithPermissions(rawTarget, entry.displayName) },
+    )
     private val transportValues = listOf(
         LocalTelTransport.UDP,
         LocalTelTransport.TCP,
@@ -162,6 +163,7 @@ class CallsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        MyPhonePrompt.ensure(this, session)
         refreshPermissionBanner()
         if (CommsAccess.hasContactsAccess(this) && contactIndex.size() == 0) {
             reloadContactsAsync(forceRefresh = false)
@@ -238,6 +240,29 @@ class CallsActivity : AppCompatActivity() {
             val show = layoutAdvancedLocalTel.visibility != View.VISIBLE
             layoutAdvancedLocalTel.visibility = if (show) View.VISIBLE else View.GONE
             btnAdvancedLocalTel.text = if (show) "Gelişmiş ayarları gizle" else "Gelişmiş ayarları göster"
+        }
+        findViewById<Button>(R.id.btnTrDirectory).setOnClickListener {
+            lifecycleScope.launch {
+                configApi.getDirectory().onSuccess { members ->
+                    if (members.isEmpty()) {
+                        Toast.makeText(this@CallsActivity, "Henüz başka TR Driver kullanıcısı yok", Toast.LENGTH_LONG).show()
+                        return@onSuccess
+                    }
+                    val labels = members.map {
+                        "${it.name} · ${it.extension} · " + if (it.online) "çevrimiçi" else "çevrimdışı"
+                    }.toTypedArray()
+                    androidx.appcompat.app.AlertDialog.Builder(this@CallsActivity)
+                        .setTitle("TR Driver kullanıcıları")
+                        .setItems(labels) { _, which ->
+                            etDialTarget.setText(members[which].extension)
+                            findViewById<Button>(R.id.btnCallNow).performClick()
+                        }
+                        .setNegativeButton("Kapat", null)
+                        .show()
+                }.onFailure {
+                    Toast.makeText(this@CallsActivity, it.message ?: "Liste alınamadı", Toast.LENGTH_LONG).show()
+                }
+            }
         }
         val etMyPhone = findViewById<EditText>(R.id.etMyPhone)
         val tvMyExtension = findViewById<TextView>(R.id.tvMyExtension)
@@ -501,6 +526,10 @@ class CallsActivity : AppCompatActivity() {
             contactIndex = idx
             filterContacts(etContactSearch.text?.toString().orEmpty())
             updateDialPreview(etDialTarget.text?.toString().orEmpty())
+            if (configApi.hasSession()) {
+                withContext(Dispatchers.IO) { TrDriverContacts.sync(configApi, idx) }
+                contactsAdapter.refresh()
+            }
         }
     }
 
@@ -549,13 +578,72 @@ class CallsActivity : AppCompatActivity() {
             selectTab(showSettings = true)
             return
         }
-        val res = CallController.startOutgoingCall(this, rawTarget, displayName)
+        routeToTrDriver(rawTarget, displayName) { target -> startCallNow(target, displayName) }
+    }
+
+    private fun startCallNow(target: String, displayName: String) {
+        val res = CallController.startOutgoingCall(this, target, displayName)
         if (res.isFailure) {
             Toast.makeText(
                 this,
                 res.exceptionOrNull()?.message ?: "Arama başlatılamadı",
                 Toast.LENGTH_LONG,
             ).show()
+        }
+    }
+
+    /**
+     * Rehber numarasını doğru TR Driver hesabına yönlendirir: önce rehber
+     * eşleşmesi (sunucu, hash'li), sonra kullanıcının daha önce seçtiği eşleme,
+     * yoksa "bu numara kimin?" sorusu. Eşleşmeyen numara "meşgul" olarak
+     * görünmez; "TR Driver kullanmıyor" denir.
+     */
+    private fun routeToTrDriver(raw: String, displayName: String, start: (String) -> Unit) {
+        val norm = PhoneNumberNormalizer.normalize(raw, session.localTelCountryCode)
+        val phoneLike = norm.e164 != null || norm.matchKey != null
+        val hash = TrDriverContacts.hashFor(raw)
+        if (!phoneLike || hash == null) {
+            start(raw) // dahili numara / SIP adresi / kısa numara: doğrudan
+            return
+        }
+        TrDriverContacts.memberFor(raw)?.let { start(it.extension); return }
+        session.contactAlias(hash)?.let { start(it); return }
+        lifecycleScope.launch {
+            val fresh = configApi.matchContacts(listOf(hash)).getOrNull()?.firstOrNull()?.second
+            if (fresh != null) {
+                TrDriverContacts.remember(raw, fresh)
+                start(fresh.extension)
+                return@launch
+            }
+            val members = configApi.getDirectory().getOrNull().orEmpty()
+            if (members.isEmpty()) {
+                Toast.makeText(
+                    this@CallsActivity,
+                    "Bu kişi TR Driver kullanmıyor",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return@launch
+            }
+            val labels = (members.map { "${it.name} · ${it.extension}" } + "Hiçbiri: bu kişi TR Driver kullanmıyor").toTypedArray()
+            androidx.appcompat.app.AlertDialog.Builder(this@CallsActivity)
+                .setTitle("Bu numara kimin?")
+                .setMessage(
+                    "${displayName.ifBlank { norm.displayNumber.ifBlank { raw } }} henüz numarasını TR Driver'a kaydetmemiş. " +
+                        "Hangi TR Driver kullanıcısı olduğunu seçin; bir daha sorulmaz.",
+                )
+                .setItems(labels) { _, which ->
+                    if (which < members.size) {
+                        val m = members[which]
+                        session.setContactAlias(hash, m.extension)
+                        TrDriverContacts.remember(raw, m)
+                        contactsAdapter.refresh()
+                        start(m.extension)
+                    } else {
+                        Toast.makeText(this@CallsActivity, "Bu kişi TR Driver kullanmıyor", Toast.LENGTH_LONG).show()
+                    }
+                }
+                .setNegativeButton("İptal", null)
+                .show()
         }
     }
 
@@ -689,6 +777,7 @@ class CallsActivity : AppCompatActivity() {
 }
 
 private class ContactsCallAdapter(
+    private val isTrUser: (String) -> Boolean,
     private val onCallClick: (ContactDirectoryEntry, String) -> Unit,
 ) : RecyclerView.Adapter<ContactsCallAdapter.VH>() {
 
@@ -698,6 +787,8 @@ private class ContactsCallAdapter(
         items = newItems
         notifyDataSetChanged()
     }
+
+    fun refresh() = notifyDataSetChanged()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val view = LayoutInflater.from(parent.context)
@@ -721,7 +812,8 @@ private class ContactsCallAdapter(
         }
 
         holder.avatar.text = title.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
-        holder.name.text = title
+        val trUser = item.phones.any { isTrUser(it.rawNumber) }
+        holder.name.text = if (trUser) "$title  ✔ TR Driver" else title
         holder.subtitle.text = subtitle
         holder.btnCall.isEnabled = primaryTarget.isNotBlank()
         holder.btnCall.setOnClickListener {

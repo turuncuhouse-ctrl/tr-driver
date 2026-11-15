@@ -58,6 +58,16 @@ func (h *Handler) routeSignal(r *http.Request, senderUserID, senderClientID stri
 			h.refuseInvite(senderUserID, senderClientID, msg, "unknown_target")
 			return 0
 		}
+		if targetUserID == senderUserID {
+			logInvite(senderUserID, targetUserID, true, 0, 0)
+			h.refuseInvite(senderUserID, senderClientID, msg, "self")
+			return 0
+		}
+		if h.hub.IsBusy(targetUserID) {
+			logInvite(senderUserID, targetUserID, true, h.hub.ConnectedCount(targetUserID), 0)
+			h.refuseInvite(senderUserID, senderClientID, msg, "busy")
+			return 0
+		}
 		callerAddress, displayName, ok := h.service.CallerIdentity(r.Context(), senderUserID)
 		if !ok {
 			h.refuseInvite(senderUserID, senderClientID, msg, "caller_unprovisioned")

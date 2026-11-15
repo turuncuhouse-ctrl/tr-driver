@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.2 — "Meşgul" yanılgısı ve aranabilirlik
+
+### Fixed
+- Çözülemeyen hedef, çevrimdışı karşı taraf ve gerçek meşgul artık ayrı: istemci "Bulunamadı", "Çevrimdışı", "Meşgul", "Reddedildi" metinlerini gösterir (0.13.1'de her `reject` "meşgul" görünüyordu).
+- Sunucuda gerçek meşgul tespiti (yanıtlanmış ya da 90 sn içinde çalan çağrı); bayat çağrı kayıtları son oturum kapanınca silinir ve karşı tarafa `hangup` gider, kimse kalıcı "meşgul" kalmaz. Kendini arama reddedilir.
+- Davet, karşı kullanıcının tüm açık oturumlarında çalar.
+
+### Added
+- WhatsApp tarzı rehber eşleşmesi: rehber yüklenince numaralar (son 10 hane, SHA-256 hash'li) sunucuyla eşleştirilir (`POST /api/localtel/contacts/match`), TR Driver kullanan kişiler listede "✔ TR Driver" ile işaretlenir ve rehberden aranınca doğru hesaba gider. Eşleşmeyen numara için "Bu numara kimin?" seçimi (bir kez, kalıcı) veya "TR Driver kullanmıyor" mesajı.
+- Kendi numaranı girmek ilk açılışta zorunlu tek adım (SIM'den öneri, izin varsa); kayıtlı numara yoksa Ana ekran ve Aramalar bu adımı sorar.
+- Aramalar ekranında "TR Driver kullanıcıları" listesi (`GET /api/localtel/directory`, ad + dahili + çevrimiçi durumu); numara bilmeden tek dokunuşla arama.
+- İki sahte WS istemcili uçtan uca entegrasyon testi (davet/çalıyor/kabul/ses/kapat, çoklu oturum, meşgul, çevrimdışı, bulunamadı, bayat durum).
+
 ## 0.13.1 — Arka planda ve kilit ekranında güvenilir gelen arama
 
 ### Fixed

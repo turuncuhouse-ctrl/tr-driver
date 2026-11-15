@@ -6,7 +6,8 @@ import (
 )
 
 const (
-	callRouteTTL        = 2 * time.Hour
+	callRouteTTL        = 4 * time.Hour
+	ringingWindow       = 90 * time.Second
 	maxActiveCallRoutes = 10_000
 )
 
@@ -34,6 +35,7 @@ func (h *Hub) BeginCall(callID, callerUserID, calleeUserID string) bool {
 		callerUserID: callerUserID,
 		calleeUserID: calleeUserID,
 		expiresAt:    now.Add(callRouteTTL),
+		ringingUntil: now.Add(ringingWindow),
 	}
 	return true
 }
@@ -62,11 +64,54 @@ func (h *Hub) DispatchCall(senderUserID, senderClientID string, msg SignalMessag
 	default:
 		return 0
 	}
+	if msg.Type == "accept" && senderUserID == route.calleeUserID {
+		route.accepted = true
+		h.calls[msg.CallID] = route
+	}
 	delivered := dispatchLocked(h.users[targetUserID], senderClientID, raw)
 	if msg.Type == "reject" || msg.Type == "hangup" || msg.Type == "cancel" {
 		delete(h.calls, msg.CallID)
 	}
 	return delivered
+}
+
+// IsBusy reports whether userID is in an answered call or has a fresh,
+// still-ringing one. Stale routes (expired, or unanswered past the ringing
+// window) never count.
+func (h *Hub) IsBusy(userID string) bool {
+	now := time.Now()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, r := range h.calls {
+		if r.callerUserID != userID && r.calleeUserID != userID {
+			continue
+		}
+		if now.After(r.expiresAt) {
+			continue
+		}
+		if r.accepted || now.Before(r.ringingUntil) {
+			return true
+		}
+	}
+	return false
+}
+
+// dropRoutesOfLocked removes every call route of a user whose last gateway
+// connection just closed and tells the other party the call is over.
+func (h *Hub) dropRoutesOfLocked(userID string) {
+	for id, r := range h.calls {
+		if r.callerUserID != userID && r.calleeUserID != userID {
+			continue
+		}
+		other := r.calleeUserID
+		if other == userID {
+			other = r.callerUserID
+		}
+		if raw, err := json.Marshal(SignalMessage{Type: "hangup", CallID: id, Payload: "peer_disconnected", TimestampMs: nowMs()}); err == nil {
+			dispatchLocked(h.users[other], "", raw)
+		}
+		delete(h.calls, id)
+	}
 }
 
 // EndCall drops a call route (e.g. when the invite could not be delivered).

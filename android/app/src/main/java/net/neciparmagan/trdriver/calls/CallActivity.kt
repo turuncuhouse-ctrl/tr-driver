@@ -311,7 +311,9 @@ class CallActivity : AppCompatActivity() {
         return when (state.endReason) {
             CallEndReason.REJECTED -> "Arama reddedildi"
             CallEndReason.CANCELLED -> "Arama iptal edildi"
-            CallEndReason.BUSY -> "Karşı taraf meşgul"
+            CallEndReason.BUSY -> "Meşgul: karşı taraf başka bir görüşmede"
+            CallEndReason.NOT_FOUND -> "Bulunamadı: bu numara kayıtlı bir TR Driver kullanıcısına ait değil"
+            CallEndReason.OFFLINE -> "Çevrimdışı: karşı tarafın uygulaması şu an bağlı değil"
             CallEndReason.NO_ANSWER -> "Cevap verilmedi"
             CallEndReason.REMOTE_HANGUP -> "Karşı taraf kapattı"
             CallEndReason.NETWORK_ERROR -> "Bağlantı hatası"

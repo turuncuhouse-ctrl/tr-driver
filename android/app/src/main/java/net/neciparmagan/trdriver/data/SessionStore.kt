@@ -458,6 +458,17 @@ class SessionStore(context: Context) {
     // Secret stays inside EncryptedSharedPreferences (SecurePrefs) locally
     // and is never written to logs.
 
+    /** Own phone already registered on the server (first-run prompt done). */
+    var myPhoneRegistered: Boolean
+        get() = prefs.getBoolean("lt_my_phone_registered", false)
+        set(value) = prefs.edit().putBoolean("lt_my_phone_registered", value).apply()
+
+    /** Manual "this contact number = that TR Driver extension" choice. */
+    fun contactAlias(key: String): String? = prefs.getString("lt_alias_$key", null)?.takeIf { it.isNotBlank() }
+    fun setContactAlias(key: String, extension: String) {
+        prefs.edit().putString("lt_alias_$key", extension).apply()
+    }
+
     var localTelEnabled: Boolean
         get() = prefs.getBoolean(KEY_LT_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_LT_ENABLED, value).apply()

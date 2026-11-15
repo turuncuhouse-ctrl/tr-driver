@@ -344,7 +344,42 @@ class GatewayLocalTelProvider(
                 if (msg.callId == activeCallId) {
                     stopAudioBridge()
                     activeCallId = null
-                    _events.tryEmit(CallProviderEvent.CallEnded(msg.callId, CallEndReason.BUSY))
+                    // The server states why an invite could not be delivered;
+                    // an empty reason means the callee pressed "Reddet".
+                    when (msg.payload) {
+                        "unknown_target", "caller_unprovisioned" -> _events.tryEmit(
+                            CallProviderEvent.CallError(
+                                msg.callId, CallEndReason.NOT_FOUND,
+                                "Bulunamadı: bu kişi TR Driver kullanmıyor ya da numarasını kaydetmemiş. " +
+                                    "Aramalar ekranındaki \"TR Driver kullanıcıları\" listesinden arayın.",
+                            ),
+                        )
+                        "callee_offline" -> _events.tryEmit(
+                            CallProviderEvent.CallError(
+                                msg.callId, CallEndReason.OFFLINE,
+                                "Çevrimdışı: karşı tarafın uygulaması şu an bağlı değil",
+                            ),
+                        )
+                        "busy" -> _events.tryEmit(
+                            CallProviderEvent.CallError(
+                                msg.callId, CallEndReason.BUSY,
+                                "Meşgul: karşı taraf başka bir görüşmede",
+                            ),
+                        )
+                        "self" -> _events.tryEmit(
+                            CallProviderEvent.CallError(
+                                msg.callId, CallEndReason.CONFIG_ERROR,
+                                "Kendi numaranızı arayamazsınız",
+                            ),
+                        )
+                        "rate_limited", "call_conflict" -> _events.tryEmit(
+                            CallProviderEvent.CallError(
+                                msg.callId, CallEndReason.NETWORK_ERROR,
+                                "Arama şu an başlatılamadı, biraz sonra tekrar deneyin",
+                            ),
+                        )
+                        else -> _events.tryEmit(CallProviderEvent.CallEnded(msg.callId, CallEndReason.REJECTED))
+                    }
                 }
             }
             "cancel", "hangup" -> {

@@ -500,6 +500,7 @@ class MainActivity : AppCompatActivity() {
         refreshPermissionWarning()
         if (session.isLoggedIn) {
             ensureLocalTelConfig()
+            net.neciparmagan.trdriver.calls.MyPhonePrompt.ensure(this, session)
         }
         if (session.localTelEnabled && session.localTelAutoRegister) {
             LocalTelListenerService.syncState(this)
