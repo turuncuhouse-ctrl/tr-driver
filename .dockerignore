@@ -1,6 +1,7 @@
 .git
 .gitignore
 data
+paylasim
 .env
 **/.env
 web/node_modules

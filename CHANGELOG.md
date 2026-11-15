@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.14.0 — Ortak Paylaşım ve torrent indirme
+
+### Added
+- **Ortak Paylaşım** (`internal/sharedspace`, `/api/shared/…`): sunucudaki `SHARED_DIR` klasörü (Docker'da `/data/paylasim`) izin verilen kullanıcılarla paylaşılır. Listeleme, indirme, yükleme, klasör oluşturma, yeniden adlandırma ve silme.
+- **Klasör bazlı izinler ve gruplar** (`/api/admin/shared/…`): okuma / yazma izni kullanıcıya ya da gruba verilir, alt klasörler devralır. İzin verilmeyen kullanıcı alanı hiç görmez.
+- **Herkese açık bağlantılar** (`/p/<token>`): isteğe bağlı parola, geçerlilik süresi ve indirme sayısı sınırı; liste ve iptal.
+- **Alan kotası ve uyarı**: `SHARED_QUOTA_BYTES` / panelden ayarlanabilir kota, uyarı eşiği, dolulukta yöneticilere e-posta; alan doluyken yükleme `507`.
+- **Torrent indirme** (`internal/torrents`, `/api/admin/torrents`, yalnızca yönetici): magnet ve `.torrent` ekleme, duraklatma / sürdürme / kaldırma, hız sınırı; indirilenler Ortak Paylaşım'a iner ve yeniden başlatmada kaldığı yerden devam eder.
+- **Web**: sol menüde **Ortak Paylaşım** görünümü; Yönetim panelinde **Ortak Paylaşım** (izinler, gruplar, kota) ve **Torrent indirme** bölümleri.
+- **Android**: **Ortak Paylaşım** ekranı (listeleme, indirip açma, yükleme, klasör oluşturma, yeniden adlandırma, silme).
+- Yeni ortam değişkenleri: `SHARED_DIR`, `SHARED_QUOTA_BYTES`, `SHARED_QUOTA_WARN_PERCENT`, `SHARED_LINK_MAX_TTL`, `TORRENT_ENABLED`, `TORRENT_LISTEN_PORT`, `TORRENT_DOWNLOAD_LIMIT_KBPS`, `TORRENT_UPLOAD_LIMIT_KBPS`, `TORRENT_SEED_AFTER_COMPLETE`, `TORRENT_DISABLE_DHT`. Belge: `docs/SHARED_SPACE.md`.
+
+### Changed
+- Sürüm `0.14.0`, Android `versionCode` `50` (`48` ve `49`, 0.13.1 ve 0.13.2 tarafından kullanıldı).
+- Compose dosyaları ve `Dockerfile`: `/data/paylasim` volume'u, torrent portu `42069` (TCP + UDP) ve yeni ortam değişkenleri. **Yükseltirken** sunucuda `paylasim` klasörünü oluşturup stack'i yeni Compose ile güncelleyin; volume eklenmezse dosyalar konteynerle birlikte kaybolur.
+- Yeni bağımlılık: `github.com/anacrolix/torrent` (saf Go, `CGO_ENABLED=0` ile derlenir).
+- Ortak Paylaşım klasörü yerleşik sunucu yedeğine (`BACKUP_*`) dahil **değildir**; yalnızca izin, grup ve bağlantı kayıtları veritabanıyla yedeklenir.
+
+### Security
+- Tüm dosya işlemleri alan köküne sabitlenmiş (`os.Root`) erişimle yapılır; `..`, mutlak yol ve sembolik bağlantıyla alan dışına çıkılamaz.
+- Bağlantı token'ları sunucuda yalnızca özet olarak saklanır, adres yalnızca oluşturulurken gösterilir; token, parola, magnet ve tracker adresleri loglanmaz (`/p/[redacted]`).
+- İndirmeler her zaman `Content-Disposition: attachment`, `nosniff` ve kısıtlayıcı CSP ile gönderilir.
+- Parola denemeleri, bağlantı indirmeleri ve yazma işlemleri hız sınırlıdır; yönetim uçları cihaz token'ıyla çağrılamaz.
+- Torrent HTTP tracker bağlantıları loopback ve özel ağ adreslerine yönlendirilemez (UDP tracker ve DHT bu korumanın dışındadır).
 ## 0.13.2 — "Meşgul" yanılgısı ve aranabilirlik
 
 ### Fixed

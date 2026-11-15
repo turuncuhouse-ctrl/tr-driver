@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"necipdrive/internal/access"
 	"necipdrive/internal/admin"
 	"necipdrive/internal/auth"
@@ -23,10 +25,12 @@ import (
 	"necipdrive/internal/mailer"
 	"necipdrive/internal/personalbackup"
 	"necipdrive/internal/plans"
+	"necipdrive/internal/sharedspace"
 	"necipdrive/internal/shares"
 	"necipdrive/internal/storage"
 	"necipdrive/internal/store"
 	"necipdrive/internal/syncapi"
+	"necipdrive/internal/torrents"
 	"necipdrive/internal/uploads"
 )
 
@@ -125,9 +129,20 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 
 	backupService.Start(cleanupCtx)
 
-	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace, backupService, personalService, localtelService, localtelHub)
+	sharedService, torrentService := startSharedSpace(cleanupCtx, db, cfg, mailService)
+	closeShared := func() {
+		if torrentService != nil {
+			torrentService.Close()
+		}
+		if sharedService != nil {
+			_ = sharedService.Close()
+		}
+	}
+
+	router, err := NewRouter(cfg, authService, adminService, fileService, planService, shareService, uploadService, syncService, driveService, collabService, licenseService, mailService, pace, backupService, personalService, localtelService, localtelHub, sharedService, torrentService)
 	if err != nil {
 		cleanupCancel()
+		closeShared()
 		db.Close()
 		return nil, nil, err
 	}
@@ -154,8 +169,46 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 
 	return server, func() {
 		cleanupCancel()
+		// Before the database closes: the torrent client saves its progress.
+		closeShared()
 		db.Close()
 	}, nil
+}
+
+// startSharedSpace opens the shared folder ("Ortak Paylaşım") and the torrent
+// client that downloads into it. A folder that cannot be opened — typically a
+// volume the server may not write to — disables both features with a log line
+// instead of keeping the whole server from starting.
+func startSharedSpace(ctx context.Context, db *pgxpool.Pool, cfg config.Config, mail *mailer.Service) (*sharedspace.Service, *torrents.Service) {
+	shared, err := sharedspace.New(sharedspace.NewPostgresStore(db), sharedspace.Options{
+		Dir:            cfg.SharedDir,
+		QuotaBytes:     cfg.SharedQuotaBytes,
+		WarnPercent:    cfg.SharedQuotaWarnPercent,
+		MaxUploadBytes: cfg.MaxUploadBytes,
+		LinkMaxTTL:     cfg.SharedLinkMaxTTL,
+		Secret:         cfg.SessionSecret,
+		DiskSpace:      storage.DiskSpace,
+		Mailer:         mail,
+	})
+	if err != nil {
+		log.Printf("shared space disabled: SHARED_DIR=%s is not usable: %v", cfg.SharedDir, err)
+		return nil, nil
+	}
+	log.Printf("shared space: SHARED_DIR=%s", shared.Dir())
+	torrentService := torrents.New(torrents.NewPostgresStore(db), shared, torrents.Options{
+		Enabled:           cfg.TorrentEnabled,
+		ListenPort:        cfg.TorrentListenPort,
+		DownloadLimitKBps: cfg.TorrentDownloadLimitKBps,
+		UploadLimitKBps:   cfg.TorrentUploadLimitKBps,
+		SeedAfterComplete: cfg.TorrentSeedAfterComplete,
+		DisableDHT:        cfg.TorrentDisableDHT,
+	})
+	shared.SetHooks(sharedspace.Hooks{Busy: torrentService.Busy, PathChanged: torrentService.PathChanged})
+	if err := torrentService.Start(ctx); err != nil {
+		log.Printf("torrent client: restoring saved torrents failed: %v", err)
+	}
+	shared.Start(ctx)
+	return shared, torrentService
 }
 
 // backupConfigFromCfg maps global config onto the backup subsystem config.

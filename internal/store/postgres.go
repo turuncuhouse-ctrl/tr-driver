@@ -353,6 +353,74 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 			updated_at timestamptz not null default now()
 		)`,
 		`create index if not exists localtel_accounts_extension_idx on localtel_accounts(extension)`,
+		// 0.14.0 "Ortak Paylaşım": user groups, path grants and public links for
+		// the server-wide shared folder (SHARED_DIR). Paths are slash-separated
+		// and relative to the shared root; '' is the root itself.
+		`create table if not exists user_groups (
+			id uuid primary key default gen_random_uuid(),
+			name text not null,
+			created_at timestamptz not null default now()
+		)`,
+		`create unique index if not exists user_groups_name_idx on user_groups(lower(name))`,
+		`create table if not exists user_group_members (
+			group_id uuid not null references user_groups(id) on delete cascade,
+			user_id uuid not null references users(id) on delete cascade,
+			created_at timestamptz not null default now(),
+			primary key (group_id, user_id)
+		)`,
+		`create index if not exists user_group_members_user_idx on user_group_members(user_id)`,
+		`create table if not exists shared_space_grants (
+			id uuid primary key default gen_random_uuid(),
+			path text not null default '',
+			subject_type text not null check (subject_type in ('user', 'group', 'everyone')),
+			user_id uuid references users(id) on delete cascade,
+			group_id uuid references user_groups(id) on delete cascade,
+			permission text not null check (permission in ('read', 'write')),
+			created_by_user_id uuid references users(id) on delete set null,
+			created_at timestamptz not null default now(),
+			check (
+				(subject_type = 'user' and user_id is not null and group_id is null) or
+				(subject_type = 'group' and group_id is not null and user_id is null) or
+				(subject_type = 'everyone' and user_id is null and group_id is null)
+			)
+		)`,
+		`create unique index if not exists shared_space_grants_subject_idx
+			on shared_space_grants(path, subject_type,
+				coalesce(user_id, '00000000-0000-0000-0000-000000000000'::uuid),
+				coalesce(group_id, '00000000-0000-0000-0000-000000000000'::uuid))`,
+		// Only the SHA-256 of a link token is stored: a database leak must not
+		// hand out working public links.
+		`create table if not exists shared_space_links (
+			id uuid primary key default gen_random_uuid(),
+			token_hash text not null unique,
+			path text not null,
+			password_hash text not null default '',
+			expires_at timestamptz not null,
+			max_downloads bigint,
+			download_count bigint not null default 0,
+			created_by_user_id uuid not null references users(id) on delete cascade,
+			created_at timestamptz not null default now(),
+			revoked_at timestamptz
+		)`,
+		`create index if not exists shared_space_links_creator_idx on shared_space_links(created_by_user_id, created_at desc)`,
+		// Embedded BitTorrent client state. magnet/metainfo are kept so a
+		// download resumes after a restart; they are never returned by the API.
+		`create table if not exists torrents (
+			id uuid primary key default gen_random_uuid(),
+			info_hash text not null unique,
+			name text not null default '',
+			content_path text not null default '',
+			magnet text not null default '',
+			metainfo bytea,
+			state text not null default 'active' check (state in ('active', 'paused', 'completed', 'error')),
+			error text not null default '',
+			total_bytes bigint not null default 0,
+			completed_bytes bigint not null default 0,
+			added_by_user_id uuid references users(id) on delete set null,
+			added_at timestamptz not null default now(),
+			completed_at timestamptz,
+			updated_at timestamptz not null default now()
+		)`,
 	}
 
 	for _, stmt := range ddl {

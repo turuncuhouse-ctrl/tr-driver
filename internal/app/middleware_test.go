@@ -126,3 +126,45 @@ func TestCSRFCookieFollowsLoginSetCookie(t *testing.T) {
 		t.Fatalf("csrf cookie not bound to new session: %q", csrf)
 	}
 }
+
+// A public link is its token; request logs must not hand it to whoever can
+// read them.
+func TestLoggablePathRedactsLinkTokens(t *testing.T) {
+	for path, want := range map[string]string{
+		"/p/Zm9vYmFyLXNlY3JldA":        "/p/[redacted]",
+		"/p/Zm9vYmFyLXNlY3JldA/dl":     "/p/[redacted]/dl",
+		"/s/abcdef123456":              "/s/[redacted]",
+		"/s/abcdef123456/download":     "/s/[redacted]/download",
+		"/p/":                          "/p/",
+		"/api/shared/list":             "/api/shared/list",
+		"/api/admin/torrents/42/pause": "/api/admin/torrents/42/pause",
+		"/static/p/not-a-link":         "/static/p/not-a-link",
+	} {
+		if got := loggablePath(path); got != want {
+			t.Errorf("loggablePath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestCSRFAllowsPublicLinkUnlock(t *testing.T) {
+	handler := csrfMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), "secret")
+	// The password form on a public link is posted by visitors with no session.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/p/sometoken", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("public link unlock expected 204, got %d", rec.Code)
+	}
+	// The authenticated shared-space API still requires the token.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/shared/delete", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("shared API without csrf expected 403, got %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/admin/torrents", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("torrent API without csrf expected 403, got %d", rec.Code)
+	}
+}

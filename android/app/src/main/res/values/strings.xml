@@ -3,4 +3,8 @@
     <string name="app_name">TR Driver</string>
     <string name="gallery_launcher_name">TR Galeri</string>
     <string name="backup_widget_description">Yedekleme durumu</string>
+    <string name="shared_space_title">Ortak Paylaşım</string>
+    <string name="shared_space_up">Yukarı</string>
+    <string name="shared_space_upload">Yükle</string>
+    <string name="shared_space_new_folder">Yeni klasör</string>
 </resources>

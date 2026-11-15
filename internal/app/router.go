@@ -20,8 +20,10 @@ import (
 	"necipdrive/internal/mailer"
 	"necipdrive/internal/personalbackup"
 	"necipdrive/internal/plans"
+	"necipdrive/internal/sharedspace"
 	"necipdrive/internal/shares"
 	"necipdrive/internal/syncapi"
+	"necipdrive/internal/torrents"
 	"necipdrive/internal/updates"
 	"necipdrive/internal/uploads"
 	"necipdrive/internal/version"
@@ -46,6 +48,8 @@ func NewRouter(
 	personalService *personalbackup.Service,
 	localtelService *localtel.Service,
 	localtelHub *localtel.Hub,
+	sharedService *sharedspace.Service,
+	torrentService *torrents.Service,
 ) (http.Handler, error) {
 	mux := http.NewServeMux()
 
@@ -156,6 +160,30 @@ func NewRouter(
 	mux.Handle("/api/shares", authHandler.RequireAuth(http.HandlerFunc(shareHandler.API)))
 	mux.Handle("/api/shares/email", authHandler.RequireAuth(http.HandlerFunc(shareHandler.EmailLink)))
 	mux.Handle("/s/", http.HandlerFunc(shareHandler.DownloadPublic))
+
+	// Ortak Paylaşım: the server-wide shared folder. The user API accepts both
+	// browser sessions and device tokens (the Android app uses it); managing
+	// grants, groups and the quota is for administrators in a browser session.
+	// The embedded torrent client downloads into the same folder and is
+	// reachable by administrators only.
+	if sharedService != nil && torrentService != nil {
+		sharedHandler := sharedspace.NewHandler(sharedService, cfg.TrustedProxies)
+		torrentHandler := authHandler.RequireAuth(adminHandler.RequireAdmin(torrents.NewHandler(torrentService)))
+		mux.Handle(sharedspace.BasePath, authHandler.RequireAuth(sharedHandler))
+		mux.Handle(sharedspace.AdminBasePath, authHandler.RequireAuth(adminHandler.RequireAdmin(http.HandlerFunc(sharedHandler.ServeAdmin))))
+		mux.Handle(sharedspace.PublicPrefix, http.HandlerFunc(sharedHandler.ServePublic))
+		mux.Handle(torrents.BasePath, torrentHandler)
+		mux.Handle(torrents.BasePath+"/", torrentHandler)
+	} else {
+		// SHARED_DIR could not be opened. Keep the routes, behind the same
+		// checks, so clients get a clear answer instead of a missing route.
+		unavailable := sharedspace.UnavailableHandler()
+		adminUnavailable := authHandler.RequireAuth(adminHandler.RequireAdmin(unavailable))
+		mux.Handle(sharedspace.BasePath, authHandler.RequireAuth(unavailable))
+		mux.Handle(sharedspace.AdminBasePath, adminUnavailable)
+		mux.Handle(torrents.BasePath, adminUnavailable)
+		mux.Handle(torrents.BasePath+"/", adminUnavailable)
+	}
 	mux.Handle("/dav", davHandler)
 	mux.Handle("/dav/", davHandler)
 
@@ -177,7 +205,7 @@ func NewRouter(
 				httpx.Error(w, http.StatusNotFound, "api route not found: "+r.URL.Path+" — sunucu binary eski olabilir; container'ı yeniden build/redeploy edin")
 				return
 			}
-			if strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, "/dav") || r.URL.Path == "/healthz" {
+			if strings.HasPrefix(r.URL.Path, "/s/") || strings.HasPrefix(r.URL.Path, sharedspace.PublicPrefix) || strings.HasPrefix(r.URL.Path, "/dav") || r.URL.Path == "/healthz" {
 				http.NotFound(w, r)
 				return
 			}

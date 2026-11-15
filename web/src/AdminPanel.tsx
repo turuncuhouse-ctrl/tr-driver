@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { SharedAdminSection, TorrentAdminSection } from "./SharedSpace";
 
 type Plan = {
   code: string;
@@ -610,6 +611,10 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
           {mailNote && <div className="notice">{mailNote}</div>}
         </div>
       </section>
+
+      <SharedAdminSection request={request} users={users} onMessage={onMessage} />
+
+      <TorrentAdminSection request={request} onMessage={onMessage} />
 
       <section className="admin-users">
         <div className="admin-users-head">

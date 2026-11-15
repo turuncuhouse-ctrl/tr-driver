@@ -21,7 +21,7 @@ FROM alpine:3.20
 # restic + postgresql-client power the built-in backup system (docs/BACKUP.md).
 RUN apk add --no-cache ca-certificates tzdata wget restic postgresql-client \
   && adduser -D -u 1000 appuser \
-  && mkdir -p /data/files /data/backups /app/web/dist \
+  && mkdir -p /data/files /data/paylasim /data/backups /app/web/dist \
   && chown -R appuser:appuser /data /app
 
 WORKDIR /app
@@ -30,11 +30,14 @@ COPY --from=builder /src/web/dist /app/web/dist
 
 ENV APP_ENV=production \
     HTTP_ADDR=:8080 \
-    DATA_DIR=/data/files
+    DATA_DIR=/data/files \
+    SHARED_DIR=/data/paylasim
 
 USER appuser
 EXPOSE 8080
-VOLUME ["/data/files", "/data/backups"]
+# Torrent peer port (TORRENT_LISTEN_PORT); publish the same number on the host.
+EXPOSE 42069/tcp 42069/udp
+VOLUME ["/data/files", "/data/paylasim", "/data/backups"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
   CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
 

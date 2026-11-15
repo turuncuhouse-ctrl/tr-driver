@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +70,19 @@ type Config struct {
 	BackupS3Prefix      string
 	BackupS3AccessKey   string
 	BackupS3SecretKey   string
+	// "Ortak Paylaşım": a server-wide shared folder on its own volume. Torrent
+	// downloads land here; access is governed by per-user / per-group grants.
+	SharedDir              string
+	SharedQuotaBytes       int64 // 0 = capacity of the filesystem holding SharedDir
+	SharedQuotaWarnPercent int
+	SharedLinkMaxTTL       time.Duration
+	// Embedded BitTorrent client (admin only). Rate limits are in KiB/s, 0 = unlimited.
+	TorrentEnabled           bool
+	TorrentListenPort        int
+	TorrentDownloadLimitKBps int64
+	TorrentUploadLimitKBps   int64
+	TorrentSeedAfterComplete bool
+	TorrentDisableDHT        bool
 }
 
 func Load() (Config, error) {
@@ -125,6 +139,17 @@ func Load() (Config, error) {
 		BackupS3Prefix:      getEnv("BACKUP_S3_PREFIX", ""),
 		BackupS3AccessKey:   getEnv("BACKUP_S3_ACCESS_KEY", ""),
 		BackupS3SecretKey:   getEnv("BACKUP_S3_SECRET_KEY", ""),
+
+		SharedDir:                getEnv("SHARED_DIR", ""),
+		SharedQuotaBytes:         getEnvQuotaBytes("SHARED_QUOTA_BYTES"),
+		SharedQuotaWarnPercent:   getEnvInt("SHARED_QUOTA_WARN_PERCENT", 90),
+		SharedLinkMaxTTL:         getEnvDuration("SHARED_LINK_MAX_TTL", 720*time.Hour),
+		TorrentEnabled:           getEnvBool("TORRENT_ENABLED", true),
+		TorrentListenPort:        getEnvInt("TORRENT_LISTEN_PORT", 42069),
+		TorrentDownloadLimitKBps: getEnvInt64("TORRENT_DOWNLOAD_LIMIT_KBPS", 0),
+		TorrentUploadLimitKBps:   getEnvInt64("TORRENT_UPLOAD_LIMIT_KBPS", 0),
+		TorrentSeedAfterComplete: getEnvBool("TORRENT_SEED_AFTER_COMPLETE", false),
+		TorrentDisableDHT:        getEnvBool("TORRENT_DISABLE_DHT", false),
 	}
 	var err error
 	cfg.TrustedProxies, err = parseTrustedProxies(getEnv("TRUSTED_PROXY_CIDRS", ""))
@@ -161,12 +186,63 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("SHARE_PASSWORD_SALT must be at least 16 characters in production")
 		}
 	}
+	if err := cfg.resolveShared(); err != nil {
+		return Config{}, err
+	}
 	// A missing backup password only disables the scheduler (existing installs
 	// keep booting); a present-but-weak one is a misconfiguration.
 	if cfg.BackupPassword != "" && len(cfg.BackupPassword) < 16 {
 		return Config{}, fmt.Errorf("BACKUP_PASSWORD must be at least 16 characters")
 	}
 	return cfg, nil
+}
+
+// DefaultSharedDir places the shared folder next to DATA_DIR, so the stock
+// container layout (/data/files) yields /data/paylasim on its own volume.
+func DefaultSharedDir(dataDir string) string {
+	return filepath.Join(filepath.Dir(filepath.Clean(dataDir)), "paylasim")
+}
+
+// resolveShared fills defaults for the shared space and rejects layouts where
+// the shared folder and the blob store overlap: one would then expose (or
+// garbage-collect) the other's files.
+func (cfg *Config) resolveShared() error {
+	if cfg.SharedDir == "" {
+		cfg.SharedDir = DefaultSharedDir(cfg.DataDir)
+	}
+	shared, err := filepath.Abs(cfg.SharedDir)
+	if err != nil {
+		return fmt.Errorf("SHARED_DIR: %w", err)
+	}
+	data, err := filepath.Abs(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("DATA_DIR: %w", err)
+	}
+	if pathContains(shared, data) || pathContains(data, shared) {
+		return fmt.Errorf("SHARED_DIR (%s) and DATA_DIR (%s) must not contain each other", shared, data)
+	}
+	if cfg.SharedQuotaWarnPercent < 1 || cfg.SharedQuotaWarnPercent > 99 {
+		return fmt.Errorf("SHARED_QUOTA_WARN_PERCENT must be between 1 and 99")
+	}
+	if cfg.SharedLinkMaxTTL <= 0 {
+		return fmt.Errorf("SHARED_LINK_MAX_TTL must be positive")
+	}
+	if cfg.TorrentListenPort < 0 || cfg.TorrentListenPort > 65535 {
+		return fmt.Errorf("TORRENT_LISTEN_PORT must be between 0 and 65535")
+	}
+	if cfg.TorrentDownloadLimitKBps < 0 || cfg.TorrentUploadLimitKBps < 0 {
+		return fmt.Errorf("TORRENT_*_LIMIT_KBPS must not be negative")
+	}
+	return nil
+}
+
+// pathContains reports whether child equals parent or lives below it.
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func getEnvBool(key string, fallback bool) bool {
