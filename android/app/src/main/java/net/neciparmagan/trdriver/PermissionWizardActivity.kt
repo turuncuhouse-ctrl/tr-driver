@@ -3,7 +3,6 @@ package net.neciparmagan.trdriver
 import android.Manifest
 import android.app.Activity
 import android.app.NotificationManager
-import android.app.PowerManager
 import android.app.role.RoleManager
 import android.content.ContentValues
 import android.content.Intent
