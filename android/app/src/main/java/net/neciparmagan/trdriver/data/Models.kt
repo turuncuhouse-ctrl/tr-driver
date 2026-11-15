@@ -116,6 +116,8 @@ data class AndroidVersionInfo(
     val apkPath: String = "/download/TRDriver.apk",
     val downloadURL: String = "/download/TRDriver.apk",
     val apkAvailable: Boolean = false,
+    /** SHA-256 of the served APK (hex). Blank on older manifests → skip check. */
+    val apkSha256: String = "",
 )
 
 @Serializable
@@ -128,4 +130,46 @@ data class UploadPace(
     val acceptUploads: Boolean = true,
     val retryAfterSec: Int = 0,
     val recommendedBatch: Int = 8,
+)
+
+// --- resumable (chunked) upload API -----------------------------------------
+
+@Serializable
+data class ResumableFileManifest(
+    @SerialName("relativePath") val relativePath: String,
+    @SerialName("fileName") val fileName: String,
+    @SerialName("mimeType") val mimeType: String,
+    @SerialName("expectedSize") val expectedSize: Long,
+    @SerialName("lastModifiedMs") val lastModifiedMs: Long,
+)
+
+@Serializable
+data class ResumableBatchRequest(
+    @SerialName("parentId") val parentId: String? = null,
+    @SerialName("files") val files: List<ResumableFileManifest>,
+)
+
+@Serializable
+data class ResumableSessionState(
+    val id: String = "",
+    @SerialName("batchId") val batchId: String = "",
+    @SerialName("relativePath") val relativePath: String = "",
+    @SerialName("fileName") val fileName: String = "",
+    @SerialName("expectedSize") val expectedSize: Long = 0,
+    @SerialName("receivedBytes") val receivedBytes: Long = 0,
+    @SerialName("lastModifiedMs") val lastModifiedMs: Long = 0,
+    val status: String = "",
+)
+
+@Serializable
+data class ResumableBatch(
+    val id: String = "",
+    @SerialName("parentId") val parentId: String? = null,
+    @SerialName("totalBytes") val totalBytes: Long = 0,
+    @SerialName("files") val files: List<ResumableSessionState> = emptyList(),
+)
+
+@Serializable
+data class UploadOffsetResponse(
+    @SerialName("offset") val offset: Long = 0,
 )

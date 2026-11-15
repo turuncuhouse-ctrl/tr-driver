@@ -127,7 +127,8 @@ jobs:
           mkdir -p dist/android
           cp android/app/build/outputs/apk/release/app-release.apk dist/android/TRDriver.apk
           VERSION_CODE=$(grep -Eo 'versionCode = [0-9]+' android/app/build.gradle.kts | grep -Eo '[0-9]+')
-          printf '{\n  "minSupportedCode": 1,\n  "versionCode": %s,\n  "versionName": "%s",\n  "apkPath": "/download/TRDriver.apk",\n  "releaseNotes": "TR Driver %s"\n}\n' "$VERSION_CODE" "$(cat VERSION)" "$(cat VERSION)" > dist/android/android-version.json
+          APK_SHA=$(sha256sum dist/android/TRDriver.apk | cut -d' ' -f1)
+          printf '{\n  "minSupportedCode": 1,\n  "versionCode": %s,\n  "versionName": "%s",\n  "apkPath": "/download/TRDriver.apk",\n  "apkSha256": "%s",\n  "releaseNotes": "TR Driver %s"\n}\n' "$VERSION_CODE" "$(cat VERSION)" "$APK_SHA" "$(cat VERSION)" > dist/android/android-version.json
       - uses: actions/upload-artifact@v7
         with:
           name: android-release

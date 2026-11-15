@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
@@ -22,6 +23,14 @@ import java.io.InputStream
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+
+/** Server reported a different byte offset than the client sent (409). */
+class UploadOffsetMismatchException(
+    val serverOffset: Long,
+) : IOException("Yükleme konumu uyuşmadı (sunucu: $serverOffset bayt)")
+
+/** Chunk size for the resumable upload API (server default UPLOAD_CHUNK_BYTES). */
+private const val RESUMABLE_CHUNK_BYTES = 8L * 1024 * 1024
 
 class DriveApi(private val session: SessionStore, private val appContext: Context) {
     private val json = Json {
@@ -727,6 +736,306 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
         }
     }
 
+    // --- resumable (chunked) upload ---------------------------------------
+
+    /**
+     * Creates a server-side upload batch for one or more files. Sessions keep
+     * their received-byte offset, so an interrupted upload continues where it
+     * stopped — even after the app process is killed and restarted.
+     */
+    suspend fun createUploadBatch(
+        parentId: String?,
+        files: List<ResumableFileManifest>,
+    ): ResumableBatch = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(
+            ResumableBatchRequest.serializer(),
+            ResumableBatchRequest(
+                parentId = parentId?.takeIf { it.isNotBlank() },
+                files = files,
+            ),
+        )
+        val req = authed(Request.Builder().url("${base()}/api/uploads/batches"))
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(ResumableBatch.serializer(), text)
+        }
+    }
+
+    /** Appends one chunk; returns the server's new absolute offset. */
+    suspend fun appendUploadChunk(
+        sessionId: String,
+        offset: Long,
+        length: Long,
+        open: () -> InputStream,
+        onProgress: ((sentInChunk: Long) -> Unit)? = null,
+    ): Long = withContext(Dispatchers.IO) {
+        if (!BackupPolicy.isSafeServerId(sessionId)) {
+            throw IOException("Geçersiz yükleme oturumu")
+        }
+        if (offset < 0 || length < 1 || length > RESUMABLE_CHUNK_BYTES) {
+            throw IOException("Geçersiz yükleme parçası")
+        }
+        val body = object : RequestBody() {
+            override fun contentType(): MediaType = "application/octet-stream".toMediaType()
+            override fun contentLength(): Long = length
+            override fun isOneShot(): Boolean = true
+            override fun writeTo(sink: BufferedSink) {
+                open().use { input ->
+                    val buf = ByteArray(64 * 1024)
+                    var remaining = length
+                    var sent = 0L
+                    val window = UploadBandwidthLimiter.Window()
+                    while (remaining > 0) {
+                        val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
+                        if (n < 0) throw IOException("Dosya beklenenden kısa")
+                        sink.write(buf, 0, n)
+                        remaining -= n
+                        sent += n
+                        // Same backup speed cap as multipart uploads.
+                        UploadBandwidthLimiter.paceAfterWrite(n, window)
+                        onProgress?.invoke(sent)
+                    }
+                }
+            }
+        }
+        val req = authed(Request.Builder().url("${base()}/api/uploads/files/$sessionId"))
+            .put(body)
+            .header("Upload-Offset", offset.toString())
+            .build()
+        http.newCall(req).execute().use { resp ->
+            when {
+                resp.code == 409 -> {
+                    val serverOffset = resp.header("Upload-Offset")?.toLongOrNull()
+                        ?: throw IOException("Yükleme konumu uyuşmadı")
+                    throw UploadOffsetMismatchException(serverOffset)
+                }
+                resp.code == 429 -> {
+                    val retryAfter = resp.header("Retry-After")?.toIntOrNull() ?: 0
+                    throw HttpStatusIOException(
+                        code = 429,
+                        message = parseError(resp.body?.string()).ifBlank { "Sunucu yoğun" },
+                        retryAfterSec = retryAfter.coerceAtLeast(2),
+                    )
+                }
+                !resp.isSuccessful -> {
+                    throw IOException(
+                        parseError(resp.body?.string()).ifBlank { "HTTP ${resp.code}" },
+                    )
+                }
+                else -> {
+                    val text = resp.body?.string().orEmpty()
+                    val parsed = runCatching {
+                        json.decodeFromString(UploadOffsetResponse.serializer(), text)
+                    }.getOrNull()
+                    parsed?.offset
+                        ?: resp.header("Upload-Offset")?.toLongOrNull()
+                        ?: (offset + length)
+                }
+            }
+        }
+    }
+
+    /** Finalises a fully-received session into a file entry. */
+    suspend fun completeUploadSession(sessionId: String): FileEntry = withContext(Dispatchers.IO) {
+        if (!BackupPolicy.isSafeServerId(sessionId)) {
+            throw IOException("Geçersiz yükleme oturumu")
+        }
+        val req = authed(Request.Builder().url("${base()}/api/uploads/files/$sessionId/complete"))
+            .post(ByteArray(0).toRequestBody(null))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw IOException(parseError(text))
+            json.decodeFromString(FileEntry.serializer(), text)
+        }
+    }
+
+    /**
+     * Backup upload with resume support: persists the server session per media
+     * key, streams fixed-size chunks with the shared bandwidth limiter, and
+     * continues from the server-reported offset after any interruption.
+     * Name conflicts are resolved client-side (the resumable API has no
+     * conflict flag); the caller falls back to multipart on protocol errors.
+     */
+    suspend fun uploadMediaResumable(
+        parentId: String?,
+        media: LocalMedia,
+        onProgress: ((bytesSent: Long, totalBytes: Long) -> Unit)? = null,
+    ): FileEntry = withContext(Dispatchers.IO) {
+        refreshUploadPaceIfStale()
+        val resolvedSize = MediaAccess.resolveContentLength(appContext, media.uri, media.sizeBytes)
+        if (resolvedSize <= 0L) throw IOException("Dosya boyutu okunamadı")
+        val prepared = ImageUploadPrep.prepare(
+            context = appContext,
+            uri = media.uri,
+            displayName = media.displayName,
+            mimeType = media.mimeType,
+            sizeHint = resolvedSize,
+            subdir = "backup_prep",
+        )
+        val uploadSize = MediaAccess.resolveContentLength(
+            appContext,
+            prepared.uri,
+            prepared.sizeBytes,
+        )
+        if (uploadSize <= 0L) {
+            prepared.tempFile?.delete()
+            throw IOException("Dosya boyutu okunamadı")
+        }
+        val changeMs = media.modifiedMs.takeIf { it > 0L } ?: media.dateTakenMs
+        val db = UploadedMediaDb(appContext)
+        try {
+            var lastError: Exception? = null
+            for (attempt in 1..3) {
+                try {
+                    return@withContext runResumableSession(
+                        db = db,
+                        parentId = parentId,
+                        media = media,
+                        prepared = prepared,
+                        uploadSize = uploadSize,
+                        changeMs = changeMs,
+                        onProgress = onProgress,
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    val msg = e.message?.lowercase().orEmpty()
+                    val recoverable =
+                        msg.contains("upload session") || msg.contains("file name conflict")
+                    if (attempt >= 3 || !recoverable) throw e
+                    // Session expired / name taken: drop the stale record and
+                    // start a fresh one — the next attempt resumes cleanly.
+                    db.clearPendingUpload(media.mediaKey)
+                    lastError = e
+                }
+            }
+            throw lastError ?: IOException("Yükleme tamamlanamadı")
+        } finally {
+            prepared.tempFile?.delete()
+        }
+    }
+
+    private suspend fun runResumableSession(
+        db: UploadedMediaDb,
+        parentId: String?,
+        media: LocalMedia,
+        prepared: ImageUploadPrep.Prepared,
+        uploadSize: Long,
+        changeMs: Long,
+        onProgress: ((Long, Long) -> Unit)?,
+    ): FileEntry {
+        val existing = db.pendingUploadFor(media.mediaKey)?.takeIf {
+            it.expectedSize == uploadSize && it.mtimeMs == changeMs
+        }
+        val pending: PendingUploadRow = if (existing != null) {
+            if (!BackupPolicy.isSafeServerId(existing.sessionId)) {
+                db.clearPendingUpload(media.mediaKey)
+                throw IOException("Yükleme oturumu geçersiz")
+            }
+            existing
+        } else {
+            db.clearPendingUpload(media.mediaKey)
+            val finalName = resolveFreeUploadName(parentId, prepared.displayName)
+            val batch = createUploadBatch(
+                parentId = parentId,
+                files = listOf(
+                    ResumableFileManifest(
+                        relativePath = finalName,
+                        fileName = finalName,
+                        mimeType = prepared.mimeType.ifBlank { "application/octet-stream" },
+                        expectedSize = uploadSize,
+                        lastModifiedMs = changeMs,
+                    ),
+                ),
+            )
+            val state = batch.files.firstOrNull() ?: throw IOException("Yükleme oturumu oluşmadı")
+            if (!BackupPolicy.isSafeServerId(batch.id) || !BackupPolicy.isSafeServerId(state.id)) {
+                throw IOException("Sunucu yükleme yanıtı geçersiz")
+            }
+            val created = PendingUploadRow(
+                mediaKey = media.mediaKey,
+                batchId = batch.id,
+                sessionId = state.id,
+                parentId = parentId.orEmpty(),
+                fileName = finalName,
+                expectedSize = uploadSize,
+                mtimeMs = changeMs,
+                receivedBytes = state.receivedBytes.coerceIn(0L, uploadSize),
+            )
+            db.savePendingUpload(created)
+            created
+        }
+
+        var offset = pending.receivedBytes.coerceIn(0L, uploadSize)
+        while (offset < uploadSize) {
+            val start = offset
+            val chunkLen = minOf(RESUMABLE_CHUNK_BYTES, uploadSize - start)
+            offset = try {
+                appendUploadChunk(
+                    sessionId = pending.sessionId,
+                    offset = start,
+                    length = chunkLen,
+                    open = { openAt(prepared.uri, start) },
+                    onProgress = { sent -> onProgress?.invoke(start + sent, uploadSize) },
+                )
+            } catch (e: UploadOffsetMismatchException) {
+                // Another writer / lost response: trust the server's offset.
+                val serverOffset = e.serverOffset.coerceIn(0L, uploadSize)
+                if (serverOffset == start) throw IOException("Yükleme konumu çözülemedi")
+                serverOffset
+            }
+            db.updatePendingReceived(media.mediaKey, offset)
+        }
+        val entry = completeUploadSession(pending.sessionId)
+        db.clearPendingUpload(media.mediaKey)
+        if (entry.id.isBlank()) throw IOException("Yükleme tamamlanamadı")
+        return entry
+    }
+
+    /** Picks a free display name (rename semantics of the multipart API). */
+    private suspend fun resolveFreeUploadName(parentId: String?, desiredRaw: String): String {
+        val desired = BackupPolicy.sanitizeDisplayName(desiredRaw)
+        val existing = runCatching { listFiles(parentId) }
+            .getOrDefault(emptyList())
+            .filter { it.kind == "file" }
+            .map { it.name.lowercase() }
+            .toHashSet()
+        if (desired.lowercase() !in existing) return desired
+        val stem = if (desired.contains('.')) desired.substringBeforeLast('.') else desired
+        val ext = if (desired.contains('.')) "." + desired.substringAfterLast('.') else ""
+        for (i in 2..99) {
+            val candidate = "$stem ($i)$ext"
+            if (candidate.lowercase() !in existing) return candidate
+        }
+        return "$stem-${System.currentTimeMillis()}$ext"
+    }
+
+    /** Opens the content stream positioned at [skip] bytes (chunk start). */
+    private fun openAt(uri: Uri, skip: Long): InputStream {
+        val raw = appContext.contentResolver.openInputStream(uri)
+            ?: throw IOException("Medya okunamadı")
+        try {
+            var remaining = skip
+            while (remaining > 0) {
+                val s = raw.skip(remaining)
+                if (s > 0) {
+                    remaining -= s
+                    continue
+                }
+                if (raw.read() < 0) throw IOException("Dosya beklenenden kısa")
+                remaining--
+            }
+        } catch (e: Exception) {
+            runCatching { raw.close() }
+            throw e
+        }
+        return raw
+    }
+
     suspend fun downloadToCache(entry: FileEntry): File = withContext(Dispatchers.IO) {
         val dir = File(appContext.cacheDir, "downloads").also { it.mkdirs() }
         val safeName = entry.name
@@ -778,7 +1087,21 @@ class DriveApi(private val session: SessionStore, private val appContext: Contex
                 throw IOException(parseError(resp.body?.string()))
             }
             resp.body?.byteStream()?.use { input ->
-                dest.outputStream().use { output -> input.copyTo(output) }
+                dest.outputStream().use { output ->
+                    val buf = ByteArray(64 * 1024)
+                    var written = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        written += n
+                        // Size guard: a hostile/broken server can never fill
+                        // the cache by serving an endless "APK".
+                        if (written > BackupPolicy.MAX_APK_BYTES) {
+                            throw IOException("APK beklenenden büyük; indirme iptal edildi")
+                        }
+                        output.write(buf, 0, n)
+                    }
+                }
             } ?: throw IOException("Boş APK yanıtı")
         }
         if (!dest.exists() || dest.length() < 512 * 1024) {

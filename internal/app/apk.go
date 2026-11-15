@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"necipdrive/internal/httpx"
@@ -22,6 +25,55 @@ type androidVersionInfo struct {
 	ApkPath          string `json:"apkPath"`
 	DownloadURL      string `json:"downloadURL"`
 	ApkAvailable     bool   `json:"apkAvailable"`
+	// SHA-256 of the APK bytes served at DownloadURL. The Android client
+	// verifies the downloaded file against this before offering install;
+	// the signing-certificate pin is checked on top of it.
+	ApkSha256 string `json:"apkSha256"`
+}
+
+// apkSHA256Cache memoises the hash of the published APK per (path,size,mtime)
+// so /api/android/version never re-hashes a 7+ MB file for every request.
+var apkSHA256Cache struct {
+	sync.Mutex
+	path string
+	size int64
+	mod  time.Time
+	hex  string
+}
+
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// currentAPKSHA256 returns the SHA-256 (lowercase hex) of the APK that
+// /download serves, cached until the file changes.
+func currentAPKSHA256(path string, size int64, mod time.Time) (string, bool) {
+	apkSHA256Cache.Lock()
+	defer apkSHA256Cache.Unlock()
+	if apkSHA256Cache.hex != "" &&
+		apkSHA256Cache.path == path &&
+		apkSHA256Cache.size == size &&
+		apkSHA256Cache.mod.Equal(mod) {
+		return apkSHA256Cache.hex, true
+	}
+	sum, err := sha256File(path)
+	if err != nil {
+		return "", false
+	}
+	apkSHA256Cache.path = path
+	apkSHA256Cache.size = size
+	apkSHA256Cache.mod = mod
+	apkSHA256Cache.hex = sum
+	return sum, true
 }
 
 func serveAndroidAPK(w http.ResponseWriter, r *http.Request) {
@@ -106,8 +158,13 @@ func serveAndroidVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, size, _, err := findAndroidAPK(); err == nil && size >= 512*1024 {
+	if apkPath, size, modTime, err := findAndroidAPK(); err == nil && size >= 512*1024 {
 		info.ApkAvailable = true
+		// Always report the hash of the bytes we actually serve; a stale
+		// value in android-version.json must never win over the file.
+		if sum, ok := currentAPKSHA256(apkPath, size, modTime); ok {
+			info.ApkSha256 = sum
+		}
 	}
 
 	// Sensible defaults if JSON missing but APK exists.

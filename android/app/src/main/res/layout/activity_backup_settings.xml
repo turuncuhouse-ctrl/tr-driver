@@ -37,7 +37,52 @@
                 android:id="@+id/switchGalleryBackup"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Otomatik foto/video yedekle"
+                android:text="Otomatik yedekle (foto, video, ses, dosya)"
+                android:textColor="@color/tr_ink" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Yedeklenecek türler"
+                android:textColor="@color/tr_ink"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchPhotoBackup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Fotoğraflar"
+                android:textColor="@color/tr_ink" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchVideoBackup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Videolar"
+                android:textColor="@color/tr_ink" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchAudioBackup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ses dosyaları (müzik, kayıt)"
+                android:textColor="@color/tr_ink" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchDocBackup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Belgeler ve dosyalar (pdf, doc, xls, zip, apk…)"
+                android:textColor="@color/tr_ink" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchAllFilesAccess"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Tüm dosyalara erişim (klasör seçimi olmadan tam yedek)"
                 android:textColor="@color/tr_ink" />
 
             <TextView
@@ -104,7 +149,30 @@
             android:id="@+id/btnAddFolder"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Klasör ekle" />
+            android:text="Klasör ekle (SAF)" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Hızlı klasörler"
+            android:textColor="@color/tr_ink"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Download, DCIM, Pictures, Documents, Music, Movies, WhatsApp medya ve WhatsApp yedek klasörü. Tüm dosyalara erişim açıkken tek dokunuşla eklenir; değilse sistem seçici açılır."
+            android:textColor="@color/tr_ink"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:id="@+id/presetList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="4dp" />
 
         <LinearLayout
             android:id="@+id/folderList"

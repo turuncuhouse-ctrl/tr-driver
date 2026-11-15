@@ -46,6 +46,7 @@ object BackupController {
 
     private const val PREFS = "trdriver_backup_sched"
     private const val KEY_WATCHDOG_V2 = "watchdog_v2_armed"
+    private const val KEY_UPDATE_DAILY = "update_check_daily_armed"
 
     /** Conflated: dozens of triggers collapse into a single wake-up for the service loop. */
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -75,16 +76,27 @@ object BackupController {
         val session = SessionStore(app)
         val wm = WorkManager.getInstance(app)
 
+        val schedPrefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
         // Self-update checks run regardless of backup state — even logged-out.
         // The version manifest endpoint is public, so no session is required.
-        val updateCheck = PeriodicWorkRequestBuilder<AppUpdateWorker>(12, TimeUnit.HOURS)
+        // Policy: once a day (24h). Devices enrolled under the old 12h cadence
+        // migrate exactly once (UPDATE), then KEEP — re-enqueueing with UPDATE
+        // on every Wi-Fi callback would reset the timer and it would never fire.
+        val updateCheck = PeriodicWorkRequestBuilder<AppUpdateWorker>(24, TimeUnit.HOURS, 1, TimeUnit.HOURS)
             .setConstraints(
                 Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
             )
             .build()
+        val updatePolicy = if (schedPrefs.getBoolean(KEY_UPDATE_DAILY, false)) {
+            ExistingPeriodicWorkPolicy.KEEP
+        } else {
+            schedPrefs.edit().putBoolean(KEY_UPDATE_DAILY, true).apply()
+            ExistingPeriodicWorkPolicy.UPDATE
+        }
         wm.enqueueUniquePeriodicWork(
             AppUpdateWorker.UNIQUE_WORK,
-            ExistingPeriodicWorkPolicy.KEEP,
+            updatePolicy,
             updateCheck,
         )
 
@@ -103,7 +115,7 @@ object BackupController {
         //
         // One exception: devices upgraded from the old 30-minute schedule get a
         // single UPDATE so they migrate to the 15-minute watchdog exactly once.
-        val schedPrefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // (schedPrefs is created above, next to the update-check schedule.)
         val periodicPolicy = if (schedPrefs.getBoolean(KEY_WATCHDOG_V2, false)) {
             ExistingPeriodicWorkPolicy.KEEP
         } else {

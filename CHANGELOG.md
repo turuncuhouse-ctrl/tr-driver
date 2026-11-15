@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.10.0 — Tüm dosya türü yedeği, artımlı yükleme ve güçlü güncelleme
+
+### Added
+- Yerel tür anahtarları (fotoğraf, video, ses, dosya) için ayrı açma/kapatma anahtarları
+- Hızlı klasör seçimi (İndir, DCIM, Pictures, Documents, Music, Movies, WhatsApp) ve kullanıcı klasörü seçimi
+- Manuel "Güncelle" düğmesi; imza sertifikası doğrulaması artı APK SHA-256
+- Artımlı yedekleme ve devam ettirilebilir (parçalı) yükleme API'si
+- Yükleme başına dosya boyutu sınırı ve yollar için geçersizlik doğrulaması
+- Tüm dosya erişimi (MANAGE_EXTERNAL_STORAGE) isteği ve açıklama diyaloğu
+
+### Changed
+- Güncelleme kontrolü oturum açmadan da çalışır; arka plan indirmeleri yalnız Wi-Fi, manuel indirme kullanıcı onayıyla mobil veriye izin verir
+- Dosya taramaları tüm uzantıları kapsar (pdf, doc, xls, zip, apk vb.)
+- Yedekleme yalnızca yeni/değişen dosyaları yükler (artımlı)
+
+### Fixed
+- Büyük dosyaların ağ kesintisinde kaldığı yerden devam etmemesi
+- Aynı dosyanın birden fazla kaynaktan iki kez yüklenmesi
+- İzin verilmeyen ses/dosya kaynaklarının gereksiz yeniden taranması
+
+
 ## 0.9.0 — Drive benzeri arayüz + sunucu yedekleme
 
 ### Added

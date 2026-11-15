@@ -44,6 +44,34 @@ class SessionStore(context: Context) {
         get() = prefs.getBoolean(KEY_GALLERY_ON, false)
         set(value) = prefs.edit().putBoolean(KEY_GALLERY_ON, value).apply()
 
+    // --- per-type backup switches (0.10.0) ---------------------------------
+    // Defaults on: photos/videos behave exactly as before; audio and
+    // documents join the same Wi-Fi-only background pipeline.
+
+    var backupPhotosOn: Boolean
+        get() = prefs.getBoolean(KEY_BACKUP_PHOTOS, true)
+        set(value) = prefs.edit().putBoolean(KEY_BACKUP_PHOTOS, value).apply()
+
+    var backupVideosOn: Boolean
+        get() = prefs.getBoolean(KEY_BACKUP_VIDEOS, true)
+        set(value) = prefs.edit().putBoolean(KEY_BACKUP_VIDEOS, value).apply()
+
+    var backupAudioOn: Boolean
+        get() = prefs.getBoolean(KEY_BACKUP_AUDIO, true)
+        set(value) = prefs.edit().putBoolean(KEY_BACKUP_AUDIO, value).apply()
+
+    var backupDocsOn: Boolean
+        get() = prefs.getBoolean(KEY_BACKUP_DOCS, true)
+        set(value) = prefs.edit().putBoolean(KEY_BACKUP_DOCS, value).apply()
+
+    fun backupTypeToggles(): net.neciparmagan.trdriver.data.BackupPolicy.TypeToggles =
+        net.neciparmagan.trdriver.data.BackupPolicy.TypeToggles(
+            photo = backupPhotosOn,
+            video = backupVideosOn,
+            audio = backupAudioOn,
+            doc = backupDocsOn,
+        )
+
     /** SMS/arama yedeği kaldırıldı — her zaman kapalı. */
     var smsBackupEnabled: Boolean
         get() = false
@@ -190,6 +218,47 @@ class SessionStore(context: Context) {
     fun removeBackupFolderUri(uri: String) {
         backupFolderUris = backupFolderUris.filterNot { it == uri }
     }
+
+    /**
+     * Absolute preset folder paths walked directly when the app holds
+     * all-files access (MANAGE_EXTERNAL_STORAGE / legacy storage read).
+     * Paths are validated against [net.neciparmagan.trdriver.data.BackupPolicy.isSafeDirectPath].
+     */
+    var backupPresetPaths: List<String>
+        get() {
+            val raw = prefs.getString(KEY_BACKUP_PRESETS, "[]") ?: "[]"
+            return runCatching {
+                val arr = JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val s = arr.optString(i)
+                        if (s.isNotBlank()) add(s)
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+        set(value) {
+            val arr = JSONArray()
+            value
+                .filter { net.neciparmagan.trdriver.data.BackupPolicy.isSafeDirectPath(it) }
+                .distinct()
+                .forEach { arr.put(it) }
+            prefs.edit().putString(KEY_BACKUP_PRESETS, arr.toString()).apply()
+        }
+
+    fun addBackupPresetPath(path: String) {
+        if (!net.neciparmagan.trdriver.data.BackupPolicy.isSafeDirectPath(path)) return
+        backupPresetPaths = backupPresetPaths + path
+    }
+
+    fun removeBackupPresetPath(path: String) {
+        backupPresetPaths = backupPresetPaths.filterNot { it == path }
+    }
+
+    /** True once the all-files-access explanation dialog has been shown. */
+    var allFilesAccessAsked: Boolean
+        get() = prefs.getBoolean(KEY_ALL_FILES_ASKED, false)
+        set(value) = prefs.edit().putBoolean(KEY_ALL_FILES_ASKED, value).apply()
 
     /** Last plate folder used in vehicle intake (for quick re-open). */
     var lastIntakePlate: String
@@ -399,6 +468,12 @@ class SessionStore(context: Context) {
         const val KEY_LAST_MSG = "last_backup_msg"
         const val KEY_BACKUP_SUCCESS = "backup_success_at"
         const val KEY_GALLERY_ON = "gallery_on"
+        private const val KEY_BACKUP_PHOTOS = "backup_type_photo"
+        private const val KEY_BACKUP_VIDEOS = "backup_type_video"
+        private const val KEY_BACKUP_AUDIO = "backup_type_audio"
+        private const val KEY_BACKUP_DOCS = "backup_type_docs"
+        private const val KEY_BACKUP_PRESETS = "backup_preset_paths"
+        private const val KEY_ALL_FILES_ASKED = "all_files_access_asked"
         private const val KEY_SMS_BACKUP = "sms_backup_on"
         private const val KEY_CALL_BACKUP = "call_backup_on"
 

@@ -85,18 +85,65 @@ object UploadExecutor {
                 onRetry = onRetry,
             ) {
                 UploadNetworkGate.awaitUploadAllowed(context, session, size, wifiOnly = true)
-                api.uploadMedia(
-                    parentId = parentId,
-                    media = media,
-                    conflict = serverConflict(policy),
-                    onProgress = onProgress,
-                    onRetry = onRetry,
-                )
+                // Large backup files use the resumable API so an interrupted
+                // transfer continues from the server-side offset. Small files
+                // (most photos after prep) keep the proven multipart path.
+                if (policy == UploadConflictPolicy.RENAME && size >= BackupPolicy.RESUMABLE_MIN_BYTES) {
+                    try {
+                        api.uploadMediaResumable(parentId, media, onProgress)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (!shouldFallbackToMultipart(e)) throw e
+                        api.uploadMedia(
+                            parentId = parentId,
+                            media = media,
+                            conflict = serverConflict(policy),
+                            onProgress = onProgress,
+                            onRetry = onRetry,
+                        )
+                    }
+                } else {
+                    api.uploadMedia(
+                        parentId = parentId,
+                        media = media,
+                        conflict = serverConflict(policy),
+                        onProgress = onProgress,
+                        onRetry = onRetry,
+                    )
+                }
             }
         } finally {
             UploadBandwidthLimiter.backupMode = previousBackupMode
             UploadNetworkGate.unbindUploadNetwork(context)
         }
+    }
+
+    /**
+     * Protocol-level failures of the resumable API (bad session, name taken,
+     * wrong payload) are recovered by falling back to multipart. Network and
+     * server-load errors are NOT fallbacks: UploadRetry resumes the chunked
+     * session from its saved offset instead of restarting the file.
+     */
+    private fun shouldFallbackToMultipart(error: Throwable): Boolean {
+        if (error is SkipUploadException ||
+            error is DuplicateNameException ||
+            error is UploadNetworkBlockedException ||
+            error is UploadOffsetMismatchException
+        ) {
+            return false
+        }
+        if (error is HttpStatusIOException && (error.code == 429 || error.code in 500..599)) {
+            return false
+        }
+        val msg = error.message?.lowercase().orEmpty()
+        if (msg.contains("quota")) return false
+        if (error is HttpStatusIOException && error.code == 400 && msg.isBlank()) return false
+        return msg.contains("file name conflict") ||
+            msg.contains("upload session") ||
+            msg.contains("content hash mismatch") ||
+            msg.contains("chunk must be") ||
+            (error is HttpStatusIOException && error.code == 400)
     }
 
     private suspend fun resolveConflictPolicy(

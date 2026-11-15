@@ -22,12 +22,62 @@ object MediaAccess {
         }
     }
 
+    /** Audio needs its own READ_MEDIA_AUDIO grant on Android 13+. */
+    fun audioPermissionsForRequest(): Array<String> {
+        return if (Build.VERSION.SDK_INT >= 33) {
+            arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
     /** Optional; request separately so notification grant cannot enable backup alone. */
     fun notificationPermissionOrEmpty(): Array<String> {
         return if (Build.VERSION.SDK_INT >= 33) {
             arrayOf(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             emptyArray()
+        }
+    }
+
+    fun hasAudioAccess(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= 33) {
+            granted(context, Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            granted(context, Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    /**
+     * Direct file-path access to shared storage (preset folder walks).
+     * Android 11+ requires MANAGE_EXTERNAL_STORAGE; older versions are
+     * covered by the legacy READ_EXTERNAL_STORAGE grant.
+     */
+    fun hasDirectStorageAccess(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= 30) {
+            android.os.Environment.isExternalStorageManager()
+        } else {
+            granted(context, Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    /** Opens the settings screen where all-files access can be granted. */
+    fun openAllFilesAccessSettings(context: Context) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                android.net.Uri.parse("package:${context.packageName}"),
+            )
+            val ok = runCatching { context.startActivity(intent) }.isSuccess
+            if (!ok) {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+                    )
+                }
+            }
+        } else {
+            openAppSettings(context)
         }
     }
 

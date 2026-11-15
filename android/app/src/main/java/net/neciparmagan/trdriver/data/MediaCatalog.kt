@@ -20,6 +20,12 @@ data class LocalMedia(
     val albumId: String? = null,
     /** Optional label for SAF tree backups (folder display name). */
     val backupFolderLabel: String? = null,
+    /**
+     * Last modification time used by incremental change detection (0 = unknown,
+     * callers fall back to [dateTakenMs]). Kept separate from the "taken" date
+     * so editing a photo's modification time never moves its album placement.
+     */
+    val modifiedMs: Long = 0L,
 ) {
     val year: Int
         get() {
@@ -71,6 +77,137 @@ object MediaCatalog {
      * older media on a large library (the old 4000 cap did exactly that).
      */
     fun scanAll(context: Context): List<LocalMedia> = scan(context, Int.MAX_VALUE)
+
+    /**
+     * Full MediaStore audio scan (music, recordings, WhatsApp audio visible
+     * to MediaStore). Empty when READ_MEDIA_AUDIO is not granted.
+     */
+    fun scanAllAudio(context: Context): List<LocalMedia> {
+        val out = ArrayList<LocalMedia>()
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                for (vol in MediaStore.getExternalVolumeNames(context)) {
+                    out += query(
+                        context,
+                        MediaStore.Audio.Media.getContentUri(vol),
+                        video = false,
+                        limit = Int.MAX_VALUE,
+                        fallbackMime = "audio/mpeg",
+                        fallbackPrefix = "audio",
+                        // Route to TR Backup / {device} / {topFolder} instead of
+                        // photo month folders, and match preset-walk labels so
+                        // the same file is never uploaded from both sources.
+                        labelFromRelativePath = true,
+                    )
+                }
+            } else {
+                out += query(
+                    context,
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    video = false,
+                    limit = Int.MAX_VALUE,
+                    fallbackMime = "audio/mpeg",
+                    fallbackPrefix = "audio",
+                    labelFromRelativePath = true,
+                )
+            }
+        }
+        return out.distinctBy { it.mediaKey }.sortedByDescending { it.dateTakenMs }
+    }
+
+    /**
+     * Best-effort scan of the Downloads collection (documents indexed by the
+     * system). Often empty on Android 13+ without all-files access — SAF
+     * preset folders and direct path walks cover that case instead.
+     */
+    fun scanDownloads(context: Context): List<LocalMedia> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        val out = ArrayList<LocalMedia>()
+        runCatching {
+            for (vol in MediaStore.getExternalVolumeNames(context)) {
+                out += query(
+                    context,
+                    MediaStore.Downloads.getContentUri(vol),
+                    video = false,
+                    limit = SAF_HARD_LIMIT,
+                    fallbackMime = "application/octet-stream",
+                    fallbackPrefix = "file",
+                )
+            }
+        }
+        return out.distinctBy { it.mediaKey }
+            .filter { BackupPolicy.kindOf(it.mimeType, it.displayName) == BackupPolicy.KIND_DOC }
+            // Same label as the Download preset folder so an item seen both via
+            // MediaStore and via a direct/SAF walk is deduplicated, not
+            // uploaded twice.
+            .map { it.copy(backupFolderLabel = "Download") }
+            .sortedByDescending { it.dateTakenMs }
+    }
+
+    /**
+     * Direct java.io walk of preset folders (all files, any extension).
+     * Only called when the app holds all-files access; every path is
+     * validated by [BackupPolicy.isSafeDirectPath] first.
+     */
+    fun scanDirectPaths(context: Context, paths: List<String>): List<LocalMedia> {
+        val out = ArrayList<LocalMedia>()
+        for (raw in paths) {
+            if (!BackupPolicy.isSafeDirectPath(raw)) continue
+            val root = java.io.File(raw)
+            if (!root.isDirectory) continue
+            val label = root.name.ifBlank { "Klasor" }
+            val items = ArrayList<LocalMedia>()
+            walkFileTree(root, label, items, SAF_HARD_LIMIT, depth = 0)
+            out += items
+        }
+        return out.sortedByDescending { it.dateTakenMs }
+    }
+
+    private fun walkFileTree(
+        dir: java.io.File,
+        label: String,
+        out: MutableList<LocalMedia>,
+        limit: Int,
+        depth: Int,
+    ) {
+        if (out.size >= limit || depth > SAF_MAX_DEPTH) return
+        val children = dir.listFiles() ?: return
+        for (f in children) {
+            if (out.size >= limit) return
+            val name = f.name
+            // Skip hidden entries (.thumbnails, temp files); ".nomedia" itself
+            // is a dot-file so it is skipped while the folder is still walked —
+            // explicit user-chosen folders must back up even if apps hide them.
+            if (name.startsWith(".")) continue
+            when {
+                f.isDirectory -> walkFileTree(f, label, out, limit, depth + 1)
+                f.isFile -> {
+                    val size = f.length()
+                    if (size <= 0L) continue
+                    val ext = name.substringAfterLast('.', "").lowercase()
+                    val mime = runCatching {
+                        android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+                    }.getOrNull()
+                        ?: MimeHelper.guessFromExtension(ext)
+                        ?: "application/octet-stream"
+                    val modified = f.lastModified().coerceAtLeast(0L)
+                    out += LocalMedia(
+                        mediaKey = "path:${f.absolutePath}",
+                        uri = Uri.fromFile(f),
+                        displayName = name,
+                        mimeType = mime,
+                        sizeBytes = size,
+                        dateTakenMs = modified,
+                        isVideo = mime.startsWith("video/"),
+                        albumName = label,
+                        albumId = "path:$label",
+                        backupFolderLabel = label,
+                        modifiedMs = modified,
+                    )
+                }
+            }
+        }
+    }
 
     /** Full recursive SAF folder scan for backup (see scanAll). */
     fun scanAllDocumentTrees(context: Context, treeUris: List<String>): List<LocalMedia> =
@@ -151,17 +288,19 @@ object MediaCatalog {
                     if (size <= 0L) continue
                     val name = f.name ?: continue
                     val mime = f.type ?: "application/octet-stream"
+                    val modified = f.lastModified().coerceAtLeast(0L)
                     out += LocalMedia(
                         mediaKey = "saf:${f.uri}",
                         uri = f.uri,
                         displayName = name,
                         mimeType = mime,
                         sizeBytes = size,
-                        dateTakenMs = f.lastModified().coerceAtLeast(0L),
+                        dateTakenMs = modified,
                         isVideo = mime.startsWith("video/"),
                         albumName = label,
                         albumId = "saf:$label",
                         backupFolderLabel = label,
+                        modifiedMs = modified,
                     )
                 }
             }
@@ -174,6 +313,9 @@ object MediaCatalog {
         video: Boolean,
         limit: Int,
         bucketId: String? = null,
+        fallbackMime: String? = null,
+        fallbackPrefix: String? = null,
+        labelFromRelativePath: Boolean = false,
     ): List<LocalMedia> {
         val idCol = MediaStore.MediaColumns._ID
         val nameCol = MediaStore.MediaColumns.DISPLAY_NAME
@@ -184,11 +326,21 @@ object MediaCatalog {
         val takenCol = MediaStore.MediaColumns.DATE_TAKEN
         val modifiedCol = MediaStore.MediaColumns.DATE_MODIFIED
         val addedCol = MediaStore.MediaColumns.DATE_ADDED
-        val projection = arrayOf(
-            idCol, nameCol, mimeCol, sizeCol,
-            takenCol, modifiedCol, addedCol,
-            bucketIdCol, bucketNameCol,
-        )
+        // RELATIVE_PATH exists on Q+ only — never project it on older devices.
+        val relPathCol = MediaStore.MediaColumns.RELATIVE_PATH
+        val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            arrayOf(
+                idCol, nameCol, mimeCol, sizeCol,
+                takenCol, modifiedCol, addedCol,
+                bucketIdCol, bucketNameCol, relPathCol,
+            )
+        } else {
+            arrayOf(
+                idCol, nameCol, mimeCol, sizeCol,
+                takenCol, modifiedCol, addedCol,
+                bucketIdCol, bucketNameCol,
+            )
+        }
         val selection = buildString {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 append("${MediaStore.MediaColumns.IS_PENDING}=0")
@@ -213,11 +365,14 @@ object MediaCatalog {
                 val iAdded = c.getColumnIndex(addedCol)
                 val iBucketId = c.getColumnIndex(bucketIdCol)
                 val iBucketName = c.getColumnIndex(bucketNameCol)
+                val iRelPath = c.getColumnIndex(relPathCol)
                 var n = 0
                 while (c.moveToNext() && n < limit) {
                     val id = c.getLong(iId)
-                    val name = c.getString(iName) ?: if (video) "video_$id.mp4" else "image_$id.jpg"
+                    val name = c.getString(iName)
+                        ?: "${fallbackPrefix ?: if (video) "video" else "image"}_$id"
                     val mime = c.getString(iMime)
+                        ?: fallbackMime
                         ?: if (video) "video/mp4" else "image/jpeg"
                     val size = c.getLong(iSize)
                     val date = resolveDateMs(
@@ -225,10 +380,16 @@ object MediaCatalog {
                         modified = if (iModified >= 0) c.getLong(iModified) else 0L,
                         added = if (iAdded >= 0) c.getLong(iAdded) else 0L,
                     )
+                    val modifiedRaw = if (iModified >= 0) normalizeEpoch(c.getLong(iModified)) else 0L
                     val uri = ContentUris.withAppendedId(collection, id)
                     val volume = collection.toString()
                     val bucketId = if (iBucketId >= 0) c.getString(iBucketId) else null
                     val bucketName = if (iBucketName >= 0) c.getString(iBucketName) else null
+                    val relLabel = if (labelFromRelativePath && iRelPath >= 0) {
+                        topFolderLabel(c.getString(iRelPath))
+                    } else {
+                        null
+                    }
                     result += LocalMedia(
                         mediaKey = "$volume/$id",
                         uri = uri,
@@ -239,6 +400,8 @@ object MediaCatalog {
                         isVideo = video,
                         albumName = bucketName,
                         albumId = bucketId,
+                        backupFolderLabel = relLabel,
+                        modifiedMs = modifiedRaw,
                     )
                     n++
                 }
@@ -247,16 +410,29 @@ object MediaCatalog {
         return result
     }
 
+    /**
+     * First segment of a MediaStore relative path ("Music/Albums/x.mp3" →
+     * "Music") so audio lands in a stable TR Backup subfolder that matches
+     * preset-walk labels; files at the storage root fall back to "Ses".
+     */
+    private fun topFolderLabel(relativePath: String?): String {
+        val trimmed = relativePath?.trim()?.trim('/')
+        if (trimmed.isNullOrEmpty()) return "Ses"
+        return trimmed.substringBefore('/').ifBlank { "Ses" }
+    }
+
     /** Milliseconds since epoch; never invent "now" (that dumps old files into today's folder). */
     private fun resolveDateMs(taken: Long, modified: Long, added: Long): Long {
-        fun normalize(raw: Long): Long {
-            if (raw <= 0L) return 0L
-            return if (raw < 10_000_000_000L) raw * 1000L else raw
-        }
-        normalize(taken).takeIf { it > 0L }?.let { return it }
-        normalize(modified).takeIf { it > 0L }?.let { return it }
-        normalize(added).takeIf { it > 0L }?.let { return it }
+        normalizeEpoch(taken).takeIf { it > 0L }?.let { return it }
+        normalizeEpoch(modified).takeIf { it > 0L }?.let { return it }
+        normalizeEpoch(added).takeIf { it > 0L }?.let { return it }
         // Last resort so undated items still land in a usable year/month folder.
         return System.currentTimeMillis()
+    }
+
+    /** Seconds-vs-milliseconds normaliser; 0 stays 0 ("unknown"). */
+    private fun normalizeEpoch(raw: Long): Long {
+        if (raw <= 0L) return 0L
+        return if (raw < 10_000_000_000L) raw * 1000L else raw
     }
 }
