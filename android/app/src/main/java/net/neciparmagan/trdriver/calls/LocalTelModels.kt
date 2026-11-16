@@ -112,6 +112,12 @@ sealed class CallProviderEvent {
     data class CallConnected(val callId: String) : CallProviderEvent()
     data class CallEnded(val callId: String, val reason: CallEndReason) : CallProviderEvent()
     data class CallError(val callId: String, val reason: CallEndReason, val message: String) : CallProviderEvent()
+    /** Server-side missed call: nobody answered within the ring window. */
+    data class CallMissed(
+        val callId: String,
+        val remoteUri: String,
+        val displayNameHint: String = "",
+    ) : CallProviderEvent()
 }
 
 /**

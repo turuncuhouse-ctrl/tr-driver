@@ -85,13 +85,22 @@ func (h *Handler) routeSignal(r *http.Request, senderUserID, senderClientID stri
 		callID := msg.CallID
 		connected := h.hub.ConnectedCount(targetUserID)
 		delivered := h.hub.DispatchCall(senderUserID, senderClientID, *msg)
+		// Optional high-priority FCM push (configured server Firebase
+		// credentials): wakes the callee app so it can answer even when the
+		// WebSocket was dozing. Never blocks the signal path.
+		pushed := h.service.PushInvite(r.Context(), targetUserID, *msg)
 		logInvite(senderUserID, targetUserID, true, connected, delivered)
-		if delivered == 0 {
-			// Callee has no live gateway connection: end the call for the
-			// caller right away rather than ringing into the void.
+		if delivered == 0 && pushed == 0 {
+			// Callee has no live gateway connection and no push reached it:
+			// end the call for the caller right away rather than ringing into
+			// the void.
 			h.hub.EndCall(callID)
 			h.refuseInvite(senderUserID, senderClientID, msg, "callee_offline")
+			return delivered
 		}
+		// GSM-like ringing: re-send the invite until answered or the
+		// no-answer deadline (45s) ends the call for both sides.
+		h.hub.StartRing(callID, senderClientID, *msg)
 		return delivered
 	}
 	if msg.Type == "ping" || msg.Type == "pong" {

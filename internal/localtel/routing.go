@@ -66,9 +66,23 @@ func (h *Hub) DispatchCall(senderUserID, senderClientID string, msg SignalMessag
 	}
 	if msg.Type == "accept" && senderUserID == route.calleeUserID {
 		route.accepted = true
-		h.calls[msg.CallID] = route
+	}
+	switch msg.Type {
+	case "accept", "reject", "hangup", "cancel":
+		// The call is settled (or over): no more retries or deadline.
+		route.stopRingTimersLocked()
+	case "ringing":
+		// The callee's phone is awake and ringing — stop re-inviting it, but
+		// keep the no-answer deadline.
+		if route.retryTimer != nil {
+			route.retryTimer.Stop()
+			route.retryTimer = nil
+		}
 	}
 	delivered := dispatchLocked(h.users[targetUserID], senderClientID, raw)
+	if msg.Type == "accept" || msg.Type == "reject" || msg.Type == "hangup" || msg.Type == "cancel" || msg.Type == "ringing" {
+		h.calls[msg.CallID] = route
+	}
 	if msg.Type == "reject" || msg.Type == "hangup" || msg.Type == "cancel" {
 		delete(h.calls, msg.CallID)
 	}
@@ -97,7 +111,9 @@ func (h *Hub) IsBusy(userID string) bool {
 }
 
 // dropRoutesOfLocked removes every call route of a user whose last gateway
-// connection just closed and tells the other party the call is over.
+// connection just closed and tells the other party the call is over. An
+// unanswered call also becomes a missed call for the callee (live + queued),
+// so hanging up mid-ring is remembered like a GSM missed call.
 func (h *Hub) dropRoutesOfLocked(userID string) {
 	for id, r := range h.calls {
 		if r.callerUserID != userID && r.calleeUserID != userID {
@@ -110,6 +126,24 @@ func (h *Hub) dropRoutesOfLocked(userID string) {
 		if raw, err := json.Marshal(SignalMessage{Type: "hangup", CallID: id, Payload: "peer_disconnected", TimestampMs: nowMs()}); err == nil {
 			dispatchLocked(h.users[other], "", raw)
 		}
+		if !r.accepted && time.Now().Before(r.ringingUntil) {
+			number, name := "", ""
+			if r.invite != nil {
+				number, name = r.invite.Number, r.invite.DisplayName
+			}
+			missed := SignalMessage{
+				Type:        "missed",
+				CallID:      id,
+				Number:      number,
+				DisplayName: name,
+				TimestampMs: nowMs(),
+			}
+			if raw, err := json.Marshal(missed); err == nil {
+				dispatchLocked(h.users[r.calleeUserID], "", raw)
+			}
+			h.queueMissedLocked(r.calleeUserID, missed)
+		}
+		r.stopRingTimersLocked()
 		delete(h.calls, id)
 	}
 }
@@ -117,6 +151,9 @@ func (h *Hub) dropRoutesOfLocked(userID string) {
 // EndCall drops a call route (e.g. when the invite could not be delivered).
 func (h *Hub) EndCall(callID string) {
 	h.mu.Lock()
+	if route, ok := h.calls[callID]; ok {
+		route.stopRingTimersLocked()
+	}
 	delete(h.calls, callID)
 	h.mu.Unlock()
 }

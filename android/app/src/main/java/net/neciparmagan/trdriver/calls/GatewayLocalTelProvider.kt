@@ -126,6 +126,9 @@ class GatewayLocalTelProvider(
                     statusText = "LocalTel ağ geçidi hazır",
                 )
                 startPingLoop()
+                // Best-effort: register for optional high-priority wake pushes
+                // (no-op unless the build includes a google-services.json).
+                FcmRegistrar.register(context)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -340,6 +343,23 @@ class GatewayLocalTelProvider(
                     _events.tryEmit(CallProviderEvent.CallConnected(msg.callId))
                 }
             }
+            "missed" -> {
+                // The server ended an unanswered call (or it happened while
+                // this device was offline): show the GSM-style missed-call
+                // notification.
+                if (msg.callId.isBlank()) return
+                if (msg.callId == activeCallId) {
+                    stopAudioBridge()
+                    activeCallId = null
+                }
+                _events.tryEmit(
+                    CallProviderEvent.CallMissed(
+                        callId = msg.callId,
+                        remoteUri = msg.number,
+                        displayNameHint = msg.displayName,
+                    ),
+                )
+            }
             "reject" -> {
                 if (msg.callId == activeCallId) {
                     stopAudioBridge()
@@ -347,6 +367,13 @@ class GatewayLocalTelProvider(
                     // The server states why an invite could not be delivered;
                     // an empty reason means the callee pressed "Reddet".
                     when (msg.payload) {
+                        "no_answer" -> _events.tryEmit(
+                            CallProviderEvent.CallError(
+                                msg.callId,
+                                CallEndReason.NO_ANSWER,
+                                "Cevapsız: kimse cevap vermedi",
+                            ),
+                        )
                         "unknown_target", "caller_unprovisioned" -> _events.tryEmit(
                             CallProviderEvent.CallError(
                                 msg.callId, CallEndReason.NOT_FOUND,

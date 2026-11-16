@@ -111,6 +111,12 @@ type Service struct {
 	domain        string
 	tokens        *TokenService
 	autoProvision bool
+	// fcm sends optional high-priority wake pushes when the server has
+	// Firebase credentials configured; nil disables the feature.
+	fcm *fcmSender
+	// Test-only overrides used by the signaling e2e tests in this package.
+	resolveForTest  func(ctx context.Context, dial string) (string, bool)
+	identityForTest func(ctx context.Context, userID string) (string, string, bool)
 }
 
 func NewService(db *pgxpool.Pool, vault *Vault) (*Service, error) {
@@ -123,6 +129,13 @@ func NewService(db *pgxpool.Pool, vault *Vault) (*Service, error) {
 		tokens:        NewTokenService(vault, 15*time.Minute),
 		autoProvision: true,
 	}, nil
+}
+
+// SetFCM enables optional high-priority wake pushes when a Firebase
+// service-account JSON is configured; an empty or invalid value keeps the
+// feature off (calls work exactly as before).
+func (s *Service) SetFCM(serviceAccountJSON string) {
+	s.fcm = newFCMSender(serviceAccountJSON)
 }
 
 // Configure sets the public gateway domain, short-lived token TTL and whether

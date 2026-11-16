@@ -403,6 +403,28 @@ object CallController {
                     is CallProviderEvent.CallError -> {
                         handleCallEnd(ctx, ev.callId, ev.reason, ev.message)
                     }
+                    is CallProviderEvent.CallMissed -> {
+                        val current = _callState.value
+                        if (current.callId == ev.callId && current.phase == CallPhase.INCOMING_RINGING) {
+                            // Still ringing this exact call: end it as no-answer
+                            // (handleCallEnd raises the missed notification).
+                            handleCallEnd(ctx, ev.callId, CallEndReason.NO_ANSWER, "")
+                        } else if (!current.isLive || current.callId != ev.callId) {
+                            // Already gone (or the call timed out while this
+                            // phone was offline): show the missed call directly.
+                            val missed = CallSessionState(
+                                callId = ev.callId,
+                                direction = CallDirection.INCOMING,
+                                phase = CallPhase.ENDED,
+                                remoteAddress = ev.remoteUri,
+                                remoteDisplayName = ev.displayNameHint,
+                                startedAtMs = System.currentTimeMillis(),
+                                endedAtMs = System.currentTimeMillis(),
+                                endReason = CallEndReason.NO_ANSWER,
+                            )
+                            CallNotifications.notifyMissedCall(ctx, missed)
+                        }
+                    }
                 }
             }
         }
