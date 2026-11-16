@@ -45,6 +45,9 @@ func (m *memStore) List(context.Context) ([]Record, error) {
 	defer m.mu.Unlock()
 	out := make([]Record, 0, len(m.records))
 	for _, rec := range m.records {
+		if rec.DetachedAt != nil {
+			continue
+		}
 		out = append(out, rec)
 	}
 	return out, nil
@@ -78,6 +81,41 @@ func (m *memStore) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.records, id)
+	return nil
+}
+
+func (m *memStore) Detach(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.records[id]
+	if !ok {
+		return ErrNotFound
+	}
+	now := time.Now().UTC()
+	rec.DetachedAt = &now
+	m.records[id] = rec
+	return nil
+}
+
+func (m *memStore) DetachedByInfoHash(_ context.Context, infoHash string) (Record, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, rec := range m.records {
+		if rec.InfoHash == infoHash && rec.DetachedAt != nil {
+			return rec, true, nil
+		}
+	}
+	return Record{}, false, nil
+}
+
+func (m *memStore) PruneDetached(_ context.Context, before time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, rec := range m.records {
+		if rec.DetachedAt != nil && rec.DetachedAt.Before(before) {
+			delete(m.records, id)
+		}
+	}
 	return nil
 }
 
@@ -209,7 +247,7 @@ func newTestEnv(t *testing.T, mutate ...func(*Options)) *testEnv {
 
 func (e *testEnv) start(mutate ...func(*Options)) *Service {
 	e.t.Helper()
-	opts := Options{Enabled: true, TickInterval: 40 * time.Millisecond, Configure: loopback}
+	opts := Options{Enabled: true, TickInterval: 40 * time.Millisecond, Configure: loopback, StateDir: filepath.Join(e.root, "torrent-state")}
 	for _, m := range mutate {
 		m(&opts)
 	}

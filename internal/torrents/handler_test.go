@@ -61,6 +61,14 @@ func TestTorrentAPIIsAdminOnly(t *testing.T) {
 		{http.MethodPost, BasePath, "application/json", func() io.Reader { return jsonBody(t, map[string]string{"magnet": magnetFor(hash, "x")}) }},
 		{http.MethodPost, BasePath, "application/x-bittorrent", func() io.Reader { return bytes.NewReader(data) }},
 		{http.MethodPut, BasePath + "/limits", "application/json", func() io.Reader { return jsonBody(t, Limits{DownloadLimitKBps: 1}) }},
+		{http.MethodGet, BasePath + "/" + view.ID, "", nil},
+		{http.MethodPut, BasePath + "/" + view.ID + "/limits", "application/json", func() io.Reader {
+			return jsonBody(t, ItemLimits{DownloadLimitKBps: 1})
+		}},
+		{http.MethodPut, BasePath + "/" + view.ID + "/files", "application/json", func() io.Reader {
+			return jsonBody(t, map[string]string{"path": "x.bin", "priority": PrioritySkip})
+		}},
+		{http.MethodPost, BasePath + "/" + view.ID + "/stopseeding", "", nil},
 		{http.MethodPost, BasePath + "/" + view.ID + "/pause", "", nil},
 		{http.MethodPost, BasePath + "/" + view.ID + "/resume", "", nil},
 		{http.MethodDelete, BasePath + "/" + view.ID + "?deleteData=1", "", nil},
@@ -220,5 +228,50 @@ func TestDisabledClientAnswers503(t *testing.T) {
 	rec := call(t, handler, user, http.MethodPost, BasePath, "application/json", jsonBody(t, map[string]string{"magnet": magnetFor(strings.Repeat("cd", 20), "x")}))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("add on a disabled client = %d, want 503", rec.Code)
+	}
+}
+
+// The drawer needs tracker information, but a private tracker's passkey lives
+// in the announce URL: only scheme and host may appear in any response.
+func TestTorrentDetailRedactsTrackerSecrets(t *testing.T) {
+	env := newTestEnv(t)
+	handler := NewHandler(env.service)
+	adminUser := &domain.User{ID: admin.ID, Role: "admin"}
+	seeder := newSeeder(t)
+	data, _ := seeder.share(t, "detail.bin", map[string][]byte{"": randomBytes(t, 40000)})
+	created := call(t, handler, adminUser, http.MethodPost, BasePath, "application/x-bittorrent", bytes.NewReader(data))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("add = %d: %s", created.Code, created.Body)
+	}
+	var view View
+	if err := json.Unmarshal(created.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	env.connect(view.ID, seeder)
+	env.waitStatus(view.ID, downloadTimeout, StatusCompleted, StatusSeeding)
+
+	rec := call(t, handler, adminUser, http.MethodGet, BasePath+"/"+view.ID, "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail = %d: %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	for _, secret := range []string{trackerPasskey, "magnet:", "/announce", "passkey="} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("detail leaked %q: %s", secret, body)
+		}
+	}
+	if !strings.Contains(body, "tracker.example.com") {
+		t.Fatalf("detail lost the tracker host (needed for administration): %s", body)
+	}
+	var detail TorrentDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil || len(detail.Files) != 1 {
+		t.Fatalf("detail decode: files=%d err=%v body=%s", len(detail.Files), err, body)
+	}
+	// The overview still carries no tracker at all.
+	overview := call(t, handler, adminUser, http.MethodGet, BasePath, "", nil)
+	for _, secret := range []string{trackerPasskey, "magnet:", "announce"} {
+		if strings.Contains(overview.Body.String(), secret) {
+			t.Fatalf("overview leaked %q", secret)
+		}
 	}
 }

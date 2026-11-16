@@ -51,6 +51,10 @@ chown 1000:1000 /mnt/1tb_disk/necipdrive/paylasim
 Kota, uyarı eşiği ve torrent hız sınırları yönetici panelinden de değiştirilebilir;
 panelden kaydedilen değer ortam değişkeninin önüne geçer.
 
+Parça doğrulama bilgisi `DATA_DIR/torrent-state` altında saklanır (Ortak
+Paylaşım klasörünün dışında); böylece sunucu yeniden başladığında indirilen
+parçalar tekrar indirilmez. Bu dizin `DATA_DIR` volume'u ile birlikte yedeklenir.
+
 ## 3. İzinler
 
 Varsayılan olarak **hiçbir kullanıcı** Ortak Paylaşım'ı göremez. Yönetici,
@@ -109,6 +113,25 @@ Kimlerin göreceğini yine klasör izinleri belirler.
 - Varsayılan olarak tamamlanan torrent paylaşılmaz
   (`TORRENT_SEED_AFTER_COMPLETE=false`). İndirme sırasında parçalar diğer eşlere
   gönderilir; bunu `TORRENT_UPLOAD_LIMIT_KBPS` ile sınırlayabilirsiniz.
+
+### Torrent kontrolleri (yönetim paneli)
+
+- **Hız sınırları:** Genel sınırların (`TORRENT_*_LIMIT_KBPS`) yanında her
+  torrent'e ayrı indirme/gönderme sınırı (KB/sn) verilir; parça yazma/okuma
+  bu sınırla akar, parça doğrulama beklemez. `0` = sınırsız.
+- **Seed oranı / süresi sınırı:** Torrent başına oran (ör. `8` = yüklenen,
+  indirilenin 8 katı) ve süre (sn) sınırı; `0` = kapalı. Sınır dolunca seed
+  durur ve sunucu yeniden başlayınca kendiliğinden başlamaz — panelden
+  "Seed başlat" ile yeniden açılır. "Seed'i durdur" ile elle durdurulur.
+- **Dosya seçimi:** Ayrıntı çekmecesindeki dosya listesinden bir dosya
+  "Atla" yapılabilir; o dosya indirilmez, kalan dosyalar bitince torrent
+  tamamlanmış sayılır. "Yüksek" öncelik ilk indirilir.
+- **Kaldır (veriyi silmeden):** Torrent listeden çıkar ama dosyalar yerinde
+  kalır. Aynı magnet bağlantısı veya `.torrent` dosyası tekrar eklenince mevcut
+  parçalar tek tek doğrulanır ve indirme kaldığı yerden sürer — bozuk parçalar
+  algılanıp yeniden indirilir. "Veriyi de sil" seçeneği dosyaları da siler.
+- **Duraklat / sürdür:** Duraklatma beklemeye alır; sürdürmeden önce dosyalar
+  yeniden doğrulanır. Tamamlanan ve paylaşılan torrent "Seed" olarak görünür.
 
 ### Port
 

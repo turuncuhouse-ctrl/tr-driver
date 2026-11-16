@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -239,8 +241,16 @@ func TestTorrentFileIsCheckedBeforeAnythingIsWritten(t *testing.T) {
 	if stored, _ := env.store.List(ctx); len(stored) != 1 {
 		t.Fatalf("rejected torrents were stored: %d records", len(stored))
 	}
-	if entries, _ := os.ReadDir(env.root); len(entries) != 1 {
-		t.Fatalf("something was written outside the shared folder: %v", entries)
+	// Only the shared folder and the piece-completion state directory may
+	// exist; rejected torrents must not have created any file.
+	entries, _ := os.ReadDir(env.root)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	if want := []string{"paylasim", "torrent-state"}; !slices.Equal(names, want) {
+		t.Fatalf("something was written outside the shared folder: %v, want %v", names, want)
 	}
 }
 
@@ -545,5 +555,226 @@ func TestSecretsStayOutOfLogsAndResponses(t *testing.T) {
 	// The passkey is still stored, or resuming a private torrent would break.
 	if rec := env.store.record(fromMagnet.ID); !strings.Contains(rec.Magnet, trackerPasskey) {
 		t.Fatal("magnet link was not kept for resuming")
+	}
+}
+
+// Re-adding a torrent that was removed WITHOUT deleting its data must find the
+// files again, re-check every piece (this test corrupts one on purpose) and
+// continue instead of starting over.
+func TestReaddWithoutDataRechecksPiecesAndContinues(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t)
+	seeder := newSeeder(t)
+	_, hash := seeder.share(t, "resume.bin", map[string][]byte{"": randomBytes(t, 400000)})
+	original, err := os.ReadFile(filepath.Join(seeder.dir, "resume.bin"))
+	if err != nil {
+		t.Fatalf("seeder file: %v", err)
+	}
+
+	view, err := env.service.AddMagnet(ctx, admin, magnetFor(hash, ""))
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	env.connect(view.ID, seeder)
+	env.waitStatus(view.ID, downloadTimeout, StatusSeeding, StatusCompleted)
+	if got, err := env.sharedFile("resume.bin"); err != nil || !slices.Equal(got, original) {
+		t.Fatalf("downloaded data wrong (%d bytes, %v)", len(got), err)
+	}
+
+	// Remove WITHOUT deleting the data: the row stays hidden, the file stays.
+	if err := env.service.Remove(ctx, admin, view.ID, false); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if listed, err := env.service.Overview(ctx, admin); err != nil || len(listed.Torrents) != 0 {
+		t.Fatalf("torrent still listed after remove: %d, %v", len(listed.Torrents), err)
+	}
+	// Corrupt a byte: only a real piece re-check can notice and repair it.
+	onDisk, err := env.sharedFile("resume.bin")
+	if err != nil {
+		t.Fatalf("file vanished with deleteData=false: %v", err)
+	}
+	onDisk[12345] ^= 0xFF
+	target := filepath.Join(env.space.dir, "resume.bin")
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, onDisk, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Adding the same magnet again revives the hidden row.
+	again, err := env.service.AddMagnet(ctx, admin, magnetFor(hash, ""))
+	if err != nil {
+		t.Fatalf("re-add: %v", err)
+	}
+	env.connect(again.ID, seeder)
+	if again.ID != view.ID {
+		t.Fatalf("re-add created a new row %s, want revival of %s", again.ID, view.ID)
+	}
+	env.waitStatus(again.ID, downloadTimeout, StatusSeeding, StatusCompleted)
+	repaired, err := env.sharedFile("resume.bin")
+	if err != nil {
+		t.Fatalf("file gone after re-add: %v", err)
+	}
+	if !slices.Equal(repaired, original) {
+		t.Fatal("corrupted piece was not detected and repaired after re-adding")
+	}
+}
+
+// A completed torrent seeds until its configured seed time limit is reached,
+// then stops by itself and stays stopped (also across a restart).
+func TestSeedTimeLimitStopsSeedingAndSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t, func(o *Options) { o.SeedAfterComplete = true })
+	seeder := newSeeder(t)
+	_, hash := seeder.share(t, "seedlimit.bin", map[string][]byte{"": randomBytes(t, 200000)})
+
+	view, err := env.service.AddMagnet(ctx, admin, magnetFor(hash, ""))
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if view, err = env.service.SetItemLimits(ctx, admin, view.ID, ItemLimits{SeedTimeLimitSec: 1}); err != nil {
+		t.Fatalf("limits: %v", err)
+	}
+	env.connect(view.ID, seeder)
+	// Seeds first, then the limit stops it.
+	env.waitStatus(view.ID, downloadTimeout, StatusSeeding)
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		current, ok := env.view(view.ID)
+		if !ok {
+			t.Fatal("torrent disappeared")
+		}
+		if current.Status == StatusCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("seed time limit never stopped seeding (status=%s)", current.Status)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	stopped := env.store.record(view.ID)
+	if !stopped.SeedStopped || stopped.SeededSeconds < 1 {
+		t.Fatalf("seed stop not persisted: stopped=%t seeded=%ds", stopped.SeedStopped, stopped.SeededSeconds)
+	}
+	// Restart: it must NOT start seeding again on its own.
+	env.service.Close()
+	env.service = env.start(func(o *Options) { o.SeedAfterComplete = true })
+	if current, _ := env.view(view.ID); current.Status != StatusCompleted {
+		t.Fatalf("after restart status = %s, want completed (not auto-seeding)", current.Status)
+	}
+}
+
+// Per-file "skip" is persisted, shown in the detail drawer, re-applied after a
+// restart, and the torrent still completes once the other files arrived.
+func TestFileSkipIsPersistedAndReapplied(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t)
+	seeder := newSeeder(t)
+	bytesA := randomBytes(t, 90000)
+	bytesB := randomBytes(t, 90000)
+	bytesC := randomBytes(t, 400000)
+	_, hash := seeder.share(t, "multi", map[string][]byte{
+		"a.bin": bytesA, "b.bin": bytesB, "c.bin": bytesC,
+	})
+
+	view, err := env.service.AddMagnet(ctx, admin, magnetFor(hash, ""))
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	env.connect(view.ID, seeder)
+	// Wait until the file list is known, then skip the big file.
+	var skipPath string
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		detail, err := env.service.Detail(ctx, admin, view.ID)
+		if err == nil && len(detail.Files) == 3 {
+			for _, f := range detail.Files {
+				if strings.HasSuffix(f.Path, "c.bin") {
+					skipPath = f.Path
+				}
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("file list never appeared: files=%d err=%v", len(detail.Files), err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if skipPath == "" {
+		t.Fatal("c.bin not found in detail")
+	}
+	if view, err = env.service.SetFilePriority(ctx, admin, view.ID, skipPath, PrioritySkip); err != nil {
+		t.Fatalf("skip: %v", err)
+	}
+	env.waitStatus(view.ID, downloadTimeout, StatusCompleted, StatusSeeding)
+
+	gotA, errA := env.sharedFile(filepath.Join("multi", "a.bin"))
+	gotB, errB := env.sharedFile(filepath.Join("multi", "b.bin"))
+	if errA != nil || !slices.Equal(gotA, bytesA) {
+		t.Fatalf("a.bin wrong: %v", errA)
+	}
+	if errB != nil || !slices.Equal(gotB, bytesB) {
+		t.Fatalf("b.bin wrong: %v", errB)
+	}
+	stored := env.store.record(view.ID)
+	if !strings.Contains(stored.FilePriorities, skipPath) {
+		t.Fatalf("file priority not persisted: %q", stored.FilePriorities)
+	}
+	detail, err := env.service.Detail(ctx, admin, view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range detail.Files {
+		if f.Path == skipPath && f.Priority != PrioritySkip {
+			t.Fatalf("detail priority = %s, want skip", f.Priority)
+		}
+	}
+	// After a restart the skip must be re-applied, not downloaded fresh.
+	env.service.Close()
+	env.service = env.start()
+	detail, err = env.service.Detail(ctx, admin, view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range detail.Files {
+		if f.Path == skipPath && f.Priority != PrioritySkip {
+			t.Fatalf("priority lost after restart: %s", f.Priority)
+		}
+	}
+}
+
+// Per-torrent speed limits are validated, stored and survive a restart.
+func TestItemLimitsAreValidatedAndPersisted(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t)
+	seeder := newSeeder(t)
+	_, hash := seeder.share(t, "limits.bin", map[string][]byte{"": randomBytes(t, 2000)})
+
+	view, err := env.service.AddMagnet(ctx, admin, magnetFor(hash, ""))
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	env.connect(view.ID, seeder)
+	if _, err := env.service.SetItemLimits(ctx, admin, view.ID, ItemLimits{SeedRatioLimit: -1}); !isErr(err, ErrInvalidLimit) {
+		t.Fatalf("negative ratio = %v, want ErrInvalidLimit", err)
+	}
+	if _, err := env.service.SetItemLimits(ctx, admin, view.ID, ItemLimits{DownloadLimitKBps: MaxLimitKBps + 1}); !isErr(err, ErrInvalidLimit) {
+		t.Fatalf("huge limit = %v, want ErrInvalidLimit", err)
+	}
+	want := ItemLimits{DownloadLimitKBps: 512, UploadLimitKBps: 128, SeedRatioLimit: 8, SeedTimeLimitSec: 3600}
+	view, err = env.service.SetItemLimits(ctx, admin, view.ID, want)
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if view.DownloadLimitKBps != 512 || view.UploadLimitKBps != 128 || view.SeedRatioLimit != 8 || view.SeedTimeLimitSec != 3600 {
+		t.Fatalf("view limits = %+v", view)
+	}
+	env.service.Close()
+	env.service = env.start()
+	stored := env.store.record(view.ID)
+	if stored.DownloadLimitKBps != 512 || stored.UploadLimitKBps != 128 ||
+		stored.SeedRatioLimit != 8 || stored.SeedTimeLimitSec != 3600 {
+		t.Fatalf("limits lost on restart: %+v", stored)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -202,6 +203,9 @@ func startSharedSpace(ctx context.Context, db *pgxpool.Pool, cfg config.Config, 
 		UploadLimitKBps:   cfg.TorrentUploadLimitKBps,
 		SeedAfterComplete: cfg.TorrentSeedAfterComplete,
 		DisableDHT:        cfg.TorrentDisableDHT,
+		// Piece verification state lives next to DATA_DIR, never inside the
+		// shared folder, and survives container restarts.
+		StateDir: filepath.Join(cfg.DataDir, "torrent-state"),
 	})
 	shared.SetHooks(sharedspace.Hooks{Busy: torrentService.Busy, PathChanged: torrentService.PathChanged})
 	if err := torrentService.Start(ctx); err != nil {

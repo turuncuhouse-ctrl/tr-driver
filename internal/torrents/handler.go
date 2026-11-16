@@ -38,7 +38,7 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
 		httpx.Error(w, http.StatusForbidden, ErrForbidden.Error())
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrFileNotFound):
 		httpx.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrUnsafeTorrent), errors.Is(err, ErrInvalidLimit):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
@@ -162,6 +162,13 @@ func (h *Handler) limits(w http.ResponseWriter, r *http.Request, actor Actor) {
 
 func (h *Handler) item(w http.ResponseWriter, r *http.Request, actor Actor, id, action string) {
 	switch {
+	case action == "" && r.Method == http.MethodGet:
+		detail, err := h.service.Detail(r.Context(), actor, id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, detail)
 	case action == "" && r.Method == http.MethodDelete:
 		query := r.URL.Query().Get("deleteData")
 		deleteData := query == "1" || strings.EqualFold(query, "true")
@@ -184,7 +191,45 @@ func (h *Handler) item(w http.ResponseWriter, r *http.Request, actor Actor, id, 
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, view)
-	case action == "" || action == "pause" || action == "resume":
+	case action == "stopseeding" && r.Method == http.MethodPost:
+		view, err := h.service.StopSeeding(r.Context(), actor, id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, view)
+	case action == "limits" && (r.Method == http.MethodPut || r.Method == http.MethodPost):
+		var req ItemLimits
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		if err := httpx.ReadJSON(r, &req); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "geçersiz istek")
+			return
+		}
+		view, err := h.service.SetItemLimits(r.Context(), actor, id, req)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, view)
+	case action == "files" && r.Method == http.MethodPut:
+		var req struct {
+			Path     string `json:"path"`
+			Priority string `json:"priority"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		if err := httpx.ReadJSON(r, &req); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "geçersiz istek")
+			return
+		}
+		view, err := h.service.SetFilePriority(r.Context(), actor, id, req.Path, req.Priority)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, view)
+	case action == "" || action == "pause" || action == "resume" ||
+		action == "stopseeding" || action == "limits" || action == "files":
+		w.Header().Set("Allow", "GET, DELETE, POST, PUT")
 		httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	default:
 		httpx.Error(w, http.StatusNotFound, "bulunamadı")
