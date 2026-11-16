@@ -433,6 +433,14 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 		`alter table torrents add column if not exists file_priorities text not null default ''`,
 		`alter table torrents add column if not exists seed_stopped boolean not null default false`,
 		`alter table torrents add column if not exists detached_at timestamptz`,
+		// 0.16.0: optional FCM wake-push tokens for incoming LocalTel calls.
+		`create table if not exists localtel_fcm_tokens (
+			token text primary key,
+			user_id uuid not null references users(id) on delete cascade,
+			device_id text not null default '',
+			updated_at timestamptz not null default now()
+		)`,
+		`create index if not exists localtel_fcm_tokens_user_idx on localtel_fcm_tokens (user_id, updated_at desc)`,
 	}
 
 	for _, stmt := range ddl {

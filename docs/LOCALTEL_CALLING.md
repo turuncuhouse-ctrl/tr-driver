@@ -11,12 +11,22 @@ TR Driver 0.13.0 (Android `versionCode` 47) LocalTel'i varsayılan olarak sıfı
 - WebSocket token'ları 15 dakika geçerlidir (varsayılan); Android arka plan dinleyicisi token'ı yeniler ve canlı çağrı yokken bağlantıyı tazeler. Kimlik bilgileri ve token'lar sunucu/Android loglarına yazılmaz. Yapılandırma endpoint'i kullanıcı başına hız sınırına ve no-store başlıklarına sahiptir; WSS bağlantıları IP ve kullanıcı başına sınırlanır.
 - WebSocket route'u uygulamanın mevcut HTTP(S) portunda çalışır. Ters proxy, aynı TR Driver host için WebSocket upgrade'i uygulamaya iletmelidir.
 
+### GSM gibi çalma (0.16.0)
+
+- Davet, aranan cihaza ulaştıktan sonra **yanıtlanana kadar ~6 sn'de bir yeniden gönderilir**; 45 saniye sonunda çağrı iki taraf için de biter.
+- Süre dolunca: arayan cihaz `reject (no_answer)` alır ("Cevapsız: kimse cevap vermedi"), aranan kullanıcıya **cevapsız arama** sinyali gider. Cihaz çevrimdışıysa sinyal, bağlantı kurulduğunda teslim edilir (sunucuda 24 saate kadar kuyrukta tutulur) ve Android "Cevapsız arama" bildirimi gösterir.
+- Cihaz çağrın ortasında koparsa da aynı cevapsız kaydı oluşur; `ringing` alan aranan taraf, davet tekrarlarını durdurur (ama süre sayacı işlemeye devam eder).
+- **İsteğe bağlı FCM uyanma push'u:** sunucuda `FIREBASE_SERVICE_ACCOUNT` (Firebase service-account JSON) tanımlıysa davet anında cihaza yüksek öncelikli veri push'u gider; uyanan uygulama WebSocket'i yeniden kurar ve davet tekrarını alarak çalar. Push yoksa (ya da Firebase kurulmamışsa) arama yalnızca WebSocket ile çalışır — davranış değişmez.
+- Android'in `google-services.json` dosyası `android/app/` altına konmadıkça Firebase hiç başlatılmaz; token yükleme ve push alımı sessizce devre dışı kalır. Dosya eklendiğinde uygulama açılışında (ve WS bağlanınca) token `POST /api/localtel/fcm-token` ile sunucuya kaydedilir.
+- Tüm ring/timeout/push loglarında yalnızca anon hash'ler ve sayaçlar bulunur; numara, ad, token ve push gövdesi loglanmaz.
+
 ### Yeni ortam değişkenleri
 
 - `LOCAL_TEL_DOMAIN` — gateway URL'sinde kullanılacak alan adı (isteğe bağlı; boşsa `PUBLIC_BASE_URL` hostu, sonra gelen isteğin Host başlığı kullanılır; TLS sertifikasının bu hostu kapsaması gerekir).
 - `LOCAL_TEL_TOKEN_TTL` — kısa ömürlü gateway token süresi; varsayılan `15m`.
 - `LOCAL_TEL_AUTO_PROVISION` — ilk istekte kullanıcı LocalTel hesabı oluşturma anahtarı; varsayılan `true`.
 - `LOCAL_TEL_KEY` — önceden mevcut, isteğe bağlı şifreleme anahtarı; boş bırakılırsa var olan `PERSONAL_BACKUP_KEY`/`SESSION_SECRET` fallback zinciri kullanılır.
+- `FIREBASE_SERVICE_ACCOUNT` — isteğe bağlı Firebase service-account JSON (tek satır). Tanımlanırsa gelen aramalar için yüksek öncelikli FCM push'u açılır; boşsa push yok, arama WebSocket üzerinden çalışmaya devam eder.
 
 Ek servis yoktur; LocalTel sinyalizasyon ve ses relay'i TR Driver Go uygulaması içinde çalışır. `docker-compose.stack.yml`, `docker-compose.easy.yml` ve `docker-compose.portainer.yml` aynı değişkenleri uygulama servisine aktarır.
 

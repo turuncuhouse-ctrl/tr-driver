@@ -216,6 +216,9 @@ func randomHex(bytes int) (string, error) {
 // Accepted forms include the account phone, 5-digit extension, sip username,
 // or a sip: URI. Numbers are normalized to digits before the DB comparison.
 func (s *Service) ResolveCallTarget(ctx context.Context, dial string) (string, bool) {
+	if s.resolveForTest != nil {
+		return s.resolveForTest(ctx, dial)
+	}
 	if s.db == nil {
 		return "", false
 	}
@@ -252,6 +255,9 @@ func (s *Service) ResolveCallTarget(ctx context.Context, dial string) (string, b
 // CallerIdentity returns the caller's stable address and display name so the
 // receiving side can show a local contact name when its address is in contacts.
 func (s *Service) CallerIdentity(ctx context.Context, userID string) (string, string, bool) {
+	if s.identityForTest != nil {
+		return s.identityForTest(ctx, userID)
+	}
 	if s.db == nil {
 		return "", "", false
 	}

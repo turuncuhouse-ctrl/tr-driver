@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.16.0 — LocalTel aramaları GSM gibi çalar
+
+### Added
+- **Sunucu tarafı ring orkestrasyonu**: davet, yanıtlanana kadar ~6 sn'de bir aranan cihazlara yeniden gönderilir; **45 sn** sonra çağrı iki taraf için de biter. Arayan `reject (no_answer)` alır, aranan tarafa **cevapsız arama** sinyali gider — anında (bağlıysa) ya da cihaz bağlantı kurduğunda (sunucu kuyruğunda 24 saate kadar).
+- Çağrı ortasında kopan bağlantıda da cevapsız kaydı oluşur; `ringing` alan cihaz davet tekrarlarını durdurur, süre sayacı işlemeye devam eder.
+- **İsteğe bağlı FCM yüksek öncelikli push**: `FIREBASE_SERVICE_ACCOUNT` tanımlıysa davet anında cihaz uyanır; WebSocket + davet tekrarları normal şekilde çalmaya devam eder. `POST /api/localtel/fcm-token` ile token kaydı (kullanıcı başına son 5 token). Firebase tanımlı değilse ya da `google-services.json` yoksa hiçbir şey değişmez.
+- **Android**: `missed` sinyali → "Cevapsız arama" bildirimi (mevcut self-managed `ConnectionService`, tam ekran intent ve 45 sn istemci timeout ile birlikte); arayan tarafa `no_answer` → "Cevapsız: kimse cevap vermedi".
+- **E2E sinyal testleri** (`internal/localtel/ring_test.go`): davet tekrarları, süre sonunda `no_answer` + `missed`, `accept` tekrarları durdurur, cevapsızda çevrimdışı-kopma + yeniden bağlanınca teslim, `cancel` sonrası tekrar yok; FCM sender birim testi (RS256 JWT + `android.priority: HIGH`).
+
+### Changed
+- Sürüm `0.16.0`, Android `versionCode` `52`.
+- Yeni ortam değişkeni: `FIREBASE_SERVICE_ACCOUNT` (isteğe bağlı; bkz. `docs/LOCALTEL_CALLING.md`).
+- Android'e isteğe bağlı `com.google.firebase:firebase-messaging` bağımlılığı; Google Services eklentisi yalnızca `android/app/google-services.json` dosyası varsa uygulanır (CI ve varsayılan derleme değişmez).
+
+### Security
+- Ring yeniden gönderimi, süre aşımı ve push kayıtlarında yalnızca anon hash'ler/sayaçlar loglanır; numara, görüntü adı, FCM token'ı ve push gövdesi hiçbir loga yazılmaz.
+
 ## 0.15.0 — Torrent'te güvenilir indirme, seed ve dosya seçimi
 
 ### Added

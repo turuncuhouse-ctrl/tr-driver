@@ -106,6 +106,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, matches)
 	case "phone":
 		h.handlePhone(w, r, user.ID)
+	case "fcm-token":
+		// Registers this device for optional high-priority wake pushes
+		// (enabled only when the server has Firebase credentials).
+		if r.Method != http.MethodPost {
+			httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !h.limiter.allow("fcmt:" + user.ID) {
+			w.Header().Set("Retry-After", "60")
+			httpx.Error(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		var tokenReq struct {
+			Token string `json:"token"`
+		}
+		if err := httpx.ReadJSON(r, &tokenReq); err != nil || strings.TrimSpace(tokenReq.Token) == "" {
+			httpx.Error(w, http.StatusBadRequest, "invalid token")
+			return
+		}
+		if err := h.service.SaveFCMToken(r.Context(), user.ID, auth.DeviceIDFromContext(r.Context()), strings.TrimSpace(tokenReq.Token)); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid token")
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case "signal":
 		if r.Method != http.MethodPost {
 			httpx.Error(w, http.StatusMethodNotAllowed, "method not allowed")

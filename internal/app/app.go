@@ -96,6 +96,7 @@ func New(ctx context.Context, cfg config.Config) (*http.Server, func(), error) {
 		}
 	}
 	localtelService.Configure(localTelDomain, cfg.LocalTelTokenTTL, cfg.LocalTelAutoProvision)
+	localtelService.SetFCM(cfg.FirebaseServiceAccount)
 	localtelHub := localtel.NewHub()
 
 	_ = uploadService.CleanupExpired(ctx)

@@ -60,6 +60,7 @@ Compose dosyaları **secret hardcode etmez**. Şunları ortam değişkeni olarak
 - `DEVICE_TOKEN_TTL=0` (cihaz/Android oturumu süresiz; iptal veya şifre sıfırlama ile biter)
 - `PERSONAL_BACKUP_KEY` (rehber/SMS yedeğinin sunucudaki şifreleme anahtarı; boşsa `SESSION_SECRET` kullanılır)
 - `LOCAL_TEL_KEY` (LocalTel SIP/gateway ayarlarının sunucudaki şifreleme anahtarı; boşsa `PERSONAL_BACKUP_KEY` / `SESSION_SECRET` kullanılır)
+- `FIREBASE_SERVICE_ACCOUNT` (isteğe bağlı Firebase service-account JSON; tanımlıysa gelen aramalar için yüksek öncelikli FCM uyanma push'u)
 - `SHARED_QUOTA_BYTES`, `SHARED_LINK_MAX_TTL`, `TORRENT_ENABLED`, `TORRENT_LISTEN_PORT`, `TORRENT_*_LIMIT_KBPS` (Ortak Paylaşım ve torrent; tam liste [`docs/SHARED_SPACE.md`](docs/SHARED_SPACE.md))
 
 **0.14.0'a yükseltme:** Compose dosyaları artık `/data/paylasim` volume'unu ve torrent portunu (42069 TCP+UDP) içerir. Stack'i güncellemeden önce sunucuda klasörü oluşturun (`mkdir -p /mnt/1tb_disk/necipdrive/paylasim && chown 1000:1000 /mnt/1tb_disk/necipdrive/paylasim`). Bu klasör yerleşik sunucu yedeğine dahil değildir.

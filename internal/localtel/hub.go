@@ -41,7 +41,7 @@ func ValidateSignal(msg *SignalMessage) error {
 	}
 	msg.Type = strings.ToLower(strings.TrimSpace(msg.Type))
 	switch msg.Type {
-	case "invite", "ringing", "accept", "reject", "hangup", "cancel", "audio", "ping", "pong":
+	case "invite", "ringing", "accept", "reject", "hangup", "cancel", "audio", "ping", "pong", "missed":
 	default:
 		return fmt.Errorf("%w: unknown signal type", ErrInvalidSignal)
 	}
@@ -107,18 +107,34 @@ type callRoute struct {
 	// caller that vanished can never leave the callee permanently busy.
 	ringingUntil time.Time
 	accepted     bool
+
+	// Ring orchestration: the sanitized invite is kept for retries and the
+	// timers end the call with no_answer if nobody picks up.
+	senderClientID string
+	invite         *SignalMessage
+	retryAttempt   int
+	retryTimer     *time.Timer
+	deadlineTimer  *time.Timer
 }
 
 type Hub struct {
 	mu    sync.RWMutex
 	users map[string]map[string]*Client
 	calls map[string]callRoute
+	// missed queues unanswered calls per user for delivery on reconnect.
+	missed map[string][]missedEntry
+	// ringRetryInterval / ringTimeout are overridable by tests; zero means
+	// the defaults (6s retry, 45s deadline — inside the 30–45s GSM-like
+	// window the product asks for).
+	ringRetryInterval time.Duration
+	ringTimeout       time.Duration
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		users: make(map[string]map[string]*Client),
-		calls: make(map[string]callRoute),
+		users:  make(map[string]map[string]*Client),
+		calls:  make(map[string]callRoute),
+		missed: make(map[string][]missedEntry),
 	}
 }
 
@@ -144,6 +160,9 @@ func (h *Hub) Register(userID, deviceID string) *Client {
 		}
 	}
 	byUser[client.id] = client
+	// A phone that was offline when its call timed out gets the missed-call
+	// signals as soon as it reconnects.
+	h.flushMissedLocked(userID, client)
 	return client
 }
 

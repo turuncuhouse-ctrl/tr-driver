@@ -6,6 +6,13 @@ plugins {
 
 import java.util.Properties
 
+// Optional FCM wake pushes for incoming calls: the Google Services plugin is
+// applied only when the operator drops a google-services.json into this
+// directory. CI and default builds are unchanged without the file.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 val keystorePropsFile = rootProject.file("keystore/keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) {
@@ -21,7 +28,7 @@ android {
         applicationId = "net.neciparmagan.trdriver"
         minSdk = 26
         targetSdk = 34
-        versionCode = 51
+        versionCode = 52
         versionName = rootProject.file("../VERSION").readText().trim()
         buildConfigField("String", "DEFAULT_SERVER", "\"https://drive.neciparmagan.net.tr\"")
     }
@@ -89,6 +96,10 @@ dependencies {
     implementation("io.coil-kt:coil:2.6.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
+    // Optional: high-priority wake pushes (with google-services.json). Without
+    // the file Firebase is never initialized and calls use WebSocket only.
+    implementation("com.google.firebase:firebase-messaging:24.1.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.24")
