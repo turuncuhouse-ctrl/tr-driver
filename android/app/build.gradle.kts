@@ -4,14 +4,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+import java.util.Properties
+
 // Optional FCM wake pushes for incoming calls: the Google Services plugin is
 // applied only when the operator drops a google-services.json into this
 // directory. CI and default builds are unchanged without the file.
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
-
-import java.util.Properties
 
 val keystorePropsFile = rootProject.file("keystore/keystore.properties")
 val keystoreProps = Properties().apply {
