@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.15.0 — Torrent'te güvenilir indirme, seed ve dosya seçimi
+
+### Added
+- **Torrent tablosu** (yönetim paneli): ad, boyut, ilerleme çubuğu, durum (İndiriliyor / **Seed** / Duraklatıldı / Tamamlandı / Doğrulanıyor / Hata), ↓/↑ hız, eş/tohum, oran, ETA. Süzgeçler: **Tümü / İndirilen / Seed / Tamamlanan**. Dar ekranlarda tablo karta dönüşür, yatay taşma olmaz.
+- **Torrent ayrıntı çekmecesi** (satıra tıkla): dosyalar (öncelik seçimi), trackler (yalnızca `scheme://host`, yol/anahtar gizli), bağlı eşler, yüklenen/seed süresi ve yol/hash bilgisi.
+- **Torrent başına hız sınırları**: indirme/gönderme KB/sn, ayrı panel formu; anında uygulanır ve yeniden başlatmada korunur. Parçalara yazma/okuma bu sınırla akar; parça doğrulama sınırsız kalır.
+- **Seed oranı ve süresi sınırı** (torrent başına, 0 = kapalı): sınır dolunca seed kendiliğinden durur, `SeedStopped` olarak saklanır ve sunucu yeniden başlayınca kendiliğinden başlamaz. `POST /{id}/stopseeding` ile elle durdurma, `POST /{id}/resume` ile yeniden başlatma (sayaçlar sıfırlanır).
+- **Dosya önceliği**: Normal / Yüksek / **Atla** (`PUT /api/admin/torrents/{id}/files`). Atlanan dosyalar indirilmez; diğerleri bitince torrent "Tamamlandı" sayılır. Tercih saklanır ve her eklemede yeniden uygulanır.
+- **Kaldır – veriyi silmeden** (mevcut seçenek): kayıt gizlenir ama dosyalar yerinde kalır. Aynı magnet/.torrent **tekrar eklenince** kayıt geri gelir, mevcut parçalar **tek tek doğrulanır** ve indirme kaldığı yerden sürer. Bozulan bir parça algılanıp yeniden indirilir (testte kanıtlanmıştır).
+- **Yeniden başlatmada doğrulama**: `DATA_DIR/torrent-state` altında kalıcı parça durumu (bolt) tutulur; içerik varken açılışta bir kez parça doğrulaması yapılır, doğrulanmış veri indirilmez. Durum dizini Ortak Paylaşım klasörünün dışında kalır.
+- Yeni uçlar: `GET /api/admin/torrents/{id}` (ayrıntı), `PUT …/{id}/limits`, `PUT …/{id}/files`, `POST …/{id}/stopseeding`; `resume` tamamlanmış torrentte seed'i de başlatır. Hepsi yöneticiye özel (test kapsamındadır).
+
+### Changed
+- Sürüm `0.15.0`, Android `versionCode` `51`.
+- Durum listesi: `verifying` (Doğrulanıyor) eklendi; seed durumu `Seed` adıyla gösterilir.
+- Paneldeki **Bağlı cihazlar** bölümü: kullanıcı bazlı gruplama, tekilleştirme (aynı cihaz iki kez görünmez), arama ve ilk 10 kayıt + **Tümünü göster**.
+- **Sunucu yedekleri** kartı duyarlı hâle getirildi: "✓ Aktif / Kapalı / Hazır" gibi değerler artık kırpılmaz, butonlar satırı taşmaz.
+- Pause, dosyalar yerindeyken beklemeyi sürdürüyor; yeniden sürdürmede önce parçalar doğrulanır.
+
+### Security
+- Ayrıntı uçları da dahil hiçbir yanıtta magnet bağlantısı, tracker yolu/anahtarı (passkey) bulunmaz; trackler yalnızca `scheme://host` olarak döner. `TestTorrentDetailRedactsTrackerSecrets` bunu API seviyesinde doğrular.
+- Parça doğrulama/parça durumu verisi `DATA_DIR` içinde, Ortak Paylaşım'ın dışında tutulur.
+
 ## 0.14.0 — Ortak Paylaşım ve torrent indirme
 
 ### Added

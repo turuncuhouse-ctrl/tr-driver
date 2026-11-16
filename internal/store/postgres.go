@@ -421,6 +421,18 @@ func Migrate(ctx context.Context, db *pgxpool.Pool, freeQuotaBytes int64, device
 			completed_at timestamptz,
 			updated_at timestamptz not null default now()
 		)`,
+		// 0.15.0: per-torrent speed/seed limits, seeding statistics and the
+		// "detached" marker kept when a torrent is removed without its data,
+		// so re-adding the same torrent can verify and continue.
+		`alter table torrents add column if not exists uploaded_bytes bigint not null default 0`,
+		`alter table torrents add column if not exists seeded_seconds bigint not null default 0`,
+		`alter table torrents add column if not exists seed_ratio_limit double precision not null default 0`,
+		`alter table torrents add column if not exists seed_time_limit_sec integer not null default 0`,
+		`alter table torrents add column if not exists download_limit_kbps bigint not null default 0`,
+		`alter table torrents add column if not exists upload_limit_kbps bigint not null default 0`,
+		`alter table torrents add column if not exists file_priorities text not null default ''`,
+		`alter table torrents add column if not exists seed_stopped boolean not null default false`,
+		`alter table torrents add column if not exists detached_at timestamptz`,
 	}
 
 	for _, stmt := range ddl {

@@ -1000,3 +1000,126 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .ss-torrent { flex-direction: column; align-items: stretch; }
   .ss-torrent-side { justify-items: start; grid-auto-flow: column; align-items: center; justify-content: space-between; }
 }
+
+/* ---------------------------------------------------------------------------
+   Admin: compact layout fixes (backup card clipping, device list)
+   ------------------------------------------------------------------------- */
+.admin-settings > * { min-width: 0; }
+/* Sections whose content is more than one block (backup status + tools +
+   history) stack vertically instead of squeezing side by side, which clipped
+   values like "✓ Aktif" and pushed the buttons out of the card. */
+.admin-settings-wide { flex-direction: column; align-items: stretch; gap: 16px; }
+.admin-settings-wide .stats-grid { grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); }
+.stats-grid strong { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+.admin-user-row > div { min-width: 0; }
+.admin-user-row strong, .admin-user-row > div > strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.admin-device-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px 4px; }
+.admin-device-tools input { flex: 1 1 240px; max-width: 340px; height: 36px; padding: 0 12px; border: 1px solid #dce1ea; border-radius: 10px; background: #fff; color: #2c3446; }
+.admin-device-tools small { color: #939cad; }
+.admin-devices .admin-user-row.device-group-start { border-top: 2px solid #d9e0ee; }
+.admin-device-more { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px; border-top: 1px solid #edf0f4; }
+.admin-device-more small { color: #939cad; }
+
+/* ---------------------------------------------------------------------------
+   Admin: torrent table + detail drawer (Stage 1)
+   ------------------------------------------------------------------------- */
+.ss-badge.verifying { color: #7a5cd6; background: #f1edff; }
+
+.tt-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.tt-filters button {
+  height: 34px; padding: 0 14px; border: 1px solid #dfe3eb; border-radius: 999px;
+  color: #5b657a; background: #fff; font-size: 13px; font-weight: 600;
+}
+.tt-filters button:hover { border-color: #bcc7fa; color: #4058c9; }
+.tt-filters button.active { color: #fff; background: #4f6df5; border-color: #4f6df5; }
+
+.tt-table-wrap { width: 100%; }
+.tt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tt-table th {
+  padding: 10px 8px; text-align: left; white-space: nowrap;
+  color: #939cad; background: #fafbfc; border-bottom: 1px solid #e7ebf1;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+.tt-table td { padding: 11px 8px; border-bottom: 1px solid #edf0f4; vertical-align: middle; color: #4e596e; }
+.tt-table tr:last-child td { border-bottom: 0; }
+.tt-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tt-row.error td { background: #fffafb; }
+.tt-name { max-width: 250px; }
+.tt-name-btn {
+  display: block; max-width: 100%; padding: 0; border: 0; background: transparent;
+  color: #2c3446; font-weight: 700; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tt-name-btn:hover { color: #4058c9; text-decoration: underline; }
+.tt-message { display: block; margin-top: 3px; color: #a83542; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-sub { display: block; color: #98a1b2; font-size: 11px; }
+.tt-progress-col { min-width: 130px; }
+.tt-progress-col .ss-progress { margin-bottom: 5px; }
+.tt-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; min-width: 210px; }
+.tt-actions button, .tt-drawer-actions button, .tt-limits button {
+  min-height: 30px; padding: 0 10px; border: 1px solid #dfe3eb; border-radius: 8px;
+  color: #536078; background: #fff; font-size: 12px; font-weight: 600;
+}
+.tt-actions button:hover:not(:disabled), .tt-drawer-actions button:hover:not(:disabled) { color: #4058c9; border-color: #bcc7fa; }
+.tt-actions button.danger, .tt-drawer-actions button.danger { color: #c2404d; border-color: #f0ccd1; }
+.tt-actions button.secondary { color: #536078; }
+
+/* Detail drawer */
+.tt-drawer-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: flex-end; background: rgba(23, 29, 44, .45); }
+.tt-drawer {
+  display: flex; flex-direction: column; width: min(560px, 100%); height: 100%;
+  background: #fff; box-shadow: -18px 0 40px rgba(17, 24, 39, .18);
+  animation: tt-drawer-in .18s ease;
+}
+@keyframes tt-drawer-in { from { transform: translateX(28px); opacity: .5; } to { transform: none; opacity: 1; } }
+.tt-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 18px; border-bottom: 1px solid #edf0f4; }
+.tt-drawer-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-drawer-head button { width: 34px; height: 34px; border: 1px solid #e2e6ee; border-radius: 10px; background: #fff; font-size: 18px; line-height: 1; }
+.tt-drawer-body { display: grid; gap: 16px; padding: 16px 18px 26px; overflow-y: auto; }
+.tt-drawer-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; color: #4e596e; }
+.tt-meta { display: grid; gap: 6px; margin: 0; font-size: 13px; }
+.tt-meta div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; }
+.tt-meta dt { color: #939cad; }
+.tt-meta dd { margin: 0; color: #3d4657; overflow-wrap: anywhere; }
+.tt-hash { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.tt-limits h3, .tt-drawer-section h3 { margin: 0 0 8px; font-size: 14px; color: #2c3446; }
+.tt-limit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tt-limit-grid label { display: grid; gap: 5px; font-size: 12px; font-weight: 700; color: #667086; }
+.tt-limit-grid input { height: 36px; padding: 0 10px; border: 1px solid #dce1ea; border-radius: 9px; background: #fff; color: #2c3446; }
+.tt-limits .ss-hint { margin: 8px 0; }
+.tt-drawer-section { padding-top: 14px; border-top: 1px solid #edf0f4; }
+.tt-files, .tt-trackers, .tt-peers { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.tt-files li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.tt-file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3d4657; }
+.tt-files select { height: 30px; padding: 0 6px; border: 1px solid #dce1ea; border-radius: 8px; background: #fff; color: #4e596e; font-size: 12px; }
+.tt-trackers li { padding: 6px 10px; border-radius: 8px; background: #f7f8fb; color: #4e596e; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.tt-peers li { display: flex; justify-content: space-between; gap: 10px; color: #3d4657; }
+.tt-drawer-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.tt-drawer-actions button { min-height: 36px; padding: 0 14px; }
+
+@media (max-width: 900px) {
+  .tt-col-extra { display: none; }
+  .tt-actions { min-width: 0; }
+  .tt-name { max-width: 170px; }
+  .admin-devices .admin-user-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .tt-drawer { width: 100%; }
+}
+
+@media (max-width: 640px) {
+  /* The torrent table becomes a list of cards — nothing overflows sideways. */
+  .tt-table, .tt-table tbody, .tt-table tr, .tt-table td { display: block; width: 100%; }
+  .tt-table thead { display: none; }
+  .tt-table tr { margin-bottom: 10px; padding: 10px 12px; border: 1px solid #e4e9f2; border-radius: 12px; background: #fff; }
+  .tt-table td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 5px 0; border: 0; text-align: left; }
+  .tt-table td::before { content: attr(data-label); flex: 0 0 auto; color: #939cad; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+  .tt-table .tt-name { display: block; max-width: none; padding-bottom: 8px; }
+  .tt-table .tt-name::before { display: none; }
+  .tt-num { text-align: left; white-space: normal; }
+  .tt-progress-col { display: block; }
+  .tt-progress-col::before { display: block; margin-bottom: 5px; }
+  .tt-progress-col .ss-progress { margin-bottom: 4px; }
+  .tt-actions { justify-content: flex-start; padding-top: 8px; }
+  .tt-actions::before { display: none; }
+  .tt-table td[data-label="İşlem"] { display: block; }
+}

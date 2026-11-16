@@ -157,10 +157,41 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
   } | null>(null);
   const [uploadPace, setUploadPace] = useState<UploadPace | null>(null);
   const [devices, setDevices] = useState<AdminDevice[]>([]);
+  const [deviceQuery, setDeviceQuery] = useState("");
+  const [showAllDevices, setShowAllDevices] = useState(false);
   const [backup, setBackup] = useState<BackupStatus | null>(null);
   const [backupRuns, setBackupRuns] = useState<BackupRun[]>([]);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupNote, setBackupNote] = useState("");
+
+  // Bağlı cihazlar: the endpoint returns up to 200 raw rows which may repeat
+  // a device; dedupe by id, group by user (newest device first), then search
+  // and page — latest 10 rows until "Tümünü göster".
+  const deviceRows = useMemo(() => {
+    const seen = new Set<string>();
+    const byUser = new Map<string, AdminDevice[]>();
+    for (const device of devices) {
+      if (!device.id || seen.has(device.id)) continue;
+      seen.add(device.id);
+      const list = byUser.get(device.userId) ?? [];
+      list.push(device);
+      byUser.set(device.userId, list);
+    }
+    const groups = [...byUser.entries()].map(([userId, list]) => {
+      list.sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt));
+      return { userId, email: list[0].userEmail, devices: list };
+    });
+    groups.sort((a, b) => Date.parse(b.devices[0].lastSeenAt) - Date.parse(a.devices[0].lastSeenAt));
+    const needle = deviceQuery.trim().toLocaleLowerCase("tr-TR");
+    const filtered = needle
+      ? groups.filter((group) =>
+          group.email.toLocaleLowerCase("tr-TR").includes(needle) ||
+          group.userId.toLocaleLowerCase("tr-TR").includes(needle) ||
+          group.devices.some((device) => (device.name || "android").toLocaleLowerCase("tr-TR").includes(needle)))
+      : groups;
+    const flat = filtered.flatMap((group) => group.devices.map((device) => ({ group, device })));
+    return { total: seen.size, visible: showAllDevices ? flat : flat.slice(0, 10) };
+  }, [devices, deviceQuery, showAllDevices]);
 
   const visibleUsers = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("tr-TR");
@@ -435,7 +466,7 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
         )}
       </section>
 
-      <section className="admin-settings">
+      <section className="admin-settings admin-settings-wide">
         <div>
           <h2>Sunucu yedekleri (3-2-1)</h2>
           <p>Her gece veritabanı + dosyalar şifreli olarak yerel diske ve (ayarlıysa) S3 offsite'a yedeklenir. Her yedek geri-yükleme provasından geçer. Detay: <code>docs/BACKUP.md</code></p>
@@ -502,23 +533,46 @@ export function AdminPanel({ currentUserId, plans, request, onMessage, onCurrent
       <section className="admin-settings">
         <div>
           <h2>Bağlı cihazlar</h2>
-          <p>Android uygulamasından giriş yapan telefonlar (son 200). Yedekleme sorunlarında cihaz adını kontrol edin.</p>
+          <p>Android uygulamasından giriş yapan telefonlar (en fazla 200 kayıt, kullanıcı bazlı gruplanır). Yedekleme sorunlarında cihaz adını kontrol edin.</p>
         </div>
-        <div className="admin-table">
-          <div className="admin-table-head">
+        <div className="admin-table admin-devices">
+          <div className="admin-device-tools">
+            <input
+              type="search"
+              value={deviceQuery}
+              placeholder="Kullanıcı veya cihaz ara…"
+              aria-label="Bağlı cihazlarda ara"
+              onChange={(event) => { setDeviceQuery(event.target.value); setShowAllDevices(false); }}
+            />
+            <small>{deviceRows.total} cihaz{deviceQuery.trim() ? ` (aranan: ${deviceRows.visible.length})` : ""}</small>
+          </div>
+          <div className="admin-table-head admin-device-head">
             <span>Cihaz</span><span>Kullanıcı</span><span>Son görülme</span>
           </div>
-          {devices.slice(0, 50).map((device) => (
-            <article className="admin-user-row" key={device.id}>
-              <div className="admin-identity">
-                <span>📱</span>
-                <div><strong>{device.name || "Android"}</strong><small>{device.id.slice(0, 8)}…</small></div>
-              </div>
-              <div><strong>{device.userEmail}</strong></div>
-              <div><small>{new Date(device.lastSeenAt).toLocaleString("tr-TR")}</small></div>
-            </article>
-          ))}
-          {!devices.length && <div className="admin-empty">Henüz kayıtlı cihaz yok.</div>}
+          {deviceRows.visible.map(({ group, device }, index, all) => {
+            const groupStart = index === 0 || all[index - 1].group.userId !== group.userId;
+            return (
+              <article className={`admin-user-row ${groupStart ? "device-group-start" : ""}`} key={device.id}>
+                <div className="admin-identity">
+                  <span>📱</span>
+                  <div><strong>{device.name || "Android"}</strong><small>{device.id.slice(0, 8)}…</small></div>
+                </div>
+                <div><strong>{device.userEmail}</strong></div>
+                <div><small>{new Date(device.lastSeenAt).toLocaleString("tr-TR")}</small></div>
+              </article>
+            );
+          })}
+          {!deviceRows.visible.length && (
+            <div className="admin-empty">{devices.length ? "Aramaya uyan cihaz yok." : "Henüz kayıtlı cihaz yok."}</div>
+          )}
+          {deviceRows.total > 10 && (
+            <div className="admin-device-more">
+              <button type="button" className="secondary" onClick={() => setShowAllDevices((value) => !value)}>
+                {showAllDevices ? "Son 10 cihaza dön" : "Tümünü göster"}
+              </button>
+              <small>{showAllDevices ? `Tümü gösteriliyor (${deviceRows.visible.length})` : `İlk 10 / ${deviceRows.total} gösteriliyor`}</small>
+            </div>
+          )}
         </div>
       </section>
 

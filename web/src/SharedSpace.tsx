@@ -62,7 +62,7 @@ type TorrentView = {
   id: string;
   infoHash: string;
   name: string;
-  status: "metadata" | "downloading" | "stalled" | "paused" | "completed" | "seeding" | "error";
+  status: "metadata" | "verifying" | "downloading" | "stalled" | "paused" | "completed" | "seeding" | "error";
   message?: string;
   path?: string;
   totalBytes: number;
@@ -72,8 +72,31 @@ type TorrentView = {
   uploadRate: number;
   peers: number;
   seeders: number;
+  ratio: number;
+  etaSec: number;
+  uploadedBytes: number;
+  seededSeconds: number;
+  downloadLimitKBps: number;
+  uploadLimitKBps: number;
+  seedRatioLimit: number;
+  seedTimeLimitSec: number;
   addedAt: string;
 };
+
+type TorrentFile = {
+  path: string;
+  length: number;
+  completed: number;
+  priority: "skip" | "normal" | "high";
+};
+
+type TorrentDetail = TorrentView & {
+  files: TorrentFile[];
+  trackers: { url: string }[];
+  peers: { addr: string; client?: string }[];
+};
+
+type TorrentFilter = "all" | "downloading" | "seeding" | "completed";
 
 type TorrentOverview = {
   enabled: boolean;
@@ -855,15 +878,51 @@ export function SharedAdminSection(props: { request: Request; users: DirectoryUs
 
 const torrentStatus: Record<TorrentView["status"], string> = {
   metadata: "Bilgi alınıyor",
+  verifying: "Doğrulanıyor",
   downloading: "İndiriliyor",
   stalled: "Bekliyor (alan dolu)",
   paused: "Duraklatıldı",
   completed: "Tamamlandı",
-  seeding: "Paylaşılıyor",
+  seeding: "Seed",
   error: "Hata"
 };
 
+const torrentFilters: { id: TorrentFilter; label: string }[] = [
+  { id: "all", label: "Tümü" },
+  { id: "downloading", label: "İndirilen" },
+  { id: "seeding", label: "Seed" },
+  { id: "completed", label: "Tamamlanan" }
+];
+
 const formatRate = (bytesPerSecond: number) => (bytesPerSecond > 0 ? `${formatBytes(bytesPerSecond)}/s` : "—");
+
+const formatETA = (seconds: number) => {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) return `${Math.round(seconds)} sn`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} dk`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} sa`;
+  return `${Math.round(seconds / 86400)} gün`;
+};
+
+const formatSeedTime = (seconds: number) => {
+  if (seconds < 60) return `${seconds} sn`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} dk`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} sa`;
+  return `${Math.floor(seconds / 86400)} gün`;
+};
+
+const matchesFilter = (item: TorrentView, filter: TorrentFilter) => {
+  switch (filter) {
+    case "downloading":
+      return item.status === "downloading" || item.status === "metadata" || item.status === "stalled" || item.status === "verifying";
+    case "seeding":
+      return item.status === "seeding";
+    case "completed":
+      return item.status === "completed" || item.status === "seeding";
+    default:
+      return true;
+  }
+};
 
 export function TorrentAdminSection(props: { request: Request; onMessage: (message: string) => void }) {
   const request = useStableRequest(props.request);
@@ -877,6 +936,35 @@ export function TorrentAdminSection(props: { request: Request; onMessage: (messa
   const [upLimit, setUpLimit] = useState("");
   const limitsTouched = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [filter, setFilter] = useState<TorrentFilter>("all");
+  const [detailId, setDetailId] = useState("");
+  const [detail, setDetail] = useState<TorrentDetail | null>(null);
+  const [detailFailed, setDetailFailed] = useState("");
+  const [detailBusy, setDetailBusy] = useState(false);
+  const [itemLimits, setItemLimits] = useState({ down: "", up: "", ratio: "", time: "" });
+
+  const loadDetail = useCallback(async (id: string) => {
+    try {
+      const next = await request<TorrentDetail>(`/api/admin/torrents/${encodeURIComponent(id)}`);
+      setDetail(next);
+      setDetailFailed("");
+    } catch (err) {
+      setDetailFailed(errorText(err, "Torrent ayrıntısı alınamadı"));
+    }
+  }, [request]);
+
+  // Fill the drawer's limit fields only when a different torrent is opened,
+  // so polling never overwrites what the administrator is typing.
+  useEffect(() => {
+    if (!detail) return;
+    setItemLimits({
+      down: detail.downloadLimitKBps ? String(detail.downloadLimitKBps) : "",
+      up: detail.uploadLimitKBps ? String(detail.uploadLimitKBps) : "",
+      ratio: detail.seedRatioLimit ? String(detail.seedRatioLimit) : "",
+      time: detail.seedTimeLimitSec ? String(detail.seedTimeLimitSec) : ""
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.id]);
 
   const load = useCallback(async () => {
     try {
@@ -892,7 +980,9 @@ export function TorrentAdminSection(props: { request: Request; onMessage: (messa
     }
   }, [request]);
 
-  const active = (overview?.torrents ?? []).some((item) => item.status === "downloading" || item.status === "metadata" || item.status === "stalled" || item.status === "seeding");
+  const active = (overview?.torrents ?? []).some((item) =>
+    item.status === "downloading" || item.status === "metadata" || item.status === "stalled" ||
+    item.status === "seeding" || item.status === "verifying");
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -903,6 +993,26 @@ export function TorrentAdminSection(props: { request: Request; onMessage: (messa
     }, active ? 2500 : 15000);
     return () => window.clearInterval(timer);
   }, [load, active]);
+  useEffect(() => {
+    if (!detailId) return;
+    void loadDetail(detailId);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadDetail(detailId);
+    }, active ? 2500 : 15000);
+    return () => window.clearInterval(timer);
+  }, [detailId, active, loadDetail]);
+
+  function openDetail(id: string) {
+    setDetailId(id);
+    setDetail(null);
+    setDetailFailed("");
+  }
+
+  function closeDetail() {
+    setDetailId("");
+    setDetail(null);
+    setDetailFailed("");
+  }
 
   async function addMagnet(event: FormEvent) {
     event.preventDefault();
@@ -963,15 +1073,67 @@ export function TorrentAdminSection(props: { request: Request; onMessage: (messa
     }
   }
 
-  async function itemAction(item: TorrentView, action: "pause" | "resume") {
+  async function itemAction(item: TorrentView, action: "pause" | "resume" | "stopseeding") {
     setBusy(item.id);
     try {
       await request(`/api/admin/torrents/${encodeURIComponent(item.id)}/${action}`, { method: "POST" });
       await load();
+      if (detailId === item.id) await loadDetail(item.id);
     } catch (err) {
       onMessage(errorText(err, "İşlem tamamlanamadı"));
     } finally {
       setBusy("");
+    }
+  }
+
+  async function saveItemLimits(event: FormEvent) {
+    event.preventDefault();
+    if (!detail) return;
+    const parse = (value: string) => (value.trim() === "" ? 0 : Number(value));
+    const down = parse(itemLimits.down);
+    const up = parse(itemLimits.up);
+    const ratio = parse(itemLimits.ratio);
+    const time = parse(itemLimits.time);
+    const valid = Number.isInteger(down) && down >= 0 && Number.isInteger(up) && up >= 0 &&
+      Number.isFinite(ratio) && ratio >= 0 && Number.isInteger(time) && time >= 0;
+    if (!valid) {
+      onMessage("Sınırlar geçersiz: hız sıfır veya pozitif tam sayı (KB/sn), oran ve süre sıfır ya da pozitif olmalı (boş/kapalı = 0).");
+      return;
+    }
+    setDetailBusy(true);
+    try {
+      await request(`/api/admin/torrents/${encodeURIComponent(detail.id)}/limits`, {
+        method: "PUT",
+        body: JSON.stringify({
+          downloadLimitKBps: down,
+          uploadLimitKBps: up,
+          seedRatioLimit: ratio,
+          seedTimeLimitSec: time
+        })
+      });
+      await loadDetail(detail.id);
+      await load();
+      onMessage("Torrent sınırları güncellendi.");
+    } catch (err) {
+      onMessage(errorText(err, "Torrent sınırları kaydedilemedi"));
+    } finally {
+      setDetailBusy(false);
+    }
+  }
+
+  async function changeFilePriority(path: string, priority: TorrentFile["priority"]) {
+    if (!detail) return;
+    setDetailBusy(true);
+    try {
+      await request(`/api/admin/torrents/${encodeURIComponent(detail.id)}/files`, {
+        method: "PUT",
+        body: JSON.stringify({ path, priority })
+      });
+      await loadDetail(detail.id);
+    } catch (err) {
+      onMessage(errorText(err, "Dosya önceliği değiştirilemedi"));
+    } finally {
+      setDetailBusy(false);
     }
   }
 
@@ -1050,43 +1212,220 @@ export function TorrentAdminSection(props: { request: Request; onMessage: (messa
         {items.length === 0 ? (
           <div className="ss-empty small">{usable ? "Listede torrent yok. Yukarıdan bir magnet bağlantısı veya .torrent dosyası ekleyin." : "Listede torrent yok."}</div>
         ) : (
-          <div className="ss-torrents">
-            {items.map((item) => {
-              const percent = Math.round(Math.max(0, Math.min(1, item.progress)) * 1000) / 10;
-              const itemBusy = busy === item.id;
-              const running = item.status === "downloading" || item.status === "metadata" || item.status === "stalled";
-              return (
-                <article className={`ss-torrent ${item.status}`} key={item.id}>
-                  <div className="ss-torrent-main">
-                    <strong title={item.infoHash}>{item.name}</strong>
-                    <small>
-                      <span className={`ss-badge ${item.status}`}>{torrentStatus[item.status] ?? item.status}</span>
-                      {item.totalBytes > 0 ? ` ${formatBytes(item.completedBytes)} / ${formatBytes(item.totalBytes)}` : " boyut bekleniyor"}
-                      {running || item.status === "seeding" ? ` · ↓ ${formatRate(item.downloadRate)} · ↑ ${formatRate(item.uploadRate)} · ${item.peers} eş` : ""}
-                    </small>
-                    <div className="ss-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-label={`${item.name} ilerleme`}>
-                      <span style={{ width: `${percent}%` }} />
-                    </div>
-                    {item.message && <small className="ss-torrent-message">{item.message}</small>}
-                  </div>
-                  <div className="ss-torrent-side">
-                    <b>%{percent}</b>
-                    <div className="row">
-                      {running && <button type="button" disabled={itemBusy || !usable} onClick={() => void itemAction(item, "pause")}>Duraklat</button>}
-                      {(item.status === "paused" || item.status === "error") && (
-                        <button type="button" disabled={itemBusy || !usable} onClick={() => void itemAction(item, "resume")}>
-                          {item.status === "error" ? "Yeniden dene" : "Sürdür"}
-                        </button>
-                      )}
-                      <button type="button" className="danger" disabled={itemBusy} onClick={() => void remove(item)}>Kaldır</button>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+          <>
+            <div className="tt-filters" role="tablist" aria-label="Torrent süzgeçleri">
+              {torrentFilters.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === entry.id}
+                  className={filter === entry.id ? "active" : ""}
+                  onClick={() => setFilter(entry.id)}
+                >
+                  {entry.label} ({items.filter((item) => matchesFilter(item, entry.id)).length})
+                </button>
+              ))}
+            </div>
+            <div className="tt-table-wrap">
+              <table className="tt-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Torrent</th>
+                    <th scope="col" className="tt-num">Boyut</th>
+                    <th scope="col" className="tt-progress-col">İlerleme</th>
+                    <th scope="col">Durum</th>
+                    <th scope="col" className="tt-num">↓</th>
+                    <th scope="col" className="tt-num">↑</th>
+                    <th scope="col" className="tt-num tt-col-extra">Eş / Tohum</th>
+                    <th scope="col" className="tt-num tt-col-extra">Oran</th>
+                    <th scope="col" className="tt-num tt-col-extra">ETA</th>
+                    <th scope="col" className="tt-actions-col">İşlem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.filter((item) => matchesFilter(item, filter)).map((item) => {
+                    const percent = Math.round(Math.max(0, Math.min(1, item.progress)) * 1000) / 10;
+                    const itemBusy = busy === item.id;
+                    const running = item.status === "downloading" || item.status === "metadata" || item.status === "stalled" || item.status === "verifying";
+                    return (
+                      <tr key={item.id} className={`tt-row ${item.status}`}>
+                        <td data-label="Torrent" className="tt-name">
+                          <button type="button" className="tt-name-btn" title={`${item.name} — ayrıntı`} onClick={() => openDetail(item.id)}>{item.name}</button>
+                          {item.message && <small className="tt-message">{item.message}</small>}
+                        </td>
+                        <td data-label="Boyut" className="tt-num">
+                          {item.totalBytes > 0 ? formatBytes(item.totalBytes) : "—"}
+                          <small className="tt-sub">{formatBytes(item.completedBytes)} indirildi</small>
+                        </td>
+                        <td data-label="İlerleme" className="tt-progress-col">
+                          <div className="ss-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-label={`${item.name} ilerleme`}>
+                            <span style={{ width: `${percent}%` }} />
+                          </div>
+                          <small className="tt-sub">%{percent}</small>
+                        </td>
+                        <td data-label="Durum"><span className={`ss-badge ${item.status}`}>{torrentStatus[item.status] ?? item.status}</span></td>
+                        <td data-label="↓" className="tt-num">{formatRate(item.downloadRate)}</td>
+                        <td data-label="↑" className="tt-num">{formatRate(item.uploadRate)}</td>
+                        <td data-label="Eş / Tohum" className="tt-num tt-col-extra">{item.peers} / {item.seeders}</td>
+                        <td data-label="Oran" className="tt-num tt-col-extra">{item.ratio.toFixed(2)}</td>
+                        <td data-label="ETA" className="tt-num tt-col-extra">{item.status === "downloading" ? formatETA(item.etaSec) : "—"}</td>
+                        <td data-label="İşlem" className="tt-actions">
+                          {running && <button type="button" disabled={itemBusy || !usable} onClick={() => void itemAction(item, "pause")}>Duraklat</button>}
+                          {(item.status === "paused" || item.status === "error") && (
+                            <button type="button" disabled={itemBusy || !usable} onClick={() => void itemAction(item, "resume")}>
+                              {item.status === "error" ? "Yeniden dene" : "Sürdür"}
+                            </button>
+                          )}
+                          {item.status === "seeding" && <button type="button" disabled={itemBusy || !usable} onClick={() => void itemAction(item, "stopseeding")}>Seed'i durdur</button>}
+                          {item.status === "completed" && <button type="button" disabled={itemBusy || !usable} onClick={() => void itemAction(item, "resume")}>Seed başlat</button>}
+                          <button type="button" className="secondary" onClick={() => openDetail(item.id)}>Detay</button>
+                          <button type="button" className="danger" disabled={itemBusy} onClick={() => void remove(item)}>Kaldır</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
+
+      {detailId && (
+        <div className="tt-drawer-backdrop" role="presentation" onClick={closeDetail}>
+          <aside
+            className="tt-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={detail ? `${detail.name} ayrıntısı` : "Torrent ayrıntısı"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="tt-drawer-head">
+              <strong>{detail?.name ?? "Yükleniyor…"}</strong>
+              <button type="button" aria-label="Ayrıntıyı kapat" onClick={closeDetail}>×</button>
+            </div>
+            {detailFailed && <div className="notice error">{detailFailed}</div>}
+            {detail && (
+              <div className="tt-drawer-body">
+                <div className="tt-drawer-status">
+                  <span className={`ss-badge ${detail.status}`}>{torrentStatus[detail.status] ?? detail.status}</span>
+                  <span>%{Math.round(Math.max(0, Math.min(1, detail.progress)) * 1000) / 10}</span>
+                  <span className="tt-sub">↓ {formatRate(detail.downloadRate)} · ↑ {formatRate(detail.uploadRate)}</span>
+                  <span className="tt-sub">Oran {detail.ratio.toFixed(2)}</span>
+                  <span className="tt-sub">ETA {detail.status === "downloading" ? formatETA(detail.etaSec) : "—"}</span>
+                </div>
+                <div className="ss-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
+                  aria-valuenow={Math.round(detail.progress * 100)} aria-label="İlerleme">
+                  <span style={{ width: `${Math.round(Math.max(0, Math.min(1, detail.progress)) * 100)}%` }} />
+                </div>
+                <dl className="tt-meta">
+                  <div><dt>Yol</dt><dd>{detail.path || "—"}</dd></div>
+                  <div><dt>İnfo hash</dt><dd className="tt-hash">{detail.infoHash}</dd></div>
+                  <div><dt>Toplam / indirilen</dt><dd>{formatBytes(detail.totalBytes)} / {formatBytes(detail.completedBytes)}</dd></div>
+                  <div><dt>Yüklenen / süre</dt><dd>{formatBytes(detail.uploadedBytes)} · {formatSeedTime(detail.seededSeconds)}</dd></div>
+                  <div><dt>Eklenme</dt><dd>{formatDate(detail.addedAt)}</dd></div>
+                </dl>
+
+                <form className="tt-limits" onSubmit={(event) => void saveItemLimits(event)}>
+                  <h3>Sınırlar</h3>
+                  <div className="tt-limit-grid">
+                    <label>
+                      İndirme (KB/sn)
+                      <input type="number" min={0} inputMode="numeric" value={itemLimits.down} placeholder="Sınırsız"
+                        onChange={(event) => setItemLimits((current) => ({ ...current, down: event.target.value }))} />
+                    </label>
+                    <label>
+                      Gönderme (KB/sn)
+                      <input type="number" min={0} inputMode="numeric" value={itemLimits.up} placeholder="Sınırsız"
+                        onChange={(event) => setItemLimits((current) => ({ ...current, up: event.target.value }))} />
+                    </label>
+                    <label>
+                      Seed oranı sınırı
+                      <input type="number" min={0} step="0.1" inputMode="decimal" value={itemLimits.ratio} placeholder="Kapalı (0)"
+                        onChange={(event) => setItemLimits((current) => ({ ...current, ratio: event.target.value }))} />
+                    </label>
+                    <label>
+                      Seed süresi (sn)
+                      <input type="number" min={0} inputMode="numeric" value={itemLimits.time} placeholder="Kapalı (0)"
+                        onChange={(event) => setItemLimits((current) => ({ ...current, time: event.target.value }))} />
+                    </label>
+                  </div>
+                  <p className="ss-hint">Hız sınırları bu torrente özeldir; seed oranı/sınırı 0 ise kapalıdır. Yeni değerler hemen uygulanır.</p>
+                  <button type="submit" disabled={detailBusy}>{detailBusy ? "Kaydediliyor…" : "Sınırları uygula"}</button>
+                </form>
+
+                <section className="tt-drawer-section">
+                  <h3>Dosyalar ({detail.files.length})</h3>
+                  {detail.files.length === 0 ? (
+                    <p className="ss-hint">Dosya listesi henüz bilinmiyor (magnet ile eklenen torrentte metadata bekleniyor).</p>
+                  ) : (
+                    <ul className="tt-files">
+                      {detail.files.map((file) => (
+                        <li key={file.path}>
+                          <span className="tt-file-path" title={file.path}>{file.path}</span>
+                          <span className="tt-sub">{formatBytes(file.completed)} / {formatBytes(file.length)}</span>
+                          <select
+                            aria-label={`${file.path} önceliği`}
+                            value={file.priority}
+                            disabled={detailBusy}
+                            onChange={(event) => void changeFilePriority(file.path, event.target.value as TorrentFile["priority"])}
+                          >
+                            <option value="normal">Normal</option>
+                            <option value="high">Yüksek</option>
+                            <option value="skip">Atla</option>
+                          </select>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="tt-drawer-section">
+                  <h3>Trackers ({detail.trackers.length})</h3>
+                  {detail.trackers.length === 0 ? (
+                    <p className="ss-hint">Trackers bilgisi yok.</p>
+                  ) : (
+                    <ul className="tt-trackers">
+                      {detail.trackers.map((tracker) => <li key={tracker.url}>{tracker.url}</li>)}
+                    </ul>
+                  )}
+                  <p className="ss-hint">Yol ve anahtar (passkey) gizlenmiştir.</p>
+                </section>
+
+                <section className="tt-drawer-section">
+                  <h3>Eşler ({detail.peers.length})</h3>
+                  {detail.peers.length === 0 ? (
+                    <p className="ss-hint">Şu an bağlı eş yok.</p>
+                  ) : (
+                    <ul className="tt-peers">
+                      {detail.peers.map((peer) => (
+                        <li key={peer.addr}><span>{peer.addr}</span>{peer.client ? <span className="tt-sub">{peer.client}</span> : null}</li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <div className="tt-drawer-actions">
+                  {running(detail) && <button type="button" disabled={detailBusy} onClick={() => void itemAction(detail, "pause")}>Duraklat</button>}
+                  {(detail.status === "paused" || detail.status === "error") && (
+                    <button type="button" disabled={detailBusy} onClick={() => void itemAction(detail, "resume")}>
+                      {detail.status === "error" ? "Yeniden dene" : "Sürdür"}
+                    </button>
+                  )}
+                  {detail.status === "seeding" && <button type="button" disabled={detailBusy} onClick={() => void itemAction(detail, "stopseeding")}>Seed'i durdur</button>}
+                  {detail.status === "completed" && <button type="button" disabled={detailBusy} onClick={() => void itemAction(detail, "resume")}>Seed başlat</button>}
+                  <button type="button" className="danger" disabled={detailBusy} onClick={() => void remove(detail)}>Kaldır</button>
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
     </section>
   );
+}
+
+function running(item: TorrentView) {
+  return item.status === "downloading" || item.status === "metadata" || item.status === "stalled" || item.status === "verifying";
 }
