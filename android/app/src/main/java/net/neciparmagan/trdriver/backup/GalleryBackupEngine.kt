@@ -391,6 +391,14 @@ object GalleryBackupEngine {
         val eligible = sources
             .filter { BackupPolicy.allowsSize(it.sizeBytes) }
             .filter { toggles.allows(BackupPolicy.kindOf(it.mimeType, it.displayName)) }
+            .filter { BackupPolicy.isUserBackupContent(it.mimeType, it.displayName) }
+            .filter { item ->
+                val key = item.mediaKey.removePrefix("path:")
+                !BackupPolicy.isExcludedBackupPath(key) &&
+                    !BackupPolicy.isExcludedBackupPath(item.relativePath.orEmpty()) &&
+                    !BackupPolicy.isExcludedBackupPath(item.albumName.orEmpty()) &&
+                    !BackupPolicy.isExcludedBackupPath(item.backupFolderLabel.orEmpty())
+            }
             // The same file can be reachable twice (SAF tree + direct preset
             // path): upload it once, keyed by folder + name + size + mtime.
             .distinctBy { item ->

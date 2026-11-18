@@ -206,9 +206,43 @@ class BackupPolicyTest {
             "/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media",
             byLabel.getValue("WhatsApp Medya").path,
         )
+        assertFalse(BackupPolicy.isExcludedBackupPath(byLabel.getValue("WhatsApp Medya").path))
         assertEquals(
             "/storage/emulated/0/Android/media/com.whatsapp/WhatsApp",
             byLabel.getValue("WhatsApp Yedek").path,
+        )
+    }
+
+    @Test
+    fun userFilesAreBackedUpAndSystemFoldersAreNot() {
+        assertTrue(BackupPolicy.isUserBackupContent("image/jpeg", "foto.jpg"))
+        assertTrue(BackupPolicy.isUserBackupContent("video/mp4", "tatil.mp4"))
+        assertTrue(BackupPolicy.isUserBackupContent("audio/mpeg", "sarki.mp3"))
+        assertTrue(BackupPolicy.isUserBackupContent(null, "rapor.pdf"))
+        assertTrue(BackupPolicy.isUserBackupContent(null, "tablo.xlsx"))
+        assertTrue(BackupPolicy.isUserBackupContent(null, "sunum.pptx"))
+        assertTrue(BackupPolicy.isUserBackupContent(null, "arsiv.zip"))
+        assertTrue(BackupPolicy.isUserBackupContent(null, "arsiv.rar"))
+        assertTrue(BackupPolicy.isUserBackupContent(null, "kurulum.apk"))
+        assertTrue(BackupPolicy.isUserBackupContent(null, "kurulum.exe"))
+        assertTrue(BackupPolicy.isUserBackupContent("application/octet-stream", "notlar.txt"))
+
+        assertFalse(BackupPolicy.isUserBackupContent(null, "uzantusiz"))
+        assertFalse(BackupPolicy.isUserBackupContent("application/octet-stream", "cache.db"))
+        assertFalse(BackupPolicy.isUserBackupContent(null, "lib.so"))
+        assertFalse(BackupPolicy.isUserBackupContent(null, "thumb.nomedia"))
+
+        assertTrue(BackupPolicy.isExcludedBackupPath("/storage/emulated/0/Android/data/com.foo"))
+        assertTrue(BackupPolicy.isExcludedBackupPath("/storage/emulated/0/Android/obb/com.foo"))
+        assertTrue(BackupPolicy.isExcludedBackupPath("/storage/emulated/0/DCIM/.thumbnails/a.jpg"))
+        assertTrue(BackupPolicy.isExcludedBackupPath("/storage/emulated/0/Download/cache/x.pdf"))
+        assertTrue(BackupPolicy.isExcludedBackupPath("Android/data/pkg/files/a.pdf"))
+        assertFalse(BackupPolicy.isExcludedBackupPath("/storage/emulated/0/Download/rapor.pdf"))
+        assertFalse(BackupPolicy.isExcludedBackupPath("/storage/emulated/0/DCIM/Camera/a.jpg"))
+        assertFalse(
+            BackupPolicy.isExcludedBackupPath(
+                "/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/a.jpg",
+            ),
         )
     }
 }

@@ -1165,8 +1165,14 @@ export function TorrentAdminSection(props: { request: Request; onMessage: (messa
           <h2>Torrent indirme</h2>
           <p>
             Sunucu, eklediğiniz torrentleri doğrudan Ortak Paylaşım klasörüne indirir. Yalnızca yöneticiler kullanabilir.
-            {overview?.available ? ` Dinlenen port: ${overview.listenPort} (TCP/UDP).` : ""}
-            {overview?.available ? (overview.seedAfterComplete ? " İndirme bitince paylaşım sürer." : " İndirme bitince paylaşım durur.") : ""}
+            {overview?.available
+              ? ` Yönlendirilecek port: ${overview.listenPort} (hem TCP hem UDP).`
+              : ""}
+            {overview?.available
+              ? overview.seedAfterComplete
+                ? " İndirme bitince paylaşım (seed) sürer; oran/süre sınırı dolunca veya “Seed'i durdur” ile kesilir."
+                : " İndirme bitince paylaşım kapalı (TORRENT_SEED_AFTER_COMPLETE=false)."
+              : ""}
           </p>
         </div>
       </div>

@@ -38,7 +38,21 @@ SMS yedeklemesi `READ_SMS` ile okunmaya devam eder. Geri yükleme, Android `ROLE
 
 ## Yedekleme ve arama davranışı
 
-Var olan kişisel/galeri yedekleme kuralları değişmez: kişisel veri upload'ı Wi‑Fi-only, artımlı ve run-lock/kota/sınırlı batch kurallarına bağlıdır. LocalTel dinleyicisi çağrı için mobil veri kullanabilir fakat yedekleme ağ geçidini değiştirmez. Kilit ekranındaki gelen arama UI'si ve rehber numarası eşleştirmesi korunmuştur.
+Kişisel/galeri yedeklemesi Wi‑Fi (ölçülmemiş ağ) ile sınırlı kalır: hız sınırı, artımlı tarama ve arka plan servisi aynıdır. Yedek yalnızca kullanıcı dosyalarını alır (fotoğraf, video, ses, ofis, PDF, zip/rar, exe/apk). `Android/data`, `Android/obb`, gizli klasörler ve önbellek klasörleri yüklenmez; daha önce yüklenmiş kopyalar sunucudan silinmez.
+
+LocalTel bu kısıtı paylaşmaz. Sinyal (WebSocket) ve ses (aynı WebSocket üzerinden G.711 PCMU, sunucu aktarımı) Wi‑Fi **veya** mobil veri ile çalışır. Aktif ağ değişince (Wi‑Fi → mobil) dinleyici yeni ağa bağlanır ve soketi kısa sürede yeniden açar. Uygulama sürecini tek bir ağa kilitlemez; yedek yüklemesi ile arama soketi ayrıdır.
+
+### Mobil veri ve ev yönlendiricisi (0.16.1)
+
+Yerleşik ağ geçidi medyayı ayrı bir UDP/RTP portundan değil, TR Driver'ın kendi WSS bağlantısından taşır. Bu yüzden ICE/STUN/TURN **gerekmez** ve ekstra bir UDP aralık portu açılmaz.
+
+Mobil veriden (ev ağının dışından) arama için telefonun sunucuya ulaşması gerekir:
+
+- TR Driver'ın HTTPS portu (genelde **443/TCP**) yönlendiricide sunucuya iletilmelidir. WebSocket yükseltmesi (`/localtel/ws`) ters vekil tarafından uygulamaya geçirilmelidir.
+- `PUBLIC_BASE_URL` veya `LOCAL_TEL_DOMAIN` telefonda çözülen ve sertifikası geçerli olan genel adres olmalıdır. Yalnızca `192.168.x.x` gibi bir iç adres mobil veriden çalışmaz.
+- Torrent dinleme portu (varsayılan **42069/TCP ve 42069/UDP**) LocalTel'den bağımsızdır; onu yalnızca torrent eşleri için yönlendirin. Panelde görünen port numarası esas alınır.
+
+Doğrudan SIP (Gelişmiş ayarlar) seçilirse RTP telefonun kendi UDP soketinden gider ve karşı tarafın erişilebilir olması gerekir. Varsayılan TR Driver ağ geçidinde bu yol kullanılmaz.
 
 ## API özeti
 

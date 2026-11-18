@@ -336,9 +336,30 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.fabDrive).setOnClickListener { showFabMenu(it) }
         findViewById<Button>(R.id.navHome).setOnClickListener { selectDriveSection(DriveSection.HOME) }
         findViewById<Button>(R.id.navFiles).setOnClickListener { selectDriveSection(DriveSection.FILES) }
+        findViewById<Button>(R.id.navShared).setOnClickListener {
+            startActivity(Intent(this, SharedSpaceActivity::class.java))
+        }
         findViewById<Button>(R.id.navStarred).setOnClickListener { selectDriveSection(DriveSection.STARRED) }
         findViewById<Button>(R.id.navMore).setOnClickListener { showActionsMenu(it) }
         styleDriveNav()
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    val crumbs = vm.state.value.crumbs
+                    val inMyFiles = crumbs.firstOrNull()?.name == "Dosyalarım" && crumbs.size > 1
+                    if (inMyFiles) {
+                        driveSection = DriveSection.FILES
+                        styleDriveNav()
+                        vm.goToCrumb(crumbs.lastIndex - 1)
+                    } else {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                        isEnabled = true
+                    }
+                }
+            },
+        )
         crumbs.setOnClickListener {
             val state = vm.state.value
             if (state.crumbs.size > 1) vm.goToCrumb(state.crumbs.lastIndex - 1)
@@ -734,7 +755,7 @@ class MainActivity : AppCompatActivity() {
                 menu.add(0, 11, 7, "Fotoğraf ekle · $plate")
             }
             menu.add(0, 10, 8, "Araç kabul")
-            menu.add(0, 17, 9, "Ortak Paylaşım")
+            menu.add(0, 17, 9, "Ortak Klasör")
             menu.add(0, 12, 9, "TR Photos")
             menu.add(0, 15, 10, "LocalTel Aramalar")
             menu.add(0, 7, 11, "Yedekleme ayarları")

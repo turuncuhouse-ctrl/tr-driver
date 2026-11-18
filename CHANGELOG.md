@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.1 — Seed, yedek süzgeci, Ortak Klasör ve mobil arama
+
+### Fixed
+- Torrent yeniden başlatma ve "veriyi silmeden kaldırıp aynı torrent'i ekleme" artık parçaları gerçekten doğrular. Tamamlanmış görünen eski kayıt, doğrulama bitmeden torrent'i kapatmıyor; bozuk parça yeniden indirilir, sağlam parçalar korunur. İndirme hiç başlamadan yeniden başlatılan torrent "Doğrulanıyor"da takılmaz.
+- Dosya "Atla" seçimi, atlanan dosyanın parçaları yüzünden torrent'i erken "bitti" saymaz. İstenen dosyalar diske yazılır, atlanan dosya indirilmez, tercih yeniden başlatmada durur.
+- Android **Dosyalarım**: geri tuşu klasör ağacında yukarı çıkar (Ortak Klasör ile aynı). Yalnızca kökte uygulamadan çıkar.
+- Telefon yedeği artık sistem, uygulama, gizli ve önbellek klasörlerini (`Android/data`, `Android/obb`, nokta ile başlayan klasörler, `cache`) yüklemez. Yalnızca kullanıcı dosyaları gider: fotoğraf, video, ses, ofis, PDF, zip/rar, exe/apk. Daha önce yüklenmiş sistem dosyaları sunucuda kalır, sadece yeni yükleme yapılmaz. Yedek Wi‑Fi ve mevcut hız sınırıyla, arka planda çalışmaya devam eder.
+
+### Changed
+- **Seed varsayılan olarak açık.** İndirme bitince torrent oran/süre sınırına veya "Seed'i durdur"a kadar paylaşılır. Panel durumu **Seed** olarak gösterir, yükleme hızını (↑) yazar; bitmiş bir torrent elle "Seed başlat" / "Seed'i durdur" ile açılıp kapanır. Dinlenen port panelde görünür. Yönlendiricide bu port **TCP ve UDP** olarak iletilmelidir (varsayılan **42069**).
+- Android alt çubukta **Ortak Klasör** sekmesi: klasör gezme ve dosya açma. Ekran başlığı da "Ortak Klasör".
+- LocalTel sinyal ve sesi yedeklemenin Wi‑Fi kilidinden ayrıldı. Arama soketi Wi‑Fi veya mobil veriyi kullanır, süreç tek ağa bağlanmaz. Wi‑Fi düşünce mobil veriye geçişte bağlantı kısa sürede yeniden kurulur. Medya ayrı bir UDP portu açmaz; WSS üzerinden sunucuda aktarılır, bu yüzden ek STUN/TURN gerekmez. Ev dışından arama için sunucunun HTTPS/WSS portu (genelde 443/TCP) ve geçerli bir genel adres (`PUBLIC_BASE_URL` / `LOCAL_TEL_DOMAIN`) gerekir. Ayrıntı: `docs/LOCALTEL_CALLING.md`.
+- Sürüm `0.16.1`, Android `versionCode` `53`.
+
 ## 0.16.0 — LocalTel aramaları GSM gibi çalar
 
 ### Added

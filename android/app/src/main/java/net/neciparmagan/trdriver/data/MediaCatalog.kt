@@ -26,6 +26,8 @@ data class LocalMedia(
      * so editing a photo's modification time never moves its album placement.
      */
     val modifiedMs: Long = 0L,
+    /** MediaStore relative path when known, used to skip system folders in backup. */
+    val relativePath: String? = null,
 ) {
     val year: Int
         get() {
@@ -137,6 +139,8 @@ object MediaCatalog {
         }
         return out.distinctBy { it.mediaKey }
             .filter { BackupPolicy.kindOf(it.mimeType, it.displayName) == BackupPolicy.KIND_DOC }
+            .filter { BackupPolicy.isUserBackupContent(it.mimeType, it.displayName) }
+            .filter { !BackupPolicy.isExcludedBackupPath(it.mediaKey) }
             // Same label as the Download preset folder so an item seen both via
             // MediaStore and via a direct/SAF walk is deduplicated, not
             // uploaded twice.
@@ -175,10 +179,12 @@ object MediaCatalog {
         for (f in children) {
             if (out.size >= limit) return
             val name = f.name
-            // Skip hidden entries (.thumbnails, temp files); ".nomedia" itself
-            // is a dot-file so it is skipped while the folder is still walked —
-            // explicit user-chosen folders must back up even if apps hide them.
+            // Hidden folders, Android/data, Android/obb and caches are never
+            // walked. WhatsApp lives under Android/media and stays eligible.
             if (name.startsWith(".")) continue
+            if (BackupPolicy.isExcludedBackupPath(f.absolutePath) || BackupPolicy.isExcludedBackupPath(name)) {
+                continue
+            }
             when {
                 f.isDirectory -> walkFileTree(f, label, out, limit, depth + 1)
                 f.isFile -> {
@@ -190,6 +196,7 @@ object MediaCatalog {
                     }.getOrNull()
                         ?: MimeHelper.guessFromExtension(ext)
                         ?: "application/octet-stream"
+                    if (!BackupPolicy.isUserBackupContent(mime, name)) continue
                     val modified = f.lastModified().coerceAtLeast(0L)
                     out += LocalMedia(
                         mediaKey = "path:${f.absolutePath}",
@@ -263,7 +270,7 @@ object MediaCatalog {
             val tree = DocumentFile.fromTreeUri(context, uri) ?: continue
             val label = tree.name?.ifBlank { null } ?: "Klasor"
             val treeItems = ArrayList<LocalMedia>()
-            walkTree(tree, label, treeItems, limitPerTree, depth = 0)
+            walkTree(tree, label, treeItems, limitPerTree, depth = 0, rel = "")
             out += treeItems
         }
         return out.sortedByDescending { it.dateTakenMs }
@@ -275,19 +282,22 @@ object MediaCatalog {
         out: MutableList<LocalMedia>,
         limit: Int,
         depth: Int,
+        rel: String,
     ) {
         if (out.size >= limit || depth > SAF_MAX_DEPTH) return
         val children = runCatching { dir.listFiles() }.getOrNull() ?: return
         for (f in children) {
             if (out.size >= limit) return
+            val name = f.name ?: continue
+            val childRel = if (rel.isEmpty()) name else "$rel/$name"
+            if (name.startsWith(".") || BackupPolicy.isExcludedBackupPath(childRel)) continue
             when {
-                f.isDirectory -> walkTree(f, label, out, limit, depth + 1)
+                f.isDirectory -> walkTree(f, label, out, limit, depth + 1, childRel)
                 f.isFile -> {
                     val size = f.length()
-                    // Back up small files too (notes, exports, configs); only skip empties.
                     if (size <= 0L) continue
-                    val name = f.name ?: continue
                     val mime = f.type ?: "application/octet-stream"
+                    if (!BackupPolicy.isUserBackupContent(mime, name)) continue
                     val modified = f.lastModified().coerceAtLeast(0L)
                     out += LocalMedia(
                         mediaKey = "saf:${f.uri}",
@@ -385,6 +395,7 @@ object MediaCatalog {
                     val volume = collection.toString()
                     val bucketId = if (iBucketId >= 0) c.getString(iBucketId) else null
                     val bucketName = if (iBucketName >= 0) c.getString(iBucketName) else null
+                    val relPath = if (iRelPath >= 0) c.getString(iRelPath) else null
                     val relLabel = if (labelFromRelativePath && iRelPath >= 0) {
                         topFolderLabel(c.getString(iRelPath))
                     } else {
@@ -402,6 +413,7 @@ object MediaCatalog {
                         albumId = bucketId,
                         backupFolderLabel = relLabel,
                         modifiedMs = modifiedRaw,
+                        relativePath = relPath,
                     )
                     n++
                 }

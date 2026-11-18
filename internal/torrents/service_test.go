@@ -778,3 +778,85 @@ func TestItemLimitsAreValidatedAndPersisted(t *testing.T) {
 		t.Fatalf("limits lost on restart: %+v", stored)
 	}
 }
+
+// A finished torrent keeps seeding (status + upload) until the administrator
+// stops it, and Resume starts seeding again without re-downloading.
+func TestSeedingUploadsUntilStoppedAndCanResume(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t, func(o *Options) { o.SeedAfterComplete = true })
+	source := newSeeder(t)
+	payload := randomBytes(t, 180_000)
+	meta, _ := source.share(t, "paylas.bin", map[string][]byte{"": payload})
+
+	view, err := env.service.AddFile(ctx, admin, meta)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	env.connect(view.ID, source)
+	seeded := env.waitStatus(view.ID, downloadTimeout, StatusSeeding)
+	if seeded.Status != StatusSeeding {
+		t.Fatalf("after download status = %s, want seeding", seeded.Status)
+	}
+	if got, err := env.sharedFile("paylas.bin"); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("seeded file mismatch (%v)", err)
+	}
+
+	leecher := newSeeder(t)
+	mi, err := metainfo.Load(bytes.NewReader(meta))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := leecher.client.AddTorrent(mi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-handle.GotInfo()
+	handle.DownloadAll()
+
+	env.service.mu.Lock()
+	ours := env.service.items[view.ID].handle
+	env.service.mu.Unlock()
+	if ours == nil {
+		t.Fatal("seeding torrent has no client handle")
+	}
+	ours.AddClientPeer(leecher.client)
+	handle.AddClientPeer(env.service.client)
+
+	deadline := time.Now().Add(30 * time.Second)
+	var last View
+	for time.Now().Before(deadline) {
+		current, ok := env.view(view.ID)
+		if !ok {
+			t.Fatal("torrent disappeared while seeding")
+		}
+		last = current
+		if current.UploadedBytes > 0 || current.UploadRate > 0 {
+			break
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	if last.UploadedBytes == 0 && last.UploadRate == 0 {
+		t.Fatalf("seeding produced no upload: %+v", last)
+	}
+	if last.Status != StatusSeeding {
+		t.Fatalf("status while uploading = %s, want seeding", last.Status)
+	}
+
+	stopped, err := env.service.StopSeeding(ctx, admin, view.ID)
+	if err != nil || stopped.Status != StatusCompleted {
+		t.Fatalf("stop seeding = %+v, %v", stopped, err)
+	}
+	env.service.mu.Lock()
+	stillLoaded := env.service.items[view.ID].handle != nil
+	env.service.mu.Unlock()
+	if stillLoaded {
+		t.Fatal("stopped seed is still in the client")
+	}
+	resumed, err := env.service.Resume(ctx, admin, view.ID)
+	if err != nil || resumed.Status != StatusSeeding {
+		t.Fatalf("resume seeding = %+v, %v", resumed, err)
+	}
+	if got, err := env.sharedFile("paylas.bin"); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("resume changed the file (%v)", err)
+	}
+}

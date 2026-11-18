@@ -63,6 +63,8 @@ class GatewayLocalTelProvider(
         .readTimeout(0, TimeUnit.SECONDS)
         .pingInterval(25, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
+        // Sockets follow the call network (Wi-Fi or mobile), not the backup gate.
+        .socketFactory(CallNetwork.socketFactory())
         .build()
 
     private val _status = MutableStateFlow(ProviderStatusSnapshot())

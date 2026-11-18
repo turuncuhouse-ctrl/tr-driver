@@ -117,6 +117,7 @@ class SipLocalTelProvider(private val context: Context) : LocalTelCallProvider {
             when (config.transport) {
                 LocalTelTransport.TCP -> {
                     val sock = Socket()
+                    CallNetwork.bind(sock)
                     sock.connect(InetSocketAddress(resolved, port), 10_000)
                     sock.soTimeout = 0
                     tcpSocket = sock
@@ -127,6 +128,7 @@ class SipLocalTelProvider(private val context: Context) : LocalTelCallProvider {
                 }
                 LocalTelTransport.TLS -> {
                     val sock = SSLSocketFactory.getDefault().createSocket()
+                    CallNetwork.bind(sock)
                     sock.connect(InetSocketAddress(resolved, port), 10_000)
                     sock.soTimeout = 0
                     tcpSocket = sock
@@ -137,10 +139,12 @@ class SipLocalTelProvider(private val context: Context) : LocalTelCallProvider {
                 }
                 else -> {
                     val sock = DatagramSocket(0)
+                    CallNetwork.bind(sock)
                     sock.soTimeout = 0
                     // Probe routing interface IP without binding socket strictly.
                     runCatching {
                         DatagramSocket().use { probe ->
+                            CallNetwork.bind(probe)
                             probe.connect(resolved, port)
                             localIp = probe.localAddress?.hostAddress ?: "0.0.0.0"
                         }

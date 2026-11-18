@@ -61,6 +61,7 @@ class RtpAudioEngine(context: Context) {
             return socket!!.localPort
         }
         val sock = DatagramSocket(0)
+        CallNetwork.bind(sock)
         sock.soTimeout = 500
         socket = sock
         return sock.localPort
@@ -74,6 +75,7 @@ class RtpAudioEngine(context: Context) {
         if (running.getAndSet(true)) return true
         return try {
             val sock = socket ?: DatagramSocket(0).also {
+                CallNetwork.bind(it)
                 it.soTimeout = 500
                 socket = it
             }
