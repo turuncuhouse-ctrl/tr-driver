@@ -80,7 +80,7 @@ func TestSharedSpaceDefaults(t *testing.T) {
 		t.Fatalf("shared defaults = %d / %d / %v", cfg.SharedQuotaBytes, cfg.SharedQuotaWarnPercent, cfg.SharedLinkMaxTTL)
 	}
 	if !cfg.TorrentEnabled || cfg.TorrentListenPort != 42069 || cfg.TorrentDownloadLimitKBps != 0 || cfg.TorrentUploadLimitKBps != 0 ||
-		cfg.TorrentSeedAfterComplete || cfg.TorrentDisableDHT {
+		!cfg.TorrentSeedAfterComplete || cfg.TorrentDisableDHT {
 		t.Fatalf("torrent defaults = %+v", cfg)
 	}
 }
@@ -137,5 +137,15 @@ func TestSharedSpaceSettingsAreValidated(t *testing.T) {
 	}
 	if cfg.SharedQuotaBytes != 53687091200 || cfg.TorrentEnabled || cfg.TorrentDownloadLimitKBps != 2048 || !cfg.TorrentSeedAfterComplete {
 		t.Fatalf("explicit settings not applied: %+v", cfg)
+	}
+	setRequired(t)
+	t.Setenv("DATA_DIR", "/data/files")
+	t.Setenv("TORRENT_SEED_AFTER_COMPLETE", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.TorrentSeedAfterComplete {
+		t.Fatal("TORRENT_SEED_AFTER_COMPLETE=false was ignored")
 	}
 }

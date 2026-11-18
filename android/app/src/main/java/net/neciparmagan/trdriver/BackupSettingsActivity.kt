@@ -807,8 +807,12 @@ class BackupSettingsActivity : AppCompatActivity() {
                 "$fgs · $heartbeatLine · $battery\n$pendingLine · $successLine\n$comms"
         commsStatus.text = comms
         networkHint.text =
-            "Yedekleme yalnız Wi‑Fi ile yapılır (fotoğraf, video, ses, dosyalar, rehber ve SMS). " +
-                "Artımlı çalışır: değişmeyen kayıtlar tekrar yüklenmez; Wi‑Fi gelince arka planda devam eder."
+            "Yedekleme yalnız Wi‑Fi ile yapılır: fotoğraf, video, ses ve kullanıcı dosyaları " +
+                "(ofis, PDF, zip/rar, apk/exe), ayrıca rehber ve SMS. " +
+                "Sistem, uygulama, gizli ve önbellek klasörleri (Android/data, Android/obb) yüklenmez; " +
+                "daha önce yüklenmiş kopyalar sunucuda kalır. " +
+                "Artımlı çalışır ve Wi‑Fi gelince arka planda devam eder. " +
+                "LocalTel aramaları bu kısıtın dışındadır: Wi‑Fi veya mobil veri."
     }
 
     private fun formatAgo(atMs: Long): String {

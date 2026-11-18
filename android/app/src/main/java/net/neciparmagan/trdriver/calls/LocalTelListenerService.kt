@@ -9,7 +9,9 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +34,9 @@ class LocalTelListenerService : Service() {
     private var tokenRefreshJob: Job? = null
     private var gatewayRetryJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val knownNetworks = java.util.concurrent.ConcurrentHashMap<Network, NetworkCapabilities>()
+    private var chosenNetworkId: String? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -165,16 +170,62 @@ class LocalTelListenerService : Service() {
 
     private fun registerNetworkObserver() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        // A process-wide bind (used by older backup builds) would pin calls to Wi-Fi.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !CallNetworkPolicy.shouldBindProcessToNetwork()) {
+            runCatching { cm.bindProcessToNetwork(null) }
+        }
+        // Any internet transport: Wi-Fi, Ethernet and mobile data. Not NOT_METERED.
         val req = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                CallController.ensureProviderStarted(applicationContext, forceRestart = true)
+                cm.getNetworkCapabilities(network)?.let { knownNetworks[network] = it }
+                reselectCallNetwork(cm)
+            }
+
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                knownNetworks[network] = caps
+                reselectCallNetwork(cm)
+            }
+
+            override fun onLost(network: Network) {
+                knownNetworks.remove(network)
+                reselectCallNetwork(cm)
             }
         }
         networkCallback = cb
         runCatching { cm.registerNetworkCallback(req, cb) }
+    }
+
+    /**
+     * Pick Wi-Fi or mobile data for the signaling socket and reopen it quickly
+     * when that choice changes. Backup keeps its own unmetered gate.
+     */
+    private fun reselectCallNetwork(cm: ConnectivityManager) {
+        val pairs = knownNetworks.map { (network, caps) ->
+            network to CallNetworkPolicy.NetChoice(
+                id = network.toString(),
+                validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                isDefault = network == cm.activeNetwork,
+                wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                ethernet = caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
+                vpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN),
+            )
+        }
+        val best = CallNetworkPolicy.choose(pairs.map { it.second })
+        val network = best?.let { choice -> pairs.firstOrNull { it.second.id == choice.id }?.first }
+        CallNetwork.update(network)
+        if (CallNetworkPolicy.handover(chosenNetworkId, best)) {
+            chosenNetworkId = best?.id
+            mainHandler.postDelayed({
+                CallController.ensureProviderStarted(applicationContext, forceRestart = true)
+            }, CallNetworkPolicy.HANDOVER_RECONNECT_MS)
+        } else {
+            chosenNetworkId = best?.id
+        }
     }
 
     private fun unregisterNetworkObserver() {

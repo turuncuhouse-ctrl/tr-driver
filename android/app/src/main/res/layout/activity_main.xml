@@ -486,8 +486,10 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:background="@android:color/transparent"
+                android:maxLines="2"
                 android:text="Ana sayfa"
-                android:textColor="@color/tr_ink" />
+                android:textColor="@color/tr_ink"
+                android:textSize="11sp" />
 
             <Button
                 android:id="@+id/navFiles"
@@ -495,9 +497,22 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:background="@android:color/transparent"
+                android:maxLines="2"
                 android:text="Dosyalar"
                 android:textColor="@color/tr_blue"
+                android:textSize="11sp"
                 android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/navShared"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:maxLines="2"
+                android:text="Ortak Klasör"
+                android:textColor="@color/tr_ink"
+                android:textSize="11sp" />
 
             <Button
                 android:id="@+id/navStarred"
@@ -505,8 +520,10 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:background="@android:color/transparent"
+                android:maxLines="2"
                 android:text="Yıldızlı"
-                android:textColor="@color/tr_ink" />
+                android:textColor="@color/tr_ink"
+                android:textSize="11sp" />
 
             <Button
                 android:id="@+id/navMore"
@@ -514,8 +531,10 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:background="@android:color/transparent"
+                android:maxLines="2"
                 android:text="Diğer"
-                android:textColor="@color/tr_ink" />
+                android:textColor="@color/tr_ink"
+                android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
 

@@ -113,30 +113,30 @@ type Limits struct {
 // magnet link, tracker list or metainfo (those would carry private tracker
 // passkeys); the detail endpoint returns sanitised trackers instead.
 type View struct {
-	ID             string     `json:"id"`
-	InfoHash       string     `json:"infoHash"`
-	Name           string     `json:"name"`
-	Status         string     `json:"status"`
-	Message        string     `json:"message,omitempty"`
-	Path           string     `json:"path,omitempty"`
-	TotalBytes     int64      `json:"totalBytes"`
-	CompletedBytes int64      `json:"completedBytes"`
-	Progress       float64    `json:"progress"`
-	DownloadRate   int64      `json:"downloadRate"`
-	UploadRate     int64      `json:"uploadRate"`
-	Peers          int        `json:"peers"`
-	Seeders        int        `json:"seeders"`
-	Ratio          float64    `json:"ratio"`
-	ETASec         int64      `json:"etaSec"` // seconds, -1 unknown
-	UploadedBytes  int64      `json:"uploadedBytes"`
-	SeededSeconds  int64      `json:"seededSeconds"`
+	ID             string  `json:"id"`
+	InfoHash       string  `json:"infoHash"`
+	Name           string  `json:"name"`
+	Status         string  `json:"status"`
+	Message        string  `json:"message,omitempty"`
+	Path           string  `json:"path,omitempty"`
+	TotalBytes     int64   `json:"totalBytes"`
+	CompletedBytes int64   `json:"completedBytes"`
+	Progress       float64 `json:"progress"`
+	DownloadRate   int64   `json:"downloadRate"`
+	UploadRate     int64   `json:"uploadRate"`
+	Peers          int     `json:"peers"`
+	Seeders        int     `json:"seeders"`
+	Ratio          float64 `json:"ratio"`
+	ETASec         int64   `json:"etaSec"` // seconds, -1 unknown
+	UploadedBytes  int64   `json:"uploadedBytes"`
+	SeededSeconds  int64   `json:"seededSeconds"`
 	// Per-torrent limits; 0 = unlimited / off.
-	DownloadLimitKBps int64   `json:"downloadLimitKBps"`
-	UploadLimitKBps   int64   `json:"uploadLimitKBps"`
-	SeedRatioLimit    float64 `json:"seedRatioLimit"`
-	SeedTimeLimitSec  int     `json:"seedTimeLimitSec"`
-	AddedAt        time.Time  `json:"addedAt"`
-	CompletedAt    *time.Time `json:"completedAt,omitempty"`
+	DownloadLimitKBps int64      `json:"downloadLimitKBps"`
+	UploadLimitKBps   int64      `json:"uploadLimitKBps"`
+	SeedRatioLimit    float64    `json:"seedRatioLimit"`
+	SeedTimeLimitSec  int        `json:"seedTimeLimitSec"`
+	AddedAt           time.Time  `json:"addedAt"`
+	CompletedAt       *time.Time `json:"completedAt,omitempty"`
 }
 
 // FileDetail is one file inside a torrent, as the drawer shows it. Path is the
@@ -163,9 +163,9 @@ type PeerDetail struct {
 // TorrentDetail powers the drawer in the admin panel.
 type TorrentDetail struct {
 	View
-	Files    []FileDetail   `json:"files"`
+	Files    []FileDetail    `json:"files"`
 	Trackers []TrackerDetail `json:"trackers"`
-	Peers    []PeerDetail   `json:"peers"`
+	Peers    []PeerDetail    `json:"peers"`
 }
 
 // Statuses reported in View.Status.
@@ -213,6 +213,11 @@ type item struct {
 	// needsVerify triggers a full piece re-check as soon as the file list is
 	// known (restart with content, resume, or re-adding a removed torrent).
 	needsVerify bool
+	// showVerify makes the re-check visible and blocks "complete" before the
+	// hash runs. Resume of a partial download leaves this false so the call
+	// still reports "downloading"; a re-add sets it because the completion
+	// bitmap can already say every piece is done.
+	showVerify bool
 	// seededCarry accumulates sub-second seeding time between ticks.
 	seededCarry float64
 	// seededFrom is the last accrual point; zero while not seeding.
@@ -314,7 +319,7 @@ func (s *Service) startClient() error {
 		}
 	}
 	files := storage.NewFileOpts(storage.NewFileClientOpts{
-		ClientBaseDir:  dir,
+		ClientBaseDir:   dir,
 		PieceCompletion: completion,
 		Logger:          discard,
 	})
@@ -455,10 +460,11 @@ func (s *Service) Start(ctx context.Context) error {
 		if rec.ContentPath != "" {
 			s.guard.restore(rec.InfoHash, rec.ContentPath)
 		}
-		// After a restart the on-disk pieces are re-checked once before the
-		// download continues: completion state that a restart could not
-		// prove (partial files) must not be trusted blindly.
-		it.needsVerify = rec.State == StateActive && rec.ContentPath != ""
+		// Re-check only when bytes were actually stored. A torrent that was
+		// added and restarted before any data arrived has a content path but
+		// nothing to hash; putting it in "verifying" would stall the resume.
+		it.needsVerify = rec.State == StateActive && rec.ContentPath != "" && rec.CompletedBytes > 0
+		it.showVerify = it.needsVerify
 		if err := s.attachLocked(it); err != nil {
 			s.failLocked(it, attachMessage(err))
 		}
@@ -608,6 +614,13 @@ func (s *Service) attachLocked(it *item) error {
 		it.seededFrom = time.Time{}
 	}
 	verify := it.needsVerify
+	// The piece-completion database can already say "complete" for a torrent
+	// that was removed without deleting its files. Block that until the hash
+	// runs. A partial resume does not set showVerify: its bitmap is not
+	// complete, and the caller expects status "downloading".
+	if verify && it.showVerify {
+		it.verifying = true
+	}
 	s.wg.Add(1)
 	go s.awaitInfo(it.rec.ID, handle, verify)
 	return nil
@@ -706,6 +719,47 @@ func (s *Service) applyPrioritiesLocked(it *item) {
 			f.SetPriority(priorityValue(prio))
 		}
 	}
+}
+
+// wantedFilesCompleteLocked reports whether every file the administrator did
+// not skip is fully hashed on disk. Piece bytes that belong only to a skipped
+// file must not count: otherwise a fast piece of the skipped file makes the
+// torrent look finished and the files that were wanted never get written.
+func (s *Service) wantedFilesCompleteLocked(it *item) bool {
+	if it.handle == nil || it.handle.Info() == nil {
+		return false
+	}
+	files := it.handle.Files()
+	if len(files) == 0 {
+		return it.handle.Complete().Bool()
+	}
+	prios := it.priorities()
+	if len(prios) == 0 {
+		return it.handle.Complete().Bool()
+	}
+	for _, f := range files {
+		if prios[f.DisplayPath()] == PrioritySkip {
+			continue
+		}
+		if hashedFileBytes(f) < f.Length() {
+			return false
+		}
+	}
+	// Every wanted file is hashed, or every file was skipped.
+	return true
+}
+
+// hashedFileBytes counts only piece bytes that passed the hash check. Dirty
+// chunks of an incomplete piece are not included, so a torrent is not declared
+// finished before those bytes are flushed.
+func hashedFileBytes(f *torrent.File) int64 {
+	var n int64
+	for _, st := range f.State() {
+		if st.Complete {
+			n += st.Bytes
+		}
+	}
+	return n
 }
 
 // skippedBytesLocked is the total length of files the administrator chose to
@@ -945,17 +999,11 @@ func (s *Service) tick() {
 			it.rec.CompletedBytes = completed
 			it.dirty = true
 		}
-		if it.admitted && it.rec.State != StateCompleted {
-			complete := it.handle.Complete().Bool()
-			if !complete {
-				// Files chosen to skip never arrive; once everything else is
-				// downloaded the torrent counts as complete.
-				if skipped := s.skippedBytesLocked(it); skipped > 0 && it.rec.TotalBytes > 0 &&
-					it.handle.BytesCompleted() >= it.rec.TotalBytes-skipped {
-					complete = true
-				}
-			}
-			if complete {
+		if it.admitted && it.rec.State != StateCompleted && !it.verifying && !it.needsVerify {
+			// While a re-check is running the completion bitmap is stale: a
+			// corrupt piece is still marked done until the hash fails. Declaring
+			// the torrent finished here would drop it and skip the repair.
+			if s.wantedFilesCompleteLocked(it) {
 				s.completeLocked(it)
 				continue
 			}
@@ -1288,7 +1336,7 @@ func (s *Service) reviveLocked(ctx context.Context, actor Actor, rec Record, kno
 			return View{}, ErrNameTaken
 		}
 	}
-	it := &item{rec: base, admitted: base.ContentPath != "", needsVerify: true}
+	it := &item{rec: base, admitted: base.ContentPath != "", needsVerify: true, showVerify: base.ContentPath != ""}
 	s.items[base.ID] = it
 	if err := s.store.Save(ctx, base); err != nil {
 		delete(s.items, base.ID)
@@ -1389,10 +1437,11 @@ func (s *Service) Resume(ctx context.Context, actor Actor, id string) (View, err
 		if it.rec.ContentPath != "" {
 			s.guard.restore(it.rec.InfoHash, it.rec.ContentPath)
 		}
-		// The file list was already out of the client: re-check what is on
-		// disk before continuing, because partial files are not trustworthy
-		// by name alone.
-		it.needsVerify = it.rec.ContentPath != ""
+		// Re-check partial data before continuing. A torrent that never
+		// received a byte has nothing to hash and goes straight back to
+		// downloading.
+		it.needsVerify = it.rec.ContentPath != "" && it.rec.CompletedBytes > 0
+		it.showVerify = false
 		if err := s.attachLocked(it); err != nil {
 			s.failLocked(it, attachMessage(err))
 			return s.viewLocked(it), nil

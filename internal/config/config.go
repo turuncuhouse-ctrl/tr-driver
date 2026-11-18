@@ -152,7 +152,7 @@ func Load() (Config, error) {
 		TorrentListenPort:        getEnvInt("TORRENT_LISTEN_PORT", 42069),
 		TorrentDownloadLimitKBps: getEnvInt64("TORRENT_DOWNLOAD_LIMIT_KBPS", 0),
 		TorrentUploadLimitKBps:   getEnvInt64("TORRENT_UPLOAD_LIMIT_KBPS", 0),
-		TorrentSeedAfterComplete: getEnvBool("TORRENT_SEED_AFTER_COMPLETE", false),
+		TorrentSeedAfterComplete: getEnvBool("TORRENT_SEED_AFTER_COMPLETE", true),
 		TorrentDisableDHT:        getEnvBool("TORRENT_DISABLE_DHT", false),
 	}
 	var err error

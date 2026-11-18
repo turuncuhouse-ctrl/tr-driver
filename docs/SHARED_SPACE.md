@@ -45,7 +45,7 @@ chown 1000:1000 /mnt/1tb_disk/necipdrive/paylasim
 | `TORRENT_LISTEN_PORT` | `42069` | Eş bağlantı portu (TCP + UDP). |
 | `TORRENT_DOWNLOAD_LIMIT_KBPS` | `0` | İndirme hız sınırı, KB/sn. `0` = sınırsız. |
 | `TORRENT_UPLOAD_LIMIT_KBPS` | `0` | Gönderme hız sınırı, KB/sn. `0` = sınırsız. |
-| `TORRENT_SEED_AFTER_COMPLETE` | `false` | `true` ise tamamlanan torrent paylaşılmaya devam eder. |
+| `TORRENT_SEED_AFTER_COMPLETE` | `true` | `false` ise indirme bitince paylaşım durur. Varsayılan seed açıktır. |
 | `TORRENT_DISABLE_DHT` | `false` | `true` ise DHT kapatılır, yalnızca tracker kullanılır. |
 
 Kota, uyarı eşiği ve torrent hız sınırları yönetici panelinden de değiştirilebilir;
@@ -110,9 +110,11 @@ Kimlerin göreceğini yine klasör izinleri belirler.
 - İndirme süren bir klasör Ortak Paylaşım arayüzünden silinemez ya da yeniden
   adlandırılamaz (`409`).
 - Torrent alan kotasına tabidir; yer kalmazsa indirme durur.
-- Varsayılan olarak tamamlanan torrent paylaşılmaz
-  (`TORRENT_SEED_AFTER_COMPLETE=false`). İndirme sırasında parçalar diğer eşlere
-  gönderilir; bunu `TORRENT_UPLOAD_LIMIT_KBPS` ile sınırlayabilirsiniz.
+- Varsayılan olarak tamamlanan torrent paylaşılmaya devam eder
+  (`TORRENT_SEED_AFTER_COMPLETE=true`). Oran veya süre sınırı dolunca, ya da
+  panelden "Seed'i durdur" denince paylaşım kesilir; "Seed başlat" yeniden
+  açar. İndirme sırasında da parçalar diğer eşlere gönderilir; bunu
+  `TORRENT_UPLOAD_LIMIT_KBPS` ile sınırlayabilirsiniz.
 
 ### Torrent kontrolleri (yönetim paneli)
 
@@ -152,7 +154,8 @@ kaldırın; torrent'i hiç kullanmayacaksanız `TORRENT_ENABLED=false` verin.
 
 ## 7. Android
 
-Android uygulamasında **Diğer menüsü → Ortak Paylaşım** ekranı izinli klasörleri listeler;
-dosya indirip açar, yazma izni varsa dosya yükler, klasör oluşturur, yeniden
-adlandırır ve siler. Bağlantı oluşturma, izin yönetimi ve torrent yalnızca web
-arayüzündedir.
+Android uygulamasında alt çubuktaki **Ortak Klasör** sekmesi (ve Diğer menüsündeki
+aynı giriş) izinli klasörleri listeler; dosya indirip açar, yazma izni varsa
+dosya yükler, klasör oluşturur, yeniden adlandırır ve siler. **Dosyalarım**
+içinde geri tuşu klasör ağacında yukarı çıkar, yalnızca kökte uygulamadan
+çıkar. Bağlantı oluşturma, izin yönetimi ve torrent yalnızca web arayüzündedir.

@@ -36,6 +36,41 @@ object BackupPolicy {
         }
     }
 
+    /**
+     * User content worth backing up, in the same spirit as Drive: photos,
+     * videos, audio, office documents, PDF, archives and installers the user
+     * placed themselves. Extensionless blobs, databases and app binaries are
+     * not. MIME still wins for media so a mislabeled photo is kept.
+     */
+    fun isUserBackupContent(mimeType: String?, displayName: String): Boolean {
+        return when (kindOf(mimeType, displayName)) {
+            KIND_PHOTO, KIND_VIDEO, KIND_AUDIO -> true
+            else -> extensionOf(displayName) in USER_FILE_EXTS
+        }
+    }
+
+    /**
+     * System, app, hidden and cache locations are never walked or uploaded.
+     * `Android/media` (WhatsApp and similar) stays eligible; `Android/data`
+     * and `Android/obb` do not. A leading-dot segment is a hidden folder.
+     */
+    fun isExcludedBackupPath(path: String): Boolean {
+        val segments = path.replace('\\', '/')
+            .split('/')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it != "." }
+        if (segments.isEmpty()) return false
+        if (segments.any { it.startsWith(".") }) return true
+        val lower = segments.map { it.lowercase() }
+        if (lower.any { it in CACHE_DIR_NAMES }) return true
+        for (i in 0 until lower.size - 1) {
+            if (lower[i] == "android" && (lower[i + 1] == "data" || lower[i + 1] == "obb")) {
+                return true
+            }
+        }
+        return false
+    }
+
     /** Classification by MIME first, extension second; everything else = doc. */
     fun kindOf(mimeType: String?, displayName: String): String {
         val mime = mimeType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
@@ -181,5 +216,18 @@ object BackupPolicy {
     )
     private val AUDIO_EXTS = setOf(
         "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "wma", "amr", "mid", "midi",
+    )
+
+    /** Documents, archives and installers a person would put in Drive. */
+    private val USER_FILE_EXTS = setOf(
+        "pdf", "txt", "rtf", "csv", "md",
+        "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
+        "pages", "numbers", "key", "epub",
+        "zip", "rar", "7z", "tar", "gz", "tgz", "bz2",
+        "exe", "apk", "msi", "dmg",
+    )
+
+    private val CACHE_DIR_NAMES = setOf(
+        "cache", "caches", "tmp", "temp", "lost.dir",
     )
 }
