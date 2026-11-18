@@ -367,7 +367,7 @@ func (s *Service) startClient() error {
 			return err
 		}
 	}
-	s.client, s.guard, s.fileStorage, s.dl, s.ul = client, guard, files, dl, ul
+	s.client, s.guard, s.fileStorage, s.completion, s.dl, s.ul = client, guard, files, completion, dl, ul
 	return nil
 }
 
@@ -465,6 +465,11 @@ func (s *Service) Start(ctx context.Context) error {
 		// nothing to hash; putting it in "verifying" would stall the resume.
 		it.needsVerify = rec.State == StateActive && rec.ContentPath != "" && rec.CompletedBytes > 0
 		it.showVerify = it.needsVerify
+		if it.needsVerify && len(rec.Metainfo) > 0 {
+			// Hash the files themselves before the client maps them. A cached
+			// mapping can still show the old bytes after the file was edited.
+			s.quarantineBadPieces(rec.Metainfo)
+		}
 		if err := s.attachLocked(it); err != nil {
 			s.failLocked(it, attachMessage(err))
 		}
@@ -1337,6 +1342,9 @@ func (s *Service) reviveLocked(ctx context.Context, actor Actor, rec Record, kno
 		}
 	}
 	it := &item{rec: base, admitted: base.ContentPath != "", needsVerify: true, showVerify: base.ContentPath != ""}
+	if base.ContentPath != "" && len(base.Metainfo) > 0 {
+		s.quarantineBadPieces(base.Metainfo)
+	}
 	s.items[base.ID] = it
 	if err := s.store.Save(ctx, base); err != nil {
 		delete(s.items, base.ID)
